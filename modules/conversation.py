@@ -1,0 +1,98 @@
+"""Local JSON conversation storage for Aurora Chat."""
+
+import json
+import threading
+import uuid
+from datetime import datetime, timezone
+from pathlib import Path
+
+
+class ConversationManager:
+    """Save, load, list, and delete chat conversations as JSON files."""
+
+    def __init__(self, base_path=None):
+        project_root = Path(__file__).resolve().parent.parent
+        self.directory = Path(base_path) if base_path else project_root / "data" / "conversations"
+        self.directory.mkdir(parents=True, exist_ok=True)
+        self._lock = threading.Lock()
+
+    @staticmethod
+    def _now():
+        return datetime.now(timezone.utc).isoformat(timespec="seconds")
+
+    def _normalize(self, data, fallback_id):
+        now = self._now()
+        normalized = dict(data) if isinstance(data, dict) else {}
+        normalized.setdefault("id", fallback_id)
+        normalized.setdefault("title", "New Conversation")
+        normalized.setdefault("model", "")
+        normalized.setdefault("created_time", normalized.get("created_at", now))
+        normalized.setdefault("updated_time", normalized.get("updated_at", normalized["created_time"]))
+        normalized.setdefault("messages", [])
+        normalized["created_at"] = normalized["created_time"]
+        normalized["updated_at"] = normalized["updated_time"]
+        return normalized
+
+    def list_conversations(self):
+        records = []
+        with self._lock:
+            paths = list(self.directory.glob("*.json"))
+        for path in paths:
+            try:
+                data = self._normalize(json.loads(path.read_text(encoding="utf-8")), path.stem)
+                records.append({
+                    "id": str(data["id"]),
+                    "title": str(data["title"]),
+                    "created_at": str(data.get("created_at", "")),
+                    "updated_at": str(data.get("updated_at", "")),
+                    "created_time": str(data.get("created_time", "")),
+                    "updated_time": str(data.get("updated_time", "")),
+                    "model": str(data.get("model", ""))
+                })
+            except (OSError, json.JSONDecodeError, TypeError):
+                continue
+        return sorted(records, key=lambda item: item.get("updated_at", ""), reverse=True)
+
+    def save(self, conversation_id, model, messages, title=None, created_at=None):
+        conversation_id = conversation_id or uuid.uuid4().hex
+        path = self.directory / f"{conversation_id}.json"
+        now = self._now()
+        if created_at is None and path.exists():
+            try:
+                existing = self._normalize(json.loads(path.read_text(encoding="utf-8")), conversation_id)
+                created_at = existing.get("created_time")
+            except (OSError, json.JSONDecodeError, TypeError):
+                created_at = None
+        data = {
+            "id": conversation_id,
+            "title": title or "New Conversation",
+            "created_at": created_at or now,
+            "updated_at": now,
+            "created_time": created_at or now,
+            "updated_time": now,
+            "model": model or "",
+            "messages": messages
+        }
+        with self._lock:
+            path.write_text(json.dumps(data, ensure_ascii=False, indent=2), encoding="utf-8")
+        return self._normalize(data, conversation_id)
+
+    def load(self, conversation_id):
+        path = self.directory / f"{conversation_id}.json"
+        data = self._normalize(json.loads(path.read_text(encoding="utf-8")), conversation_id)
+        return data
+
+    def rename(self, conversation_id, title):
+        path = self.directory / f"{conversation_id}.json"
+        with self._lock:
+            data = json.loads(path.read_text(encoding="utf-8"))
+            data["title"] = title.strip() or "New Conversation"
+            data["updated_at"] = self._now()
+            data["updated_time"] = data["updated_at"]
+            path.write_text(json.dumps(data, ensure_ascii=False, indent=2), encoding="utf-8")
+        return data
+
+    def delete(self, conversation_id):
+        path = self.directory / f"{conversation_id}.json"
+        with self._lock:
+            path.unlink(missing_ok=True)

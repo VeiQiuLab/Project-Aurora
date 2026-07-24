@@ -1,0 +1,33 @@
+﻿{
+  "app_name": "Project Aurora",
+  "theme": "green",
+  "appearance": "System",
+  "window": {
+    "width": 1200,
+    "height": 760
+  },
+  "ollama": {
+    "host": "http://127.0.0.1:11434",
+    "auto_start": false
+  },
+  "openwebui": {
+    "host": "http://127.0.0.1:8080",
+    "auto_start": false
+  },
+  "status": {
+    "refresh_interval": 3.0
+  },
+  "language": "zh_CN",
+  "memory": {
+    "max_injection": 5,
+    "min_importance": 0.0
+  },
+  "services": {
+    "ollama": {
+      "command": "ollama serve"
+    },
+    "openwebui": {
+      "command": "open-webui serve"
+    }
+  }
+}

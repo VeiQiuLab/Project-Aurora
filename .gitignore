@@ -1,0 +1,47 @@
+# =========================
+# Personal Data Protection
+# =========================
+
+# Chat history
+data/conversations/
+
+# Personal memory
+data/memory/
+
+# Personal knowledge
+data/knowledge/private/
+
+# Personal settings
+config/settings.json
+
+# Personal remote configuration
+data/remote/remote.json
+
+# Credentials and secrets
+data/credential/
+data/credentials/
+data/private/
+.env
+*.env
+
+# Logs (may contain personal information)
+logs/
+*.log
+data/logs/
+data/log/
+
+# Runtime generated data
+data/runtime/
+data/cache/
+data/temp/
+
+# Local user files
+*.json.bak
+*.backup
+*.bak
+
+build/
+dist/
+*.spec
+__pycache__/
+*.pyc
