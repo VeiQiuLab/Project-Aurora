@@ -1,6 +1,7 @@
 """Remote Access foundation for local-only status and configuration."""
 
 import json
+import ipaddress
 import socket
 from pathlib import Path
 
@@ -43,7 +44,24 @@ DEFAULT_REMOTE_CONFIG = {
     "remote_history": [],
     "lan_status_page_enabled": False,
     "lan_status_port": DEFAULT_LAN_STATUS_PORT,
-    "lan_status_user_confirmed": False
+    "lan_status_user_confirmed": False,
+    "lan_chat_enabled": False,
+    "lan_chat_port": DEFAULT_LAN_STATUS_PORT,
+    "mobile_access_confirmed": False,
+    "mobile_chat_timeout": 60,
+    "mobile_debug_mode": False,
+    "mobile_response_limit": 12000,
+    "selected_lan_ip": "",
+    "selected_adapter": "",
+    "last_mobile_error": "",
+    "last_mobile_stage": "",
+    "last_mobile_status": "",
+    "last_mobile_duration_ms": 0,
+    "last_mobile_model": "",
+    "last_mobile_capability": "",
+    "last_mobile_ollama_url": "",
+    "last_mobile_client": "",
+    "last_mobile_time": ""
 }
 
 
@@ -80,6 +98,10 @@ class RemoteAccessManager:
             normalized["lan_status_port"] = max(1, int(normalized.get("lan_status_port", DEFAULT_LAN_STATUS_PORT)))
         except (TypeError, ValueError):
             normalized["lan_status_port"] = DEFAULT_LAN_STATUS_PORT
+        try:
+            normalized["lan_chat_port"] = max(1, int(normalized.get("lan_chat_port", DEFAULT_LAN_STATUS_PORT)))
+        except (TypeError, ValueError):
+            normalized["lan_chat_port"] = DEFAULT_LAN_STATUS_PORT
         normalized["auth_required"] = bool(normalized.get("auth_required", True))
         normalized["authentication_configured"] = bool(normalized.get("authentication_configured", False))
         normalized["lan_ready"] = bool(normalized.get("lan_ready", False))
@@ -89,6 +111,31 @@ class RemoteAccessManager:
         normalized["security_confirmed"] = bool(normalized.get("security_confirmed", False))
         normalized["lan_status_page_enabled"] = bool(normalized.get("lan_status_page_enabled", False))
         normalized["lan_status_user_confirmed"] = bool(normalized.get("lan_status_user_confirmed", False))
+        normalized["lan_chat_enabled"] = bool(normalized.get("lan_chat_enabled", False))
+        normalized["mobile_access_confirmed"] = bool(normalized.get("mobile_access_confirmed", False))
+        try:
+            normalized["mobile_chat_timeout"] = max(1, int(normalized.get("mobile_chat_timeout", 60)))
+        except (TypeError, ValueError):
+            normalized["mobile_chat_timeout"] = 60
+        normalized["mobile_debug_mode"] = bool(normalized.get("mobile_debug_mode", False))
+        try:
+            normalized["mobile_response_limit"] = max(1000, int(normalized.get("mobile_response_limit", 12000)))
+        except (TypeError, ValueError):
+            normalized["mobile_response_limit"] = 12000
+        normalized["selected_lan_ip"] = str(normalized.get("selected_lan_ip") or "")
+        normalized["selected_adapter"] = str(normalized.get("selected_adapter") or "")
+        normalized["last_mobile_error"] = str(normalized.get("last_mobile_error") or "")
+        normalized["last_mobile_stage"] = str(normalized.get("last_mobile_stage") or "")
+        normalized["last_mobile_status"] = str(normalized.get("last_mobile_status") or "")
+        try:
+            normalized["last_mobile_duration_ms"] = max(0, int(normalized.get("last_mobile_duration_ms", 0) or 0))
+        except (TypeError, ValueError):
+            normalized["last_mobile_duration_ms"] = 0
+        normalized["last_mobile_model"] = str(normalized.get("last_mobile_model") or "")
+        normalized["last_mobile_capability"] = str(normalized.get("last_mobile_capability") or "")
+        normalized["last_mobile_ollama_url"] = str(normalized.get("last_mobile_ollama_url") or "")
+        normalized["last_mobile_client"] = str(normalized.get("last_mobile_client") or "")
+        normalized["last_mobile_time"] = str(normalized.get("last_mobile_time") or "")
         normalized["auth_enabled"] = bool(normalized.get("auth_enabled", False))
         normalized["authentication_type"] = str(normalized.get("authentication_type") or "none").lower()
         if normalized["authentication_type"] not in {"none", "token", "password"}:
@@ -185,7 +232,24 @@ class RemoteAccessManager:
         remote_history=None,
         lan_status_page_enabled=None,
         lan_status_port=None,
-        lan_status_user_confirmed=None
+        lan_status_user_confirmed=None,
+        lan_chat_enabled=None,
+        lan_chat_port=None,
+        mobile_access_confirmed=None,
+        mobile_chat_timeout=None,
+        mobile_debug_mode=None,
+        mobile_response_limit=None,
+        selected_lan_ip=None,
+        selected_adapter=None,
+        last_mobile_error=None,
+        last_mobile_stage=None,
+        last_mobile_status=None,
+        last_mobile_duration_ms=None,
+        last_mobile_model=None,
+        last_mobile_capability=None,
+        last_mobile_ollama_url=None,
+        last_mobile_client=None,
+        last_mobile_time=None
     ):
         config = self.load()
         if enabled is not None:
@@ -256,6 +320,40 @@ class RemoteAccessManager:
             config["lan_status_port"] = lan_status_port
         if lan_status_user_confirmed is not None:
             config["lan_status_user_confirmed"] = bool(lan_status_user_confirmed)
+        if lan_chat_enabled is not None:
+            config["lan_chat_enabled"] = bool(lan_chat_enabled)
+        if lan_chat_port is not None:
+            config["lan_chat_port"] = lan_chat_port
+        if mobile_access_confirmed is not None:
+            config["mobile_access_confirmed"] = bool(mobile_access_confirmed)
+        if mobile_chat_timeout is not None:
+            config["mobile_chat_timeout"] = mobile_chat_timeout
+        if mobile_debug_mode is not None:
+            config["mobile_debug_mode"] = bool(mobile_debug_mode)
+        if mobile_response_limit is not None:
+            config["mobile_response_limit"] = mobile_response_limit
+        if selected_lan_ip is not None:
+            config["selected_lan_ip"] = str(selected_lan_ip or "")
+        if selected_adapter is not None:
+            config["selected_adapter"] = str(selected_adapter or "")
+        if last_mobile_error is not None:
+            config["last_mobile_error"] = str(last_mobile_error or "")
+        if last_mobile_stage is not None:
+            config["last_mobile_stage"] = str(last_mobile_stage or "")
+        if last_mobile_status is not None:
+            config["last_mobile_status"] = str(last_mobile_status or "")
+        if last_mobile_duration_ms is not None:
+            config["last_mobile_duration_ms"] = last_mobile_duration_ms
+        if last_mobile_model is not None:
+            config["last_mobile_model"] = str(last_mobile_model or "")
+        if last_mobile_capability is not None:
+            config["last_mobile_capability"] = str(last_mobile_capability or "")
+        if last_mobile_ollama_url is not None:
+            config["last_mobile_ollama_url"] = str(last_mobile_ollama_url or "")
+        if last_mobile_client is not None:
+            config["last_mobile_client"] = str(last_mobile_client or "")
+        if last_mobile_time is not None:
+            config["last_mobile_time"] = str(last_mobile_time or "")
         return self.save(config)
 
     def add_credential_history(self, status, result, checked_time=None, error=None):
@@ -362,6 +460,7 @@ class RemoteAccessManager:
             {"label": "LAN Server Module Available", "ok": True},
             {"label": "LAN Status Port Available", "ok": is_port_available(config.get("lan_status_port", DEFAULT_LAN_STATUS_PORT))},
             {"label": "LAN Status Page Stopped by Default", "ok": not bool(config.get("lan_status_page_enabled", False))},
+            {"label": "LAN Chat Disabled by Default", "ok": not bool(config.get("lan_chat_enabled", False))},
             {"label": "Showcase Ready", "ok": True}
         ]
         return {
@@ -377,7 +476,7 @@ class RemoteAccessManager:
         return "127.0.0.1"
 
     @staticmethod
-    def lan_address():
+    def _candidate_addresses():
         candidates = []
         try:
             with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as sock:
@@ -390,20 +489,81 @@ class RemoteAccessManager:
         try:
             hostname = socket.gethostname()
             candidates.append(socket.gethostbyname(hostname))
+            for item in socket.getaddrinfo(hostname, None, socket.AF_INET):
+                address = item[4][0]
+                candidates.append(address)
         except OSError:
             pass
 
+        unique = []
         for address in candidates:
-            if address and not address.startswith("127."):
-                return address
-        return ""
+            if address and address not in unique:
+                unique.append(address)
+        return unique
+
+    @staticmethod
+    def _ipv4_priority(address):
+        try:
+            ip = ipaddress.ip_address(str(address))
+        except ValueError:
+            return -1
+        if ip.version != 4:
+            return -1
+        text = str(ip)
+        if text.startswith("127.") or text.startswith("169.254."):
+            return -1
+        if text.startswith("172."):
+            second = int(text.split(".")[1])
+            if 16 <= second <= 31:
+                return -1
+        if text.startswith("192.168."):
+            return 100
+        if text.startswith("10."):
+            return 90
+        if ip.is_private:
+            return 50
+        return -1
+
+    @classmethod
+    def select_lan_ip(cls, candidates=None):
+        records = []
+        ignored = []
+        for address in candidates if candidates is not None else cls._candidate_addresses():
+            priority = cls._ipv4_priority(address)
+            if priority < 0:
+                ignored.append(str(address))
+                continue
+            records.append((priority, str(address)))
+        if not records:
+            return {
+                "lan_address": "",
+                "selected_lan_ip": "",
+                "selected_adapter": "Unavailable",
+                "ignored_virtual_adapters": ignored
+            }
+        records.sort(key=lambda item: item[0], reverse=True)
+        selected = records[0][1]
+        return {
+            "lan_address": selected,
+            "selected_lan_ip": selected,
+            "selected_adapter": "Auto-selected IPv4",
+            "ignored_virtual_adapters": ignored
+        }
+
+    @classmethod
+    def lan_address(cls):
+        return cls.select_lan_ip().get("lan_address", "")
 
     def network_info(self):
-        lan = self.lan_address()
+        selection = self.select_lan_ip()
+        lan = selection.get("lan_address", "")
         return {
             "local_address": self.local_address(),
             "lan_address": lan or "Unavailable",
-            "network_available": bool(lan)
+            "network_available": bool(lan),
+            "selected_lan_ip": selection.get("selected_lan_ip", ""),
+            "selected_adapter": selection.get("selected_adapter", "Unavailable"),
+            "ignored_virtual_adapters": selection.get("ignored_virtual_adapters", [])
         }
 
     def status(self):
@@ -528,6 +688,17 @@ class RemoteAccessManager:
             "port": port
         }
 
+    def lan_chat_urls(self):
+        config = self.load()
+        network = self.network_info()
+        port = int(config.get("lan_chat_port", DEFAULT_LAN_STATUS_PORT) or DEFAULT_LAN_STATUS_PORT)
+        lan_address = network.get("lan_address", "")
+        return {
+            "local_url": f"http://127.0.0.1:{port}/chat",
+            "mobile_url": "No LAN address available." if not lan_address or lan_address == "Unavailable" else f"http://{lan_address}:{port}/chat",
+            "port": port
+        }
+
     def lan_status_start_check(self):
         config = self.load()
         network = self.network_info()
@@ -551,6 +722,35 @@ class RemoteAccessManager:
             "reason": reason,
             "network": network,
             "urls": self.lan_status_urls()
+        }
+
+    def lan_chat_start_check(self):
+        config = self.load()
+        network = self.network_info()
+        network_ready = bool(network.get("network_available", False))
+        lan_ready = bool(network.get("lan_address") and network.get("lan_address") != "Unavailable")
+        security_confirmed = bool(config.get("security_confirmed", False))
+        mobile_confirmed = bool(config.get("mobile_access_confirmed", False))
+        ready = bool(network_ready and lan_ready and security_confirmed and mobile_confirmed)
+        if not mobile_confirmed:
+            reason = "Mobile access confirmation is required before starting LAN Chat."
+        elif not security_confirmed:
+            reason = "Security confirmation is required before starting LAN Chat."
+        elif not lan_ready:
+            reason = "LAN address is not ready."
+        elif not network_ready:
+            reason = "Network is not ready."
+        else:
+            reason = ""
+        return {
+            "ready": ready,
+            "network_available": network_ready,
+            "lan_address_available": lan_ready,
+            "security_confirmed": security_confirmed,
+            "mobile_access_confirmed": mobile_confirmed,
+            "reason": reason,
+            "network": network,
+            "urls": self.lan_chat_urls()
         }
 
     def lan_readiness_checklist(self):
@@ -665,6 +865,22 @@ class RemoteAccessManager:
                 "enabled": self.load().get("lan_status_page_enabled", False),
                 "user_confirmed": self.load().get("lan_status_user_confirmed", False),
                 "urls": self.lan_status_urls()
+            },
+            "lan_chat": {
+                "enabled": self.load().get("lan_chat_enabled", False),
+                "mobile_access_confirmed": self.load().get("mobile_access_confirmed", False),
+                "urls": self.lan_chat_urls()
+            },
+            "mobile_debug": {
+                "client": self.load().get("last_mobile_client", ""),
+                "stage": self.load().get("last_mobile_stage", ""),
+                "status": self.load().get("last_mobile_status", ""),
+                "duration_ms": self.load().get("last_mobile_duration_ms", 0),
+                "model": self.load().get("last_mobile_model", ""),
+                "capability": self.load().get("last_mobile_capability", ""),
+                "ollama_url": self.load().get("last_mobile_ollama_url", ""),
+                "error": self.load().get("last_mobile_error", ""),
+                "time": self.load().get("last_mobile_time", "")
             },
             "mode_descriptions": {
                 "local": "Local Only",

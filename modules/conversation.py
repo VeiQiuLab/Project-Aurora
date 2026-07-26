@@ -29,6 +29,9 @@ class ConversationManager:
         normalized.setdefault("created_time", normalized.get("created_at", now))
         normalized.setdefault("updated_time", normalized.get("updated_at", normalized["created_time"]))
         normalized.setdefault("messages", [])
+        normalized.setdefault("metadata", {})
+        if not isinstance(normalized.get("metadata"), dict):
+            normalized["metadata"] = {}
         normalized["created_at"] = normalized["created_time"]
         normalized["updated_at"] = normalized["updated_time"]
         return normalized
@@ -47,22 +50,35 @@ class ConversationManager:
                     "updated_at": str(data.get("updated_at", "")),
                     "created_time": str(data.get("created_time", "")),
                     "updated_time": str(data.get("updated_time", "")),
-                    "model": str(data.get("model", ""))
+                    "model": str(data.get("model", "")),
+                    "metadata": data.get("metadata", {})
                 })
             except (OSError, json.JSONDecodeError, TypeError):
                 continue
         return sorted(records, key=lambda item: item.get("updated_at", ""), reverse=True)
 
-    def save(self, conversation_id, model, messages, title=None, created_at=None):
+    def save(self, conversation_id, model, messages, title=None, created_at=None, metadata=None):
         conversation_id = conversation_id or uuid.uuid4().hex
         path = self.directory / f"{conversation_id}.json"
         now = self._now()
+        existing_metadata = {}
         if created_at is None and path.exists():
             try:
                 existing = self._normalize(json.loads(path.read_text(encoding="utf-8")), conversation_id)
                 created_at = existing.get("created_time")
+                existing_metadata = existing.get("metadata", {})
             except (OSError, json.JSONDecodeError, TypeError):
                 created_at = None
+        elif path.exists():
+            try:
+                existing = self._normalize(json.loads(path.read_text(encoding="utf-8")), conversation_id)
+                existing_metadata = existing.get("metadata", {})
+            except (OSError, json.JSONDecodeError, TypeError):
+                existing_metadata = {}
+        if metadata is None:
+            metadata = existing_metadata
+        elif not isinstance(metadata, dict):
+            metadata = {}
         data = {
             "id": conversation_id,
             "title": title or "New Conversation",
@@ -71,7 +87,8 @@ class ConversationManager:
             "created_time": created_at or now,
             "updated_time": now,
             "model": model or "",
-            "messages": messages
+            "messages": messages,
+            "metadata": metadata
         }
         with self._lock:
             path.write_text(json.dumps(data, ensure_ascii=False, indent=2), encoding="utf-8")

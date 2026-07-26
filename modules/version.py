@@ -5,9 +5,9 @@ Version Information
 
 APP_NAME = "Project Aurora · Xu"
 
-VERSION = "2.0"
+VERSION = "2.1.4"
 
-BUILD = "2026.07.23"
+BUILD = "2026.07.26"
 
 RELEASE = f"v{VERSION}"
 

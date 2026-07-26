@@ -14,6 +14,12 @@ DEFAULT_CONTEXT_WARNING_TOKENS = 6000
 class ChatError(Exception):
     """Friendly error raised when an Ollama chat request cannot complete."""
 
+    def __init__(self, message, category="chat_generation_failed", stage="ollama_request", detail=None):
+        super().__init__(message)
+        self.category = category
+        self.stage = stage
+        self.detail = detail or message
+
 
 def estimate_tokens(text):
     """Return a lightweight token estimate for UI previews."""
@@ -140,21 +146,49 @@ def summarize_context_sections(sections, warning_tokens=DEFAULT_CONTEXT_WARNING_
 def chat_with_ollama(model, prompt):
     """Send one prompt to Ollama and return the assistant response."""
 
+    return chat_with_messages(model, [{"role": "user", "content": prompt}])
+
+
+def chat_with_messages(model, messages, timeout=120):
+    """Send prepared chat messages to Ollama and return the assistant response."""
+
+    try:
+        from modules.models import model_supports_chat
+        if not model_supports_chat(model):
+            raise ChatError(
+                "Model cannot chat. Please select a chat model.",
+                category="model_capability",
+                stage="model_capability",
+                detail={"model": model, "capability": "Embedding Only"}
+            )
+    except ChatError:
+        raise
+    except Exception:
+        pass
+
     host = str(settings.get("ollama.host", "")).strip().rstrip("/")
     if not host:
-        raise ChatError("Ollama host is not configured.")
+        raise ChatError(
+            "Ollama host is not configured.",
+            category="ollama_unavailable",
+            stage="ollama_connection"
+        )
 
     url = f"{host}/api/chat"
     payload = {
         "model": model,
         "messages": [
             {
-                "role": "user",
-                "content": prompt
+                "role": str(message.get("role", "user")),
+                "content": str(message.get("content", ""))
             }
+            for message in messages or []
+            if isinstance(message, dict) and message.get("role") in {"system", "user", "assistant"}
         ],
         "stream": False
     }
+    if not payload["messages"]:
+        payload["messages"] = [{"role": "user", "content": ""}]
 
     request = urllib.request.Request(
         url,
@@ -164,7 +198,7 @@ def chat_with_ollama(model, prompt):
     )
 
     try:
-        with urllib.request.urlopen(request, timeout=120) as response:
+        with urllib.request.urlopen(request, timeout=timeout) as response:
             data = json.loads(response.read().decode("utf-8"))
     except urllib.error.HTTPError as error:
         try:
@@ -174,27 +208,43 @@ def chat_with_ollama(model, prompt):
             message = ""
 
         if "not found" in message.lower():
-            raise ChatError("Model not found.") from error
-        raise ChatError("Ollama request failed.") from error
+            raise ChatError(
+                f"Model not found. HTTP {error.code}: {message}".strip(),
+                category="model_unavailable",
+                stage="model_check",
+                detail={"http_status": error.code, "error_detail": message}
+            ) from error
+        detail = message or getattr(error, "reason", "") or "Ollama request failed"
+        raise ChatError(
+            f"Ollama request failed. HTTP {error.code}: {detail}",
+            category="chat_generation_failed",
+            stage="ollama_request",
+            detail={"http_status": error.code, "error_detail": detail}
+        ) from error
     except (socket.timeout, TimeoutError) as error:
-        raise ChatError("Ollama request timed out.") from error
+        raise ChatError("Ollama request timed out.", category="timeout", stage="ollama_request") from error
     except urllib.error.URLError as error:
         if isinstance(error.reason, ConnectionRefusedError):
-            raise ChatError("Ollama is not connected.") from error
-        raise ChatError("Unable to connect to Ollama.") from error
+            raise ChatError("Ollama is not connected.", category="ollama_unavailable", stage="ollama_connection") from error
+        raise ChatError("Unable to connect to Ollama.", category="ollama_unavailable", stage="ollama_connection") from error
     except (OSError, ValueError, json.JSONDecodeError) as error:
-        raise ChatError("Invalid Ollama response.") from error
+        raise ChatError(
+            f"Invalid Ollama response: {error}",
+            category="invalid_response",
+            stage="ollama_response",
+            detail={"error_detail": str(error)}
+        ) from error
 
     if data.get("error"):
         error_message = str(data["error"])
         if "not found" in error_message.lower():
-            raise ChatError("Model not found.")
-        raise ChatError(error_message)
+            raise ChatError("Model not found.", category="model_unavailable", stage="model_check")
+        raise ChatError(error_message, category="chat_generation_failed", stage="ollama_response")
 
     message = data.get("message", {})
     content = message.get("content") if isinstance(message, dict) else None
     if not content:
-        raise ChatError("Ollama returned an empty response.")
+        raise ChatError("Ollama returned an empty response.", category="invalid_response", stage="ollama_response")
 
     return str(content)
 
@@ -260,9 +310,27 @@ class ChatSession:
 def stream_chat(model, prompt, session, on_chunk, stop_event):
     """Stream one Ollama response while preserving the session context."""
 
+    try:
+        from modules.models import model_supports_chat
+        if not model_supports_chat(model):
+            raise ChatError(
+                "Model cannot chat. Please select a chat model.",
+                category="model_capability",
+                stage="model_capability",
+                detail={"model": model, "capability": "Embedding Only"}
+            )
+    except ChatError:
+        raise
+    except Exception:
+        pass
+
     host = str(settings.get("ollama.host", "")).strip().rstrip("/")
     if not host:
-        raise ChatError("Ollama host is not configured.")
+        raise ChatError(
+            "Ollama host is not configured.",
+            category="ollama_unavailable",
+            stage="ollama_connection"
+        )
 
     session.add_user(prompt)
     payload = {
@@ -301,19 +369,19 @@ def stream_chat(model, prompt, session, on_chunk, stop_event):
     except urllib.error.HTTPError as error:
         session.remove_last_user()
         if error.code == 404:
-            raise ChatError("Model not found.") from error
-        raise ChatError("Ollama request failed.") from error
+            raise ChatError("Model not found.", category="model_unavailable", stage="model_check") from error
+        raise ChatError("Ollama request failed.", category="chat_generation_failed", stage="ollama_request") from error
     except (socket.timeout, TimeoutError) as error:
         session.remove_last_user()
-        raise ChatError("Ollama request timed out.") from error
+        raise ChatError("Ollama request timed out.", category="timeout", stage="ollama_request") from error
     except urllib.error.URLError as error:
         session.remove_last_user()
         if isinstance(error.reason, ConnectionRefusedError):
-            raise ChatError("Ollama is not connected.") from error
-        raise ChatError("Unable to connect to Ollama.") from error
+            raise ChatError("Ollama is not connected.", category="ollama_unavailable", stage="ollama_connection") from error
+        raise ChatError("Unable to connect to Ollama.", category="ollama_unavailable", stage="ollama_connection") from error
     except (OSError, ValueError, json.JSONDecodeError) as error:
         session.remove_last_user()
-        raise ChatError("Invalid Ollama response.") from error
+        raise ChatError("Invalid Ollama response.", category="invalid_response", stage="ollama_response") from error
 
     assistant_response = "".join(assistant_parts)
     if assistant_response:

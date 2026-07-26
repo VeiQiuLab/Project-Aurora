@@ -167,6 +167,12 @@ class AuthenticationManager:
                 "overall": "Ready" if security_ready else "Blocked"
             },
             "secret_storage_note": "Authentication secrets should not be stored as plain text."
+            ,
+            "mobile_access": {
+                "supported": True,
+                "mode": "LAN Prototype",
+                "requires_remote_enabled": True
+            }
         }
 
     def is_configured(self):

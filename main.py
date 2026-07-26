@@ -91,6 +91,22 @@ def inspect_configuration_file():
         "remote.lan_status_page_enabled",
         "remote.lan_status_port",
         "remote.lan_status_user_confirmed",
+        "remote.lan_chat_enabled",
+        "remote.lan_chat_port",
+        "remote.mobile_access_confirmed",
+        "remote.mobile_debug_mode",
+        "remote.mobile_response_limit",
+        "remote.selected_lan_ip",
+        "remote.selected_adapter",
+        "remote.last_mobile_error",
+        "remote.last_mobile_capability",
+        "chat_model",
+        "embedding_model",
+        "mobile_chat_timeout",
+        "mobile_debug_mode",
+        "mobile_response_limit",
+        "network.preferred_interface",
+        "network.ignore_virtual_adapter",
         "remote.authentication_configured",
         "remote.lan_ready",
         "remote.ios_access_ready",
@@ -114,7 +130,7 @@ configuration_issue = inspect_configuration_file()
 from modules.settings import settings
 from modules.health import check_all, check_ollama_api, check_http_service
 from modules.launcher import open_webui
-from modules.models import get_model_records, get_models
+from modules.models import get_model_records, get_models, infer_model_capability
 from modules.chat import (
     ChatError,
     ChatSession,
@@ -133,6 +149,7 @@ from modules.authentication import AuthenticationManager
 from modules.remote import RemoteAccessManager
 from modules.language import TEXT, set_language
 from modules.lan_server import LANStatusPageServer, DEFAULT_LAN_STATUS_PORT
+from modules.mobile_chat import MobileChatService
 from modules.search import search_memories, search_conversations
 from modules.memory_retrieval import format_memory_context, retrieve_memories
 from modules.retrieval import format_knowledge_context, search_knowledge, retrieval_summary
@@ -312,6 +329,26 @@ authentication_manager = AuthenticationManager()
 credential_storage_provider = CredentialStorageProvider()
 service_manager = ServiceManager()
 lan_status_server = LANStatusPageServer()
+
+
+def get_mobile_chat_model():
+    logger.info("Chat model loaded")
+    logger.info("Embedding model loaded")
+    configured_model = str(settings.get("chat_model", "qwen3:8b") or "").strip()
+    if configured_model:
+        logger.info(f"Chat model selected: {configured_model}")
+    return configured_model
+
+
+def mobile_chat_logger(event):
+    logger.info(event)
+
+
+mobile_chat_service = MobileChatService(
+    model_provider=get_mobile_chat_model,
+    remote_manager=remote_manager,
+    event_callback=mobile_chat_logger
+)
 
 status_summary_label = ctk.CTkLabel(
     status_frame,
@@ -988,7 +1025,12 @@ def show_chat():
 
     def select_model(model):
         if model and model not in {"Loading...", "No models available"}:
+            if infer_model_capability(model) != "Chat Supported":
+                chat_status.configure(text=TEXT["model_cannot_chat"], text_color="red")
+                logger.info("Embedding model blocked from chat")
+                return
             selected_model["name"] = model
+            settings.set("chat_model", model)
             logger.info(f"Chat model selected: {model}")
 
     model_selector = ctk.CTkOptionMenu(
@@ -1176,7 +1218,11 @@ def show_chat():
     def update_models(records):
         if not is_open():
             return
-        names = [record.get("name", "") for record in records]
+        names = [
+            record.get("name", "")
+            for record in records
+            if infer_model_capability(record.get("name", "")) == "Chat Supported"
+        ]
         names = [name for name in names if name]
         if not names:
             model_selector.configure(values=["No models available"])
@@ -1186,14 +1232,17 @@ def show_chat():
                 text_color="orange"
             )
             return
-        selected_model["name"] = names[0]
+        configured_chat_model = str(settings.get("chat_model", "qwen3:8b") or "").strip()
+        selected_name = configured_chat_model if configured_chat_model in names else names[0]
+        selected_model["name"] = selected_name
         model_selector.configure(values=names)
-        model_selector.set(names[0])
+        model_selector.set(selected_name)
         chat_status.configure(
             text=f"{len(names)} model(s) available",
             text_color="#32CD32"
         )
         logger.info(f"Chat models loaded: {len(names)}")
+        logger.info("Model capability checked")
 
     def load_models():
         try:
@@ -2988,6 +3037,23 @@ def show_remote_access():
         lan_status_page_enabled=settings.get("remote.lan_status_page_enabled", False),
         lan_status_port=settings.get("remote.lan_status_port", DEFAULT_LAN_STATUS_PORT),
         lan_status_user_confirmed=settings.get("remote.lan_status_user_confirmed", False),
+        lan_chat_enabled=settings.get("remote.lan_chat_enabled", False),
+        lan_chat_port=settings.get("remote.lan_chat_port", DEFAULT_LAN_STATUS_PORT),
+        mobile_access_confirmed=settings.get("remote.mobile_access_confirmed", False),
+        mobile_chat_timeout=settings.get("mobile_chat_timeout", 60),
+        mobile_debug_mode=settings.get("mobile_debug_mode", False),
+        mobile_response_limit=settings.get("mobile_response_limit", 12000),
+        selected_lan_ip=settings.get("remote.selected_lan_ip", ""),
+        selected_adapter=settings.get("remote.selected_adapter", ""),
+        last_mobile_error=settings.get("remote.last_mobile_error", ""),
+        last_mobile_stage=settings.get("remote.last_mobile_stage", ""),
+        last_mobile_status=settings.get("remote.last_mobile_status", ""),
+        last_mobile_duration_ms=settings.get("remote.last_mobile_duration_ms", 0),
+        last_mobile_model=settings.get("remote.last_mobile_model", ""),
+        last_mobile_capability=settings.get("remote.last_mobile_capability", ""),
+        last_mobile_ollama_url=settings.get("remote.last_mobile_ollama_url", ""),
+        last_mobile_client=settings.get("remote.last_mobile_client", ""),
+        last_mobile_time=settings.get("remote.last_mobile_time", ""),
         authentication_configured=settings.get("remote.authentication_configured", False),
         lan_ready=settings.get("remote.lan_ready", False),
         ios_access_ready=settings.get("remote.ios_access_ready", False),
@@ -3039,6 +3105,9 @@ def show_remote_access():
 
     add_status_row("local_address", TEXT["local_address"])
     add_status_row("lan_address", TEXT["lan_address"])
+    add_status_row("selected_adapter", TEXT["selected_network_adapter"])
+    add_status_row("selected_lan_ip", TEXT["selected_lan_ip"])
+    add_status_row("rejected_interfaces", TEXT["rejected_interfaces"])
     add_status_row("network_available", TEXT["network_available"])
     add_status_row("remote_status", TEXT["remote_status"])
     add_status_row("security_status", TEXT["security_status"])
@@ -3122,6 +3191,42 @@ def show_remote_access():
         ("lan_status_lan_url", TEXT["lan_url"]),
     ):
         add_status_row(key, label)
+
+    add_section_title(TEXT["lan_chat"])
+    for key, label in (
+        ("lan_chat_state", TEXT["status"]),
+        ("lan_chat_url", TEXT["mobile_url"]),
+        ("lan_chat_confirmation", TEXT["mobile_access_confirmation"]),
+    ):
+        add_status_row(key, label)
+
+    add_section_title(TEXT["ai_configuration"])
+    for key, label in (
+        ("ai_chat_model", TEXT["chat_model"]),
+        ("ai_embedding_model", TEXT["embedding_model"]),
+        ("ai_model_capability", TEXT["model_capability"]),
+        ("ai_mobile_chat_ready", TEXT["mobile_chat"]),
+    ):
+        add_status_row(key, label)
+
+    add_section_title(TEXT["mobile_debug_panel"])
+    for key, label in (
+        ("mobile_debug_client", TEXT["client"]),
+        ("mobile_debug_stage", TEXT["stage"]),
+        ("mobile_debug_status", TEXT["status"]),
+        ("mobile_debug_duration", TEXT["duration"]),
+        ("mobile_debug_model", TEXT["model_name"]),
+        ("mobile_debug_capability", TEXT["model_capability"]),
+        ("mobile_debug_ollama_url", TEXT["ollama_url"]),
+        ("mobile_debug_error", TEXT["error"]),
+    ):
+        add_status_row(key, label)
+
+    firewall_notice_box = ctk.CTkTextbox(content, height=70, wrap="word")
+    firewall_notice_box.pack(fill="x", padx=15, pady=(4, 8))
+    firewall_notice_box.insert("1.0", TEXT["firewall_notice"])
+    firewall_notice_box.configure(state="disabled")
+    logger.info("Firewall notice displayed")
 
     add_section_title(TEXT["iphone_same_wifi_test"])
     iphone_guide_box = ctk.CTkTextbox(content, height=110, wrap="word")
@@ -3305,6 +3410,8 @@ def show_remote_access():
         tailscale = status.get("tailscale", {})
         lan_checklist = status.get("lan_checklist", [])
         lan_status = status.get("lan_status", {})
+        lan_chat = status.get("lan_chat", {})
+        mobile_debug = status.get("mobile_debug", {})
         safety_gate = status.get("safety_gate", {})
         auth_status = status.get("authentication", {})
         readiness = safety_gate.get("readiness", {})
@@ -3315,6 +3422,10 @@ def show_remote_access():
         ports = security.get("listening_ports", [])
         rows["local_address"].configure(text=network.get("local_address", "127.0.0.1"))
         rows["lan_address"].configure(text=network.get("lan_address", TEXT["unavailable"]))
+        rows["selected_adapter"].configure(text=network.get("selected_adapter", TEXT["unavailable"]))
+        rows["selected_lan_ip"].configure(text=network.get("selected_lan_ip", TEXT["unavailable"]) or TEXT["unavailable"])
+        rejected = network.get("ignored_virtual_adapters", [])
+        rows["rejected_interfaces"].configure(text=", ".join(rejected) if rejected else TEXT["none"])
         rows["network_available"].configure(text=TEXT["yes"] if network_available else TEXT["no"])
         rows["remote_status"].configure(text=TEXT["ready"] if enabled and network_available else TEXT["disabled"])
         rows["security_status"].configure(text=TEXT["auth_required_hint"] if enabled else TEXT["local_only"])
@@ -3334,6 +3445,27 @@ def show_remote_access():
         rows["lan_status_state"].configure(text=TEXT["running"] if lan_status_server.is_running() else TEXT["stopped"])
         rows["lan_status_local_url"].configure(text=lan_urls.get("local_url", f"http://127.0.0.1:{DEFAULT_LAN_STATUS_PORT}"))
         rows["lan_status_lan_url"].configure(text=lan_urls.get("lan_url", TEXT["no_lan_address"]))
+        lan_chat_urls = lan_chat.get("urls", remote_manager.lan_chat_urls())
+        rows["lan_chat_state"].configure(
+            text=TEXT["running"] if lan_status_server.is_running() and lan_status_server.mobile_chat_enabled else TEXT["disabled"]
+        )
+        rows["lan_chat_url"].configure(text=lan_chat_urls.get("mobile_url", TEXT["no_lan_address"]))
+        rows["lan_chat_confirmation"].configure(text=TEXT["confirmed"] if lan_chat.get("mobile_access_confirmed") else TEXT["not_confirmed"])
+        chat_model = str(settings.get("chat_model", "qwen3:8b") or "").strip()
+        embedding_model = str(settings.get("embedding_model", "nomic-embed-text:latest") or "").strip()
+        chat_capability = infer_model_capability(chat_model)
+        rows["ai_chat_model"].configure(text=chat_model)
+        rows["ai_embedding_model"].configure(text=embedding_model)
+        rows["ai_model_capability"].configure(text=chat_capability)
+        rows["ai_mobile_chat_ready"].configure(text=TEXT["ready"] if chat_capability == "Chat Supported" else TEXT["error"])
+        rows["mobile_debug_client"].configure(text=mobile_debug.get("client") or "iPhone Safari")
+        rows["mobile_debug_stage"].configure(text=mobile_debug.get("stage") or "--")
+        rows["mobile_debug_status"].configure(text=mobile_debug.get("status") or "--")
+        rows["mobile_debug_duration"].configure(text=f"{mobile_debug.get('duration_ms', 0)}ms")
+        rows["mobile_debug_model"].configure(text=mobile_debug.get("model") or "--")
+        rows["mobile_debug_capability"].configure(text=mobile_debug.get("capability") or infer_model_capability(mobile_debug.get("model") or chat_model))
+        rows["mobile_debug_ollama_url"].configure(text=mobile_debug.get("ollama_url") or settings.get("ollama.host", "--"))
+        rows["mobile_debug_error"].configure(text=mobile_debug.get("error") or TEXT["none"])
         rows["ios_safari_supported"].configure(text=TEXT["yes"] if ios.get("safari_supported") == "Yes" else TEXT["no"])
         rows["ios_android_required"].configure(text=TEXT["yes"] if ios.get("android_required") == "Yes" else TEXT["no"])
         rows["ios_same_wifi_access"].configure(text=TEXT["future_supported"])
@@ -3443,6 +3575,13 @@ def show_remote_access():
         else:
             logger.info("Remote access disabled")
         logger.info("Remote status checked")
+        logger.info("Chat model loaded")
+        logger.info("Embedding model loaded")
+        logger.info("Model capability checked")
+        if network.get("selected_lan_ip"):
+            logger.info("LAN IP selected")
+        if network.get("ignored_virtual_adapters"):
+            logger.info("Virtual adapter ignored")
         logger.info("Remote security checked")
         logger.info("Remote health checked")
         logger.info("Remote mode displayed")
@@ -3470,6 +3609,7 @@ def show_remote_access():
         logger.info("LAN preview generated")
         logger.info("Tailscale readiness displayed")
         logger.info("Remote safety warning displayed")
+        logger.info("Mobile debug updated")
         if safety_gate.get("ready"):
             logger.info("Remote safety check passed")
         else:
@@ -3503,6 +3643,9 @@ def show_remote_access():
                 settings.set("remote.remote_history", remote_config.get("remote_history", []))
                 assessment = remote_manager.assessment()
                 status = assessment["status"]
+                network_info = status.get("network", {})
+                settings.set("remote.selected_lan_ip", network_info.get("selected_lan_ip", ""))
+                settings.set("remote.selected_adapter", network_info.get("selected_adapter", ""))
                 status["security"] = assessment["security"]
                 status["health"] = assessment["health"]
                 status["url_preview"] = assessment["url_preview"]
@@ -3510,6 +3653,8 @@ def show_remote_access():
                 status["tailscale"] = assessment["tailscale"]
                 status["lan_checklist"] = assessment["lan_checklist"]
                 status["lan_status"] = assessment["lan_status"]
+                status["lan_chat"] = assessment["lan_chat"]
+                status["mobile_debug"] = assessment.get("mobile_debug", {})
                 status["safety_gate"] = assessment["safety_gate"]
                 status["authentication"] = assessment["authentication"]
                 error_message = None
@@ -3538,8 +3683,10 @@ def show_remote_access():
         remote_window.destroy()
         remote_window = None
 
-    buttons = ctk.CTkFrame(remote_window, fg_color="transparent")
+    buttons = ctk.CTkScrollableFrame(remote_window, height=118, fg_color="transparent")
     buttons.pack(fill="x", padx=25, pady=(0, 20))
+    for column in range(3):
+        buttons.grid_columnconfigure(column, weight=1)
 
     def confirm_remote_security():
         logger.info("Remote safety check started")
@@ -3765,6 +3912,8 @@ def show_remote_access():
                 if remote_window is None or not remote_window.winfo_exists():
                     return
                 if result.get("ok"):
+                    if result.get("duplicate"):
+                        logger.info("LAN server duplicate start blocked")
                     remote_manager.update(
                         lan_status_page_enabled=True,
                         lan_status_port=result.get("port", port),
@@ -3798,12 +3947,16 @@ def show_remote_access():
             def finish_stop():
                 if remote_window is None or not remote_window.winfo_exists():
                     return
-                remote_manager.update(lan_status_page_enabled=False)
+                remote_manager.update(enabled=False, lan_status_page_enabled=False, lan_chat_enabled=False)
+                settings.set("remote.enabled", False)
                 settings.set("remote.lan_status_page_enabled", False)
+                settings.set("remote.lan_chat_enabled", False)
                 status_label.configure(
                     text=TEXT["stopped"] if result.get("ok") else result.get("message", TEXT["failed"]),
                     text_color="#32CD32" if result.get("ok") else "red"
                 )
+                if result.get("released"):
+                    logger.info("LAN server port released")
                 logger.info("LAN status page stopped")
                 refresh_remote_status()
 
@@ -3822,15 +3975,143 @@ def show_remote_access():
         status_label.configure(text=TEXT["lan_url"], text_color="#32CD32")
         logger.info("LAN URL copied")
 
-    ctk.CTkButton(buttons, text=TEXT["understand_risk"], command=confirm_remote_security).pack(side="left", expand=True, fill="x", padx=(0, 6))
-    ctk.CTkButton(buttons, text=TEXT["setup_token"], command=setup_token_placeholder).pack(side="left", expand=True, fill="x", padx=6)
-    ctk.CTkButton(buttons, text=TEXT["test_secure_storage"], command=test_secure_storage).pack(side="left", expand=True, fill="x", padx=6)
-    ctk.CTkButton(buttons, text=TEXT["remove_test_credential"], command=remove_test_credential).pack(side="left", expand=True, fill="x", padx=6)
-    ctk.CTkButton(buttons, text=TEXT["start_lan_status_page"], command=start_lan_status_page).pack(side="left", expand=True, fill="x", padx=6)
-    ctk.CTkButton(buttons, text=TEXT["stop_lan_status_page"], command=stop_lan_status_page).pack(side="left", expand=True, fill="x", padx=6)
-    ctk.CTkButton(buttons, text=TEXT["copy_lan_url"], command=copy_lan_url).pack(side="left", expand=True, fill="x", padx=6)
-    ctk.CTkButton(buttons, text=TEXT["refresh"], command=refresh_remote_status).pack(side="left", expand=True, fill="x", padx=(0, 6))
-    ctk.CTkButton(buttons, text=TEXT["close"], command=close_remote_window).pack(side="left", expand=True, fill="x", padx=(6, 0))
+    def mobile_chat_event(event):
+        logger.info(event)
+
+    def start_lan_chat():
+        start_check = remote_manager.lan_chat_start_check()
+        if not start_check.get("mobile_access_confirmed"):
+            confirmed = messagebox.askyesno(TEXT["lan_chat"], TEXT["lan_chat_warning"])
+            if not confirmed:
+                status_label.configure(text=TEXT["blocked"], text_color="red")
+                logger.info("Mobile request blocked")
+                return
+            remote_manager.update(mobile_access_confirmed=True)
+            settings.set("remote.mobile_access_confirmed", True)
+            start_check = remote_manager.lan_chat_start_check()
+
+        if not start_check.get("security_confirmed"):
+            status_label.configure(text=TEXT["security_confirmation_required"], text_color="red")
+            logger.info("Mobile request blocked")
+            return
+        if not start_check.get("network_available") or not start_check.get("lan_address_available"):
+            status_label.configure(text=start_check.get("reason", TEXT["not_ready"]), text_color="red")
+            logger.info("Mobile request blocked")
+            return
+
+        status_label.configure(text=TEXT["checking"], text_color="gray")
+
+        def run_start():
+            port = settings.get("remote.lan_chat_port", settings.get("remote.lan_status_port", DEFAULT_LAN_STATUS_PORT))
+            result = lan_status_server.start(
+                "0.0.0.0",
+                port,
+                lan_status_snapshot,
+                mobile_chat_service=mobile_chat_service,
+                event_callback=mobile_chat_event
+            )
+
+            def finish_start():
+                if remote_window is None or not remote_window.winfo_exists():
+                    return
+                if result.get("ok"):
+                    remote_manager.update(
+                        enabled=True,
+                        lan_status_page_enabled=True,
+                        lan_status_port=result.get("port", port),
+                        lan_chat_enabled=True,
+                        lan_chat_port=result.get("port", port),
+                        mobile_access_confirmed=True
+                    )
+                    settings.set("remote.lan_status_page_enabled", True)
+                    settings.set("remote.enabled", True)
+                    settings.set("remote.lan_status_port", result.get("port", port))
+                    settings.set("remote.lan_chat_enabled", True)
+                    settings.set("remote.lan_chat_port", result.get("port", port))
+                    settings.set("remote.mobile_access_confirmed", True)
+                    status_label.configure(text=TEXT["mobile_chat_started"], text_color="#32CD32")
+                    logger.info("Mobile chat started")
+                else:
+                    remote_manager.update(lan_chat_enabled=False)
+                    settings.set("remote.lan_chat_enabled", False)
+                    message = result.get("message", TEXT["failed"])
+                    status_label.configure(text=message, text_color="red")
+                    if "Port" in str(message):
+                        logger.info("Mobile error handled")
+                    logger.info("Mobile request blocked")
+                refresh_remote_status()
+
+            try:
+                remote_window.after(0, finish_start)
+            except Exception:
+                return
+
+        threading.Thread(target=run_start, daemon=True).start()
+
+    def stop_lan_chat():
+        status_label.configure(text=TEXT["checking"], text_color="gray")
+
+        def run_stop():
+            result = lan_status_server.stop()
+
+            def finish_stop():
+                if remote_window is None or not remote_window.winfo_exists():
+                    return
+                remote_manager.update(enabled=False, lan_status_page_enabled=False, lan_chat_enabled=False)
+                settings.set("remote.enabled", False)
+                settings.set("remote.lan_status_page_enabled", False)
+                settings.set("remote.lan_chat_enabled", False)
+                status_label.configure(
+                    text=TEXT["mobile_chat_stopped"] if result.get("ok") else result.get("message", TEXT["failed"]),
+                    text_color="#32CD32" if result.get("ok") else "red"
+                )
+                if result.get("released"):
+                    logger.info("LAN server port released")
+                logger.info("Mobile chat stopped")
+                refresh_remote_status()
+
+            try:
+                remote_window.after(0, finish_stop)
+            except Exception:
+                return
+
+        threading.Thread(target=run_stop, daemon=True).start()
+
+    def copy_mobile_url():
+        urls = remote_manager.lan_chat_urls()
+        mobile_url = urls.get("mobile_url", TEXT["no_lan_address"])
+        try:
+            app.clipboard_clear()
+            app.clipboard_append(mobile_url)
+            status_label.configure(text=TEXT["mobile_url"], text_color="#32CD32")
+            logger.info("LAN URL copied")
+        except Exception as error:
+            status_label.configure(text=TEXT["copy_failed"], text_color="red")
+            logger.error(f"Mobile URL copy failed: {error}")
+            logger.info("Mobile error handled")
+
+    remote_button_specs = [
+        (TEXT["understand_risk"], confirm_remote_security),
+        (TEXT["setup_token"], setup_token_placeholder),
+        (TEXT["test_secure_storage"], test_secure_storage),
+        (TEXT["remove_test_credential"], remove_test_credential),
+        (TEXT["start_lan_status_page"], start_lan_status_page),
+        (TEXT["stop_lan_status_page"], stop_lan_status_page),
+        (TEXT["copy_lan_url"], copy_lan_url),
+        (TEXT["start_lan_chat"], start_lan_chat),
+        (TEXT["stop_lan_chat"], stop_lan_chat),
+        (TEXT["copy_mobile_url"], copy_mobile_url),
+        (TEXT["refresh"], refresh_remote_status),
+        (TEXT["close"], close_remote_window),
+    ]
+    for index, (text, command) in enumerate(remote_button_specs):
+        ctk.CTkButton(buttons, text=text, command=command).grid(
+            row=index // 3,
+            column=index % 3,
+            sticky="ew",
+            padx=6,
+            pady=5
+        )
     remote_window.protocol("WM_DELETE_WINDOW", close_remote_window)
     refresh_remote_status()
 
@@ -4309,6 +4590,58 @@ def show_settings():
         ["local"],
         settings.get("remote.mode", "local")
     )
+    preferred_interface_entry = add_entry_row(
+        TEXT["preferred_interface"],
+        settings.get("network.preferred_interface", "")
+    )
+    ignore_virtual_adapter_var = ctk.BooleanVar(
+        value=bool(settings.get("network.ignore_virtual_adapter", True))
+    )
+    ctk.CTkSwitch(
+        content,
+        text=TEXT["ignore_virtual_adapter"],
+        variable=ignore_virtual_adapter_var
+    ).pack(anchor="w", padx=10, pady=6)
+    lan_chat_enabled_var = ctk.BooleanVar(
+        value=bool(settings.get("remote.lan_chat_enabled", False))
+    )
+    ctk.CTkSwitch(
+        content,
+        text=TEXT["lan_chat_enable"],
+        variable=lan_chat_enabled_var
+    ).pack(anchor="w", padx=10, pady=6)
+    mobile_access_confirmed_var = ctk.BooleanVar(
+        value=bool(settings.get("remote.mobile_access_confirmed", False))
+    )
+    ctk.CTkSwitch(
+        content,
+        text=TEXT["mobile_access_confirm"],
+        variable=mobile_access_confirmed_var
+    ).pack(anchor="w", padx=10, pady=6)
+    mobile_chat_timeout_entry = add_entry_row(
+        TEXT["mobile_chat_timeout"],
+        settings.get("mobile_chat_timeout", 60)
+    )
+    mobile_debug_mode_var = ctk.BooleanVar(
+        value=bool(settings.get("mobile_debug_mode", False))
+    )
+    ctk.CTkSwitch(
+        content,
+        text=TEXT["mobile_debug_mode"],
+        variable=mobile_debug_mode_var
+    ).pack(anchor="w", padx=10, pady=6)
+    mobile_response_limit_entry = add_entry_row(
+        TEXT["mobile_response_limit"],
+        settings.get("mobile_response_limit", 12000)
+    )
+    chat_model_entry = add_entry_row(
+        TEXT["chat_model"],
+        settings.get("chat_model", "qwen3:8b")
+    )
+    embedding_model_entry = add_entry_row(
+        TEXT["embedding_model"],
+        settings.get("embedding_model", "nomic-embed-text:latest")
+    )
 
     add_section_title("Memory Injection Settings")
     language_option = add_option_row(
@@ -4502,7 +4835,20 @@ def show_settings():
             min_importance = float(min_importance_entry.get().strip())
             max_knowledge = int(max_knowledge_entry.get().strip())
             docker_timeout = int(docker_timeout_entry.get().strip())
-            if max_injection < 1 or min_importance < 0 or max_knowledge < 0 or docker_timeout < 1:
+            mobile_chat_timeout = int(mobile_chat_timeout_entry.get().strip())
+            mobile_response_limit = int(mobile_response_limit_entry.get().strip())
+            chat_model_value = chat_model_entry.get().strip()
+            embedding_model_value = embedding_model_entry.get().strip()
+            if (
+                max_injection < 1
+                or min_importance < 0
+                or max_knowledge < 0
+                or docker_timeout < 1
+                or mobile_chat_timeout < 1
+                or mobile_response_limit < 1000
+                or not chat_model_value
+                or not embedding_model_value
+            ):
                 raise ValueError
         except ValueError:
             result_label.configure(
@@ -4530,6 +4876,15 @@ def show_settings():
             settings.set("services.docker.path", docker_path_entry.get().strip())
             settings.set("services.docker.startup_timeout", max(1, int(docker_timeout_entry.get().strip())))
             settings.set("status.refresh_interval", refresh_interval)
+            settings.set("network.preferred_interface", preferred_interface_entry.get().strip())
+            settings.set("network.ignore_virtual_adapter", ignore_virtual_adapter_var.get())
+            settings.set("chat_model", chat_model_value)
+            settings.set("embedding_model", embedding_model_value)
+            logger.info("Chat model loaded")
+            logger.info("Embedding model loaded")
+            logger.info("Model capability checked")
+            if infer_model_capability(chat_model_value) != "Chat Supported":
+                logger.info("Embedding model blocked from chat")
             requested_remote_enabled = bool(remote_enabled_var.get())
             remote_manager.update(
                 enabled=False,
@@ -4553,7 +4908,13 @@ def show_settings():
                 ios_access_ready=settings.get("remote.ios_access_ready", False),
                 tailscale_ready=settings.get("remote.tailscale_ready", False),
                 user_confirmed=settings.get("remote.user_confirmed", False),
-                security_confirmed=settings.get("remote.security_confirmed", False)
+                security_confirmed=settings.get("remote.security_confirmed", False),
+                lan_chat_enabled=lan_chat_enabled_var.get(),
+                lan_chat_port=settings.get("remote.lan_chat_port", DEFAULT_LAN_STATUS_PORT),
+                mobile_access_confirmed=mobile_access_confirmed_var.get(),
+                mobile_chat_timeout=mobile_chat_timeout,
+                mobile_debug_mode=mobile_debug_mode_var.get(),
+                mobile_response_limit=mobile_response_limit
             )
             remote_enable_allowed = False
             if requested_remote_enabled:
@@ -4607,6 +4968,15 @@ def show_settings():
             settings.set("remote.tailscale_ready", settings.get("remote.tailscale_ready", False))
             settings.set("remote.user_confirmed", settings.get("remote.user_confirmed", False))
             settings.set("remote.security_confirmed", settings.get("remote.security_confirmed", False))
+            settings.set("remote.lan_chat_enabled", lan_chat_enabled_var.get())
+            settings.set("remote.lan_chat_port", settings.get("remote.lan_chat_port", DEFAULT_LAN_STATUS_PORT))
+            settings.set("remote.mobile_access_confirmed", mobile_access_confirmed_var.get())
+            settings.set("remote.mobile_chat_timeout", mobile_chat_timeout)
+            settings.set("remote.mobile_debug_mode", mobile_debug_mode_var.get())
+            settings.set("remote.mobile_response_limit", mobile_response_limit)
+            settings.set("mobile_chat_timeout", mobile_chat_timeout)
+            settings.set("mobile_debug_mode", mobile_debug_mode_var.get())
+            settings.set("mobile_response_limit", mobile_response_limit)
             logger.info("Remote configuration updated")
             if not remote_enable_allowed:
                 logger.info("Remote access disabled")
@@ -4924,8 +5294,11 @@ def show_about():
 
 def shutdown_app():
     if lan_status_server.is_running():
-        lan_status_server.stop()
+        result = lan_status_server.stop()
+        if result.get("released"):
+            logger.info("LAN server port released")
         logger.info("LAN status page stopped")
+        logger.info("Mobile chat stopped")
     app.destroy()
 
 

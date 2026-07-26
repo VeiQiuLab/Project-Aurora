@@ -6,6 +6,39 @@ def _hidden_window_flags():
 
 
 MODEL_FIELDS = ("name", "model_id", "size", "modified")
+EMBEDDING_MODEL_MARKERS = (
+    "nomic-embed",
+    "embed",
+    "embedding",
+    "bge",
+    "e5",
+    "all-minilm",
+    "snowflake-arctic-embed"
+)
+
+
+def infer_model_capability(model_name):
+    """Infer whether an Ollama model should be used for chat or embeddings."""
+
+    name = str(model_name or "").strip().lower()
+    if not name:
+        return "Unknown"
+    if any(marker in name for marker in EMBEDDING_MODEL_MARKERS):
+        return "Embedding Only"
+    return "Chat Supported"
+
+
+def model_supports_chat(model_name):
+    return infer_model_capability(model_name) == "Chat Supported"
+
+
+def model_capability_record(model_name):
+    capability = infer_model_capability(model_name)
+    return {
+        "model": str(model_name or "").strip(),
+        "capability": capability,
+        "chat_supported": capability == "Chat Supported"
+    }
 
 
 def get_model_records():
@@ -55,7 +88,8 @@ def get_model_records():
                 "name": name,
                 "model_id": model_id,
                 "size": " ".join(values[2:size_end]),
-                "modified": " ".join(values[size_end:])
+                "modified": " ".join(values[size_end:]),
+                "capability": infer_model_capability(name)
             }
             records.append(record)
 

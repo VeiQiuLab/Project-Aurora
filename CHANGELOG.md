@@ -1,5 +1,35 @@
 # Project Aurora Changelog
 
+## v2.1.4 - 2026.07.26
+
+- Split Chat Model and Embedding Model settings so Mobile Chat uses `chat_model` and keeps embedding models out of Ollama chat requests.
+- Added model capability checks for Chat Supported, Embedding Only, and Unknown, with explicit blocking for embedding-only chat attempts.
+- Enhanced Remote AI Configuration, Mobile Status API, Mobile Debug Panel, and LAN IP/rejected-interface display for real-device debugging.
+
+## v2.1.3 - 2026.07.26
+
+- Added LAN IP selection that prioritizes real home LAN IPv4 addresses and excludes loopback, APIPA, Docker, WSL, and 172.16-31 virtual ranges.
+- Enhanced Mobile Chat Ollama diagnostics with URL, model, available models, connection status, HTTP status, and detailed error reporting.
+- Added Remote Mobile Debug Panel with last request client, stage, status, duration, model, Ollama URL, and error details.
+
+## v2.1.2 - 2026.07.26
+
+- Added Mobile Chat error details for Ollama availability, context build, generation, timeout, invalid response, and unknown failures.
+- Added `/api/mobile-status`, AI readiness display, staged Recent Log diagnostics, and mobile debug/response-limit settings compatibility.
+- Improved Remote Access button layout with a scrollable grid to keep LAN Status, LAN Chat, Authentication, Security, and Diagnostics controls reachable.
+
+## v2.1.1 - 2026.07.26
+
+- Improved LAN Chat mobile Safari layout, long-response rendering, basic Markdown display, and auto-scroll behavior.
+- Added mobile chat timeout handling, friendly bilingual errors, duplicate-start protection, and port-release logging.
+- Added firewall notice, copy-failure handling, mobile_chat_timeout settings compatibility, and EXE-oriented lifecycle cleanup.
+
+## v2.1 - 2026.07.26
+
+- Added LAN Chat prototype with mobile Safari `/chat` page and `/api/mobile-chat` request bridge.
+- Added Mobile Chat backend that reuses existing Chat, Persona, Memory, Knowledge, and context assembly modules.
+- Added Remote Access LAN Chat controls, mobile URL copy, compatibility fields, and disabled-by-default safety flow.
+
 ## v2.0 - 2026.07.23
 
 - Added Aurora Showcase home section for Chat, Memory, Knowledge, Persona, and Remote Security readiness.

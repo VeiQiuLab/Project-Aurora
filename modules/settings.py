@@ -1,5 +1,6 @@
 import json
 import os
+import copy
 from pathlib import Path
 
 
@@ -36,6 +37,15 @@ class Settings:
                 "preview_limit": 4000,
                 "inspector_preview_limit": 4000
             },
+            "chat_model": "qwen3:8b",
+            "embedding_model": "nomic-embed-text:latest",
+            "mobile_chat_timeout": 60,
+            "mobile_debug_mode": False,
+            "mobile_response_limit": 12000,
+            "network": {
+                "preferred_interface": "",
+                "ignore_virtual_adapter": True
+            },
             "remote": {
                 "enabled": False,
                 "mode": "local",
@@ -67,6 +77,22 @@ class Settings:
                 "lan_status_page_enabled": False,
                 "lan_status_port": 8765,
                 "lan_status_user_confirmed": False,
+                "lan_chat_enabled": False,
+                "lan_chat_port": 8765,
+                "mobile_access_confirmed": False,
+                "mobile_debug_mode": False,
+                "mobile_response_limit": 12000,
+                "selected_lan_ip": "",
+                "selected_adapter": "",
+                "last_mobile_error": "",
+                "last_mobile_stage": "",
+                "last_mobile_status": "",
+                "last_mobile_duration_ms": 0,
+                "last_mobile_model": "",
+                "last_mobile_capability": "",
+                "last_mobile_ollama_url": "",
+                "last_mobile_client": "",
+                "last_mobile_time": "",
                 "lan_ready": False,
                 "ios_access_ready": False,
                 "tailscale_ready": False,
@@ -122,6 +148,51 @@ class Settings:
         except Exception:
             self.data = self.default_settings.copy()
             self.save()
+            return
+
+        if self._merge_defaults(self.data, self.default_settings):
+            try:
+                self.save()
+            except OSError:
+                pass
+        if self._migrate_model_settings():
+            try:
+                self.save()
+            except OSError:
+                pass
+
+    def _migrate_model_settings(self):
+        changed = False
+        if not isinstance(self.data, dict):
+            return False
+        legacy_model = str(self.data.get("model") or self.data.get("mobile", {}).get("model", "") or "").strip()
+        current_chat_model = str(self.data.get("chat_model", "") or "").strip()
+        if legacy_model and (not current_chat_model or current_chat_model == self.default_settings["chat_model"]):
+            self.data["chat_model"] = legacy_model
+            changed = True
+        if not str(self.data.get("chat_model", "") or "").strip():
+            self.data["chat_model"] = self.default_settings["chat_model"]
+            changed = True
+        if not str(self.data.get("embedding_model", "") or "").strip():
+            self.data["embedding_model"] = self.default_settings["embedding_model"]
+            changed = True
+        return changed
+
+    def _merge_defaults(self, target, defaults):
+        changed = False
+        if not isinstance(target, dict):
+            return False
+        for key, default_value in defaults.items():
+            if key not in target:
+                target[key] = copy.deepcopy(default_value)
+                changed = True
+            elif isinstance(default_value, dict):
+                if not isinstance(target[key], dict):
+                    target[key] = copy.deepcopy(default_value)
+                    changed = True
+                elif self._merge_defaults(target[key], default_value):
+                    changed = True
+        return changed
 
     def save(self):
         self.config_dir.mkdir(parents=True, exist_ok=True)
