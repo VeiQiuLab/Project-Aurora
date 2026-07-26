@@ -386,4 +386,10 @@ def stream_chat(model, prompt, session, on_chunk, stop_event):
     assistant_response = "".join(assistant_parts)
     if assistant_response:
         session.add_assistant(assistant_response)
+        if not stop_event.is_set():
+            try:
+                from modules.memory import MemoryStore
+                MemoryStore().queue_candidates(session.snapshot(), source="chat")
+            except Exception:
+                pass
     return "stopped" if stop_event.is_set() else "completed"

@@ -105,6 +105,7 @@ class MemoryStore:
             self.file_path = candidate / "memories.json" if candidate.suffix.lower() != ".json" else candidate
         else:
             self.file_path = root / "data" / "memory" / "memories.json"
+        self.candidates_file = self.file_path.parent / "memory_candidates.json"
         self.file_path.parent.mkdir(parents=True, exist_ok=True)
         self._lock = threading.Lock()
 
@@ -223,9 +224,107 @@ class MemoryStore:
             existing.add(key)
         return saved
 
+    def _normalize_candidate(self, item):
+        now = self._now()
+        normalized = dict(item) if isinstance(item, dict) else {}
+        normalized.setdefault("id", uuid.uuid4().hex)
+        normalized.setdefault("type", "fact")
+        normalized.setdefault("content", "")
+        normalized.setdefault("score", 0)
+        normalized.setdefault("importance", "normal")
+        normalized.setdefault("status", "pending")
+        normalized.setdefault("source", "chat")
+        normalized.setdefault("created_time", now)
+        normalized.setdefault("updated_time", normalized["created_time"])
+        if normalized["type"] not in MEMORY_TYPES:
+            normalized["type"] = "fact"
+        if normalized["status"] not in {"pending", "approved", "rejected"}:
+            normalized["status"] = "pending"
+        return normalized
+
+    def list_candidates(self, status=None):
+        if not self.candidates_file.exists():
+            return []
+        try:
+            data = json.loads(self.candidates_file.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError):
+            return []
+        if not isinstance(data, list):
+            return []
+        candidates = [self._normalize_candidate(item) for item in data]
+        if status:
+            candidates = [item for item in candidates if item.get("status") == status]
+        return candidates
+
+    def queue_candidates(self, messages_or_text, source="chat", min_score=0.75):
+        extracted = self.extract_candidates(messages_or_text, min_score=min_score)
+        if not extracted:
+            return []
+        memories = {
+            str(item.get("content", "")).strip().casefold()
+            for item in self.list_memories()
+        }
+        candidates = self.list_candidates()
+        queued = {
+            str(item.get("content", "")).strip().casefold()
+            for item in candidates
+            if item.get("status") == "pending"
+        }
+        added = []
+        now = self._now()
+        for item in extracted:
+            content = str(item.get("content", "")).strip()
+            key = content.casefold()
+            if not content or key in memories or key in queued:
+                continue
+            candidate = self._normalize_candidate({
+                "type": item.get("type", "fact"),
+                "content": content,
+                "score": item.get("score", 0),
+                "importance": item.get("importance", "normal"),
+                "status": "pending",
+                "source": source,
+                "created_time": now,
+                "updated_time": now
+            })
+            candidates.append(candidate)
+            queued.add(key)
+            added.append(candidate)
+        if added:
+            self._write_candidates(candidates)
+        return added
+
+    def approve_candidate(self, candidate_id):
+        candidates = self.list_candidates()
+        for item in candidates:
+            if item.get("id") == candidate_id:
+                saved = self.save_candidates([item], min_score=0)
+                item["status"] = "approved"
+                item["updated_time"] = self._now()
+                self._write_candidates(candidates)
+                return saved[0] if saved else None
+        raise KeyError(candidate_id)
+
+    def reject_candidate(self, candidate_id):
+        candidates = self.list_candidates()
+        for item in candidates:
+            if item.get("id") == candidate_id:
+                item["status"] = "rejected"
+                item["updated_time"] = self._now()
+                self._write_candidates(candidates)
+                return item
+        raise KeyError(candidate_id)
+
     def _write(self, memories):
         with self._lock:
             self.file_path.write_text(
                 json.dumps(memories, ensure_ascii=False, indent=2),
+                encoding="utf-8"
+            )
+
+    def _write_candidates(self, candidates):
+        with self._lock:
+            self.candidates_file.write_text(
+                json.dumps(candidates, ensure_ascii=False, indent=2),
                 encoding="utf-8"
             )
