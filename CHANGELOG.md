@@ -1,5 +1,13 @@
 # Project Aurora Changelog
 
+## v2.4.1 - 2026.07.26
+
+### Stability & Testing
+
+- Added Startup Health Check for Ollama, Chat Model, Embedding Model, Memory, Knowledge, Vector Index, Conversation Store, Persona, and Remote configuration.
+- Added System Self Check summary with Healthy / Warning / Error status.
+- Added Knowledge embedding and vector index health reporting for stable maintenance.
+
 ## v2.4.0 - 2026.07.26
 
 ### Knowledge Embedding Foundation

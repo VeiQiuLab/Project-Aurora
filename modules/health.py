@@ -10,6 +10,7 @@ from modules.models import infer_model_capability
 
 DEFAULT_OLLAMA_HOST = "http://127.0.0.1:11434"
 DEFAULT_OPENWEBUI_URL = "http://localhost:8080"
+HEALTH_ORDER = {"Healthy": 0, "Warning": 1, "Error": 2}
 
 
 def endpoint_from_url(url, default_host, default_port):
@@ -146,6 +147,171 @@ def check_http_service(url=DEFAULT_OPENWEBUI_URL, timeout=3):
         return {"available": False, "status": "Error", "reason": f"HTTP {error.code}", "http_status": error.code}
     except (urllib.error.URLError, OSError, TimeoutError, ValueError) as error:
         return {"available": False, "status": "Offline", "reason": str(error)}
+
+
+def _health_item(name, status="Healthy", message="", details=None):
+    return {
+        "name": name,
+        "status": status,
+        "message": str(message or ""),
+        "details": details or {}
+    }
+
+
+def _overall_status(items):
+    status = "Healthy"
+    for item in items or []:
+        current = item.get("status", "Healthy")
+        if HEALTH_ORDER.get(current, 0) > HEALTH_ORDER.get(status, 0):
+            status = current
+    return status
+
+
+def check_startup_health(timeout=3):
+    """Return a unified startup health report for Aurora core modules."""
+
+    items = []
+    ollama_url = settings.get("ollama.host", DEFAULT_OLLAMA_HOST)
+    chat_model = str(settings.get("chat_model", "qwen3:8b") or "").strip()
+    embedding_model = str(settings.get("embedding_model", "nomic-embed-text:latest") or "").strip()
+
+    ollama = check_ollama_diagnostics(ollama_url, model=chat_model, timeout=timeout)
+    ollama_status = "Healthy" if ollama.get("api_available") else "Error"
+    items.append(_health_item(
+        "Ollama",
+        ollama_status,
+        "Ollama API available." if ollama_status == "Healthy" else ollama.get("error_detail", "Ollama unavailable."),
+        ollama
+    ))
+    items.append(_health_item(
+        "Chat Model",
+        "Healthy" if ollama.get("model_available") and ollama.get("chat_support") else "Warning",
+        "Chat model available." if ollama.get("model_available") and ollama.get("chat_support") else ollama.get("error_detail", "Chat model not confirmed."),
+        {
+            "model": chat_model,
+            "available": bool(ollama.get("model_available")),
+            "capability": infer_model_capability(chat_model)
+        }
+    ))
+    embedding_available = bool(embedding_model and embedding_model in ollama.get("available_models", []))
+    items.append(_health_item(
+        "Embedding Model",
+        "Healthy" if embedding_available else "Warning",
+        "Embedding model available." if embedding_available else "Embedding model not confirmed in Ollama model list.",
+        {
+            "model": embedding_model,
+            "available": embedding_available,
+            "capability": infer_model_capability(embedding_model)
+        }
+    ))
+
+    try:
+        from modules.memory import MemoryStore
+        memory_store = MemoryStore()
+        memories = memory_store.list_memories()
+        items.append(_health_item(
+            "Memory",
+            "Healthy",
+            f"Memory store readable. Records: {len(memories)}",
+            {"records": len(memories), "path": str(memory_store.file_path)}
+        ))
+    except Exception as error:
+        items.append(_health_item("Memory", "Error", error))
+
+    try:
+        from modules.knowledge import KnowledgeStore
+        knowledge_store = KnowledgeStore()
+        knowledge = knowledge_store.health()
+        status = "Healthy"
+        if knowledge.get("metadata_errors", 0) or knowledge.get("errors", 0):
+            status = "Error"
+        elif knowledge.get("missing", 0) or knowledge.get("embedding_needs_reindex", 0):
+            status = "Warning"
+        items.append(_health_item(
+            "Knowledge",
+            status,
+            f"Knowledge files: {knowledge.get('total', 0)}",
+            knowledge
+        ))
+        vector = knowledge.get("vector_index", {})
+        vector_status = "Healthy"
+        if vector.get("invalid", 0):
+            vector_status = "Error"
+        elif not vector.get("exists") or vector.get("missing", 0) or vector.get("stale", 0) or vector.get("orphaned", 0):
+            vector_status = "Warning"
+        items.append(_health_item(
+            "Vector Index",
+            vector_status,
+            "Vector index healthy." if vector_status == "Healthy" else "Vector index needs attention.",
+            vector
+        ))
+    except Exception as error:
+        items.append(_health_item("Knowledge", "Error", error))
+        items.append(_health_item("Vector Index", "Error", error))
+
+    try:
+        from modules.conversation import ConversationManager
+        conversation_manager = ConversationManager()
+        conversations = conversation_manager.list_conversations()
+        items.append(_health_item(
+            "Conversation Store",
+            "Healthy",
+            f"Conversation store readable. Records: {len(conversations)}",
+            {"records": len(conversations), "path": str(conversation_manager.directory)}
+        ))
+    except Exception as error:
+        items.append(_health_item("Conversation Store", "Error", error))
+
+    try:
+        from modules.persona import PersonaStore
+        persona_store = PersonaStore()
+        persona = persona_store.load(update_timestamp=False)
+        persona_status = persona_store.status(settings.get("persona.enabled", True), persona)
+        items.append(_health_item(
+            "Persona",
+            "Healthy" if persona_status.get("name") else "Warning",
+            "Persona loaded." if persona_status.get("name") else "Persona name missing.",
+            persona_status
+        ))
+    except Exception as error:
+        items.append(_health_item("Persona", "Error", error))
+
+    try:
+        from modules.remote import RemoteAccessManager
+        from modules.authentication import AuthenticationManager
+        remote_manager = RemoteAccessManager()
+        remote_status = remote_manager.status()
+        auth_status = AuthenticationManager(remote_manager.file_path).status()
+        items.append(_health_item(
+            "Remote",
+            "Healthy",
+            "Remote framework readable.",
+            {
+                "remote_status": remote_status.get("remote_status"),
+                "security_status": remote_status.get("security_status"),
+                "authentication": auth_status.get("status")
+            }
+        ))
+    except Exception as error:
+        items.append(_health_item("Remote", "Error", error))
+
+    return {
+        "status": _overall_status(items),
+        "items": items
+    }
+
+
+def system_self_check(timeout=3):
+    """Return a compact Healthy / Warning / Error report for stable releases."""
+
+    report = check_startup_health(timeout=timeout)
+    return {
+        "status": report.get("status", "Error"),
+        "healthy": sum(1 for item in report.get("items", []) if item.get("status") == "Healthy"),
+        "warnings": sum(1 for item in report.get("items", []) if item.get("status") == "Warning"),
+        "errors": sum(1 for item in report.get("items", []) if item.get("status") == "Error"),
+        "items": report.get("items", [])
+    }
 
 
 def check_all():
