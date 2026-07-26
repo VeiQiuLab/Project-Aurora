@@ -20,6 +20,14 @@ TEMPORARY_PATTERNS = [
     r"\btoday\b|\btomorrow\b|\byesterday\b|\btonight\b|\bthis week\b",
     r"今天|明天|昨天|今晚|这周|临时|一次性"
 ]
+HIGH_VALUE_PATTERNS = [
+    r"\balways\b|\bprefer\b|\bimportant\b|\bremember\b|\bdefault\b",
+    r"总是|长期|重要|默认|记住|偏好|习惯"
+]
+LOW_VALUE_PATTERNS = [
+    r"\bmaybe\b|\bprobably\b|\btry\b|\btest\b",
+    r"可能|也许|试试|测试|随便"
+]
 EXTRACTION_RULES = [
     ("preference", 0.86, r"\bI (?:prefer|like|love|usually use|always use)\b(.+)"),
     ("preference", 0.82, r"\bMy preferred\b(.+)"),
@@ -113,6 +121,61 @@ class MemoryStore:
     def _now():
         return datetime.now(timezone.utc).isoformat(timespec="seconds")
 
+    @staticmethod
+    def _tokens(value):
+        return set(re.findall(r"[a-z0-9_]+|[\u4e00-\u9fff]", str(value or "").casefold()))
+
+    @classmethod
+    def _similarity(cls, first, second):
+        left = cls._tokens(first)
+        right = cls._tokens(second)
+        if not left or not right:
+            return 0.0
+        return len(left.intersection(right)) / max(1, len(left.union(right)))
+
+    @classmethod
+    def _is_similar(cls, first, second, threshold=0.82):
+        first_text = str(first or "").strip().casefold()
+        second_text = str(second or "").strip().casefold()
+        if not first_text or not second_text:
+            return False
+        return first_text == second_text or cls._similarity(first_text, second_text) >= threshold
+
+    @staticmethod
+    def _importance_value(value):
+        try:
+            return float(value)
+        except (TypeError, ValueError):
+            return {"high": 10.0, "normal": 5.0, "low": 1.0}.get(str(value).casefold(), 5.0)
+
+    @staticmethod
+    def _importance_label(score):
+        if score >= 8:
+            return "high"
+        if score <= 2:
+            return "low"
+        return "normal"
+
+    def score_candidate(self, candidate):
+        if not isinstance(candidate, dict):
+            return 0.0, "low"
+        content = str(candidate.get("content", ""))
+        try:
+            score = float(candidate.get("score", 0)) * 10
+        except (TypeError, ValueError):
+            score = 0
+        memory_type = str(candidate.get("type", "fact"))
+        if memory_type == "instruction":
+            score += 1.5
+        elif memory_type == "preference":
+            score += 1.0
+        if any(re.search(pattern, content, re.IGNORECASE) for pattern in HIGH_VALUE_PATTERNS):
+            score += 1.0
+        if any(re.search(pattern, content, re.IGNORECASE) for pattern in LOW_VALUE_PATTERNS):
+            score -= 2.0
+        score = max(0.0, min(10.0, score))
+        return score, self._importance_label(score)
+
     def _normalize(self, item):
         now = self._now()
         normalized = dict(item) if isinstance(item, dict) else {}
@@ -186,13 +249,17 @@ class MemoryStore:
     def merge(self, items):
         memories = self.list_memories()
         existing_ids = {item.get("id") for item in memories}
+        existing_content = [item.get("content", "") for item in memories]
         added = 0
         for item in items or []:
             normalized = self._normalize(item)
             if normalized["id"] in existing_ids:
                 continue
+            if any(self._is_similar(normalized.get("content", ""), content) for content in existing_content):
+                continue
             memories.append(normalized)
             existing_ids.add(normalized["id"])
+            existing_content.append(normalized.get("content", ""))
             added += 1
         self._write(memories)
         return added
@@ -218,6 +285,7 @@ class MemoryStore:
             str(item.get("content", "")).strip().casefold()
             for item in self.list_memories()
         }
+        existing_content = [item.get("content", "") for item in self.list_memories()]
         saved = []
         for candidate in candidates or []:
             if not isinstance(candidate, dict):
@@ -233,8 +301,12 @@ class MemoryStore:
             key = content.casefold()
             if key in existing:
                 continue
-            saved.append(self.create(memory_type, content, candidate.get("importance", "normal")))
+            if any(self._is_similar(content, existing_item) for existing_item in existing_content):
+                continue
+            _quality, importance = self.score_candidate(candidate)
+            saved.append(self.create(memory_type, content, importance))
             existing.add(key)
+            existing_content.append(content)
         return saved
 
     def _normalize_candidate(self, item):
@@ -253,6 +325,8 @@ class MemoryStore:
             normalized["type"] = "fact"
         if normalized["status"] not in {"pending", "approved", "rejected"}:
             normalized["status"] = "pending"
+        _quality, importance = self.score_candidate(normalized)
+        normalized["importance"] = importance
         return normalized
 
     def list_candidates(self, status=None):
@@ -277,12 +351,18 @@ class MemoryStore:
             str(item.get("content", "")).strip().casefold()
             for item in self.list_memories()
         }
+        memory_content = [item.get("content", "") for item in self.list_memories()]
         candidates = self.list_candidates()
         queued = {
             str(item.get("content", "")).strip().casefold()
             for item in candidates
             if item.get("status") == "pending"
         }
+        queued_content = [
+            item.get("content", "")
+            for item in candidates
+            if item.get("status") == "pending"
+        ]
         added = []
         now = self._now()
         for item in extracted:
@@ -290,18 +370,24 @@ class MemoryStore:
             key = content.casefold()
             if not content or key in memories or key in queued:
                 continue
+            if any(self._is_similar(content, existing) for existing in memory_content + queued_content):
+                continue
+            quality, importance = self.score_candidate(item)
             candidate = self._normalize_candidate({
                 "type": item.get("type", "fact"),
                 "content": content,
                 "score": item.get("score", 0),
-                "importance": item.get("importance", "normal"),
+                "importance": importance,
                 "status": "pending",
                 "source": source,
                 "created_time": now,
                 "updated_time": now
             })
+            if quality < 2:
+                candidate["importance"] = "low"
             candidates.append(candidate)
             queued.add(key)
+            queued_content.append(content)
             added.append(candidate)
         if added:
             self._write_candidates(candidates)
