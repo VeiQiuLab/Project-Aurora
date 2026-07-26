@@ -19,7 +19,6 @@ from modules.conversation import ConversationManager
 from modules.health import check_ollama_diagnostics
 from modules.knowledge import KnowledgeStore
 from modules.memory import MemoryStore
-from modules.memory_retrieval import format_memory_context, retrieve_memories
 from modules.models import infer_model_capability, model_supports_chat
 from modules.persona import PersonaStore
 from modules.remote import RemoteAccessManager
@@ -288,9 +287,8 @@ class MobileChatService:
     def build_context_sections(self, prompt):
         self._emit("Mobile context build started")
         self._emit("Context building started")
-        memories = retrieve_memories(
+        memories = self.memory_store.retrieve(
             prompt,
-            self.memory_store.list_memories(),
             max_results=settings.get("memory.max_injection", 5),
             min_importance=settings.get("memory.min_importance", 0)
         )
@@ -307,7 +305,7 @@ class MobileChatService:
         if settings.get("persona.enabled", True):
             persona_text = self.persona_store.build_context(self.persona_store.load(update_timestamp=False))
         self._emit("Persona loaded")
-        memory_text = format_memory_context(memories)
+        memory_text = self.memory_store.format_context(memories)
         knowledge_text = format_knowledge_context(knowledge_items)
         conversation_text = self._conversation_context()
         return [

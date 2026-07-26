@@ -200,6 +200,19 @@ class MemoryStore:
     def extract_candidates(self, messages_or_text, min_score=0.75):
         return MemoryExtractor(min_score=min_score).extract(messages_or_text)
 
+    def retrieve(self, prompt, max_results=5, min_importance=0):
+        from modules.memory_retrieval import retrieve_memories
+        return retrieve_memories(
+            prompt,
+            self.list_memories(),
+            max_results=max_results,
+            min_importance=min_importance
+        )
+
+    def format_context(self, memories, limit=1200):
+        from modules.memory_retrieval import format_memory_context
+        return format_memory_context(memories, limit=limit)
+
     def save_candidates(self, candidates, min_score=0.75):
         existing = {
             str(item.get("content", "")).strip().casefold()
