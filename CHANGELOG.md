@@ -1,5 +1,26 @@
 # Project Aurora Changelog
 
+## v2.4.0 - 2026.07.26
+
+### Knowledge Embedding Foundation
+
+- Ollama embedding provider
+- Knowledge embedding metadata
+- 基础 embedding 接口
+
+## v2.3.0 - 2026.07.26
+
+- Memory Extractor
+- Memory Candidate Workflow
+- Memory Retrieval
+- Memory Quality Control
+
+## v2.2.0 - 2026.07.26
+
+- Mobile Experience
+- Conversation Storage
+- Mobile UI improvements
+
 ## Project Aurora v2.2 Phase 3-A
 
 - Mobile UI Foundation completed
