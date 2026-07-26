@@ -22,7 +22,7 @@ from modules.memory import MemoryStore
 from modules.models import infer_model_capability, model_supports_chat
 from modules.persona import PersonaStore
 from modules.remote import RemoteAccessManager
-from modules.retrieval import format_knowledge_context, search_knowledge
+from modules.retrieval import format_knowledge_context
 from modules.settings import settings
 
 
@@ -295,9 +295,8 @@ class MobileChatService:
         self._emit("Memory loaded")
         knowledge_items = []
         if settings.get("knowledge.enabled", True):
-            knowledge_items = search_knowledge(
+            knowledge_items = self.knowledge_store.retrieve(
                 prompt,
-                self.knowledge_store.list_items(),
                 max_results=settings.get("knowledge.max_results", 3)
             )
         self._emit("Knowledge loaded")

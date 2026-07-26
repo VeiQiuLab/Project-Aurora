@@ -1296,9 +1296,8 @@ def show_chat():
             except (TypeError, ValueError):
                 max_knowledge = 3
             knowledge_items = knowledge_store.list_items()
-            matched_knowledge = search_knowledge(
+            matched_knowledge = knowledge_store.retrieve(
                 prompt,
-                knowledge_items,
                 max_results=max_knowledge
             )
             disabled_matches = retrieval_summary(
@@ -1439,9 +1438,8 @@ def show_chat():
                     max_knowledge = max(0, int(settings.get("knowledge.max_results", 3)))
                 except (TypeError, ValueError):
                     max_knowledge = 3
-                knowledge_items = search_knowledge(
+                knowledge_items = knowledge_store.retrieve(
                     prompt,
-                    knowledge_store.list_items(),
                     max_results=max_knowledge
                 )
             duration_ms = int((time.perf_counter() - started_at) * 1000)
@@ -2934,9 +2932,8 @@ def show_persona():
                         max_knowledge = max(0, int(settings.get("knowledge.max_results", 3)))
                     except (TypeError, ValueError):
                         max_knowledge = 3
-                    knowledge_items = search_knowledge(
+                    knowledge_items = knowledge_store.retrieve(
                         prompt,
-                        knowledge_store.list_items(),
                         max_results=max_knowledge
                     )
                 active_persona = data if settings.get("persona.enabled", True) else None

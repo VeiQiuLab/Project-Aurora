@@ -438,6 +438,46 @@ class KnowledgeStore:
             enabled_only=enabled_only
         )
 
+    def retrieve(self, prompt, max_results=3, enabled_only=True, prefer_vector=True):
+        """Retrieve Knowledge records with vector search and keyword fallback."""
+
+        text = str(prompt or "").strip()
+        if not text:
+            return []
+        try:
+            limit = max(0, int(max_results))
+        except (TypeError, ValueError):
+            limit = 3
+        if limit <= 0:
+            return []
+
+        if prefer_vector:
+            try:
+                if not self._read_vector_index().get("items"):
+                    raise ValueError("Vector index is empty.")
+                vector_results = self.vector_search(
+                    text,
+                    top_k=limit,
+                    enabled_only=enabled_only
+                )
+                records = [
+                    dict(result.get("record", {}))
+                    for result in vector_results
+                    if isinstance(result, dict) and isinstance(result.get("record"), dict)
+                ]
+                if records:
+                    return records
+            except Exception:
+                pass
+
+        from modules.retrieval import search_knowledge
+        return search_knowledge(
+            text,
+            self.list_items(),
+            max_results=limit,
+            enabled_only=enabled_only
+        )
+
     def preview(self, item_id, limit=PREVIEW_LIMIT):
         record = next((item for item in self.list_items() if item.get("id") == item_id), None)
         if record is None:
