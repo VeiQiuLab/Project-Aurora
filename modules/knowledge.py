@@ -478,6 +478,161 @@ class KnowledgeStore:
             enabled_only=enabled_only
         )
 
+    def _vector_entries_by_id(self):
+        entries = {}
+        for entry in self._read_vector_index().get("items", []):
+            item_id = str(entry.get("id") or "")
+            if item_id:
+                entries[item_id] = entry
+        return entries
+
+    def embedding_state(self, item, vector_entry=None):
+        if not isinstance(item, dict):
+            return {
+                "status": "Invalid",
+                "has_embedding": False,
+                "stale": False,
+                "needs_reindex": True,
+                "reason": "Invalid knowledge record."
+            }
+        if not self.valid_for_retrieval(item):
+            return {
+                "status": "Unavailable",
+                "has_embedding": False,
+                "stale": False,
+                "needs_reindex": False,
+                "reason": "Knowledge item is not readable for embedding."
+            }
+
+        entry = vector_entry
+        if entry is None:
+            entry = self._vector_entries_by_id().get(str(item.get("id") or ""))
+        if not isinstance(entry, dict):
+            return {
+                "status": "Not Indexed",
+                "has_embedding": False,
+                "stale": False,
+                "needs_reindex": True,
+                "reason": "No vector index entry."
+            }
+
+        vector = self._normalize_vector(entry.get("embedding", []))
+        dimensions = int(entry.get("dimensions") or 0)
+        if not vector or dimensions != len(vector):
+            return {
+                "status": "Invalid",
+                "has_embedding": bool(vector),
+                "stale": False,
+                "needs_reindex": True,
+                "reason": "Vector dimensions are invalid."
+            }
+
+        current_hash = self._content_hash(item.get("content", ""))
+        indexed_hash = str(entry.get("content_hash") or "")
+        if indexed_hash and indexed_hash != current_hash:
+            return {
+                "status": "Stale",
+                "has_embedding": True,
+                "stale": True,
+                "needs_reindex": True,
+                "reason": "Knowledge content changed after indexing."
+            }
+
+        return {
+            "status": "Indexed",
+            "has_embedding": True,
+            "stale": False,
+            "needs_reindex": False,
+            "reason": ""
+        }
+
+    def refresh_embedding_status(self, records=None):
+        items = records if records is not None else self.list_items()
+        entries = self._vector_entries_by_id()
+        changed = False
+        summary = {
+            "indexed": 0,
+            "not_indexed": 0,
+            "stale": 0,
+            "invalid": 0,
+            "unavailable": 0,
+            "needs_reindex": 0
+        }
+        for item in items:
+            state = self.embedding_state(item, entries.get(str(item.get("id") or "")))
+            status = state.get("status", "Not Indexed")
+            if status == "Indexed":
+                summary["indexed"] += 1
+            elif status == "Stale":
+                summary["stale"] += 1
+            elif status == "Invalid":
+                summary["invalid"] += 1
+            elif status == "Unavailable":
+                summary["unavailable"] += 1
+            else:
+                summary["not_indexed"] += 1
+            if state.get("needs_reindex"):
+                summary["needs_reindex"] += 1
+            if item.get("embedding_status") != status:
+                item["embedding_status"] = status
+                item["updated_time"] = self._now()
+                changed = True
+        if changed:
+            self._write(items)
+        summary["updated"] = changed
+        return summary
+
+    def vector_index_health(self, records=None):
+        items = records if records is not None else self.list_items()
+        records_by_id = {str(item.get("id") or ""): item for item in items}
+        index = self._read_vector_index()
+        entries = index.get("items", [])
+        orphaned = []
+        invalid = []
+        stale = []
+        indexed = 0
+        for entry in entries:
+            item_id = str(entry.get("id") or "")
+            record = records_by_id.get(item_id)
+            if record is None:
+                orphaned.append(item_id)
+                continue
+            state = self.embedding_state(record, entry)
+            if state.get("status") == "Indexed":
+                indexed += 1
+            elif state.get("status") == "Stale":
+                stale.append(item_id)
+            elif state.get("status") == "Invalid":
+                invalid.append(item_id)
+
+        indexed_ids = {
+            str(entry.get("id") or "")
+            for entry in entries
+            if str(entry.get("id") or "")
+        }
+        missing = [
+            item_id
+            for item_id, item in records_by_id.items()
+            if item_id and self.valid_for_retrieval(item) and item_id not in indexed_ids
+        ]
+        return {
+            "exists": self.vector_index_file.exists(),
+            "path": str(self.vector_index_file),
+            "format": index.get("format", ""),
+            "version": index.get("version", ""),
+            "updated_time": index.get("updated_time", ""),
+            "entries": len(entries),
+            "indexed": indexed,
+            "missing": len(missing),
+            "stale": len(stale),
+            "invalid": len(invalid),
+            "orphaned": len(orphaned),
+            "needs_reindex": len(missing) + len(stale) + len(invalid),
+            "orphaned_ids": orphaned,
+            "stale_ids": stale,
+            "invalid_ids": invalid
+        }
+
     def preview(self, item_id, limit=PREVIEW_LIMIT):
         record = next((item for item in self.list_items() if item.get("id") == item_id), None)
         if record is None:
@@ -591,6 +746,9 @@ class KnowledgeStore:
 
     def health(self):
         records = self.list_items()
+        embedding_summary = self.refresh_embedding_status(records)
+        if embedding_summary.get("updated"):
+            records = self.list_items()
         stats = self.stats(records)
         metadata_errors = 0
         for item in records:
@@ -599,6 +757,12 @@ class KnowledgeStore:
             if item.get("status", "OK") != "OK":
                 metadata_errors += 1
         stats["metadata_errors"] = metadata_errors
+        stats["embedding_indexed"] = embedding_summary.get("indexed", 0)
+        stats["embedding_not_indexed"] = embedding_summary.get("not_indexed", 0)
+        stats["embedding_stale"] = embedding_summary.get("stale", 0)
+        stats["embedding_invalid"] = embedding_summary.get("invalid", 0)
+        stats["embedding_needs_reindex"] = embedding_summary.get("needs_reindex", 0)
+        stats["vector_index"] = self.vector_index_health(records)
         return stats
 
     def health_with_backups(self, backup_dir=None):
