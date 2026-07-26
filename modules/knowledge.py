@@ -1,6 +1,8 @@
 """Local file-backed Knowledge Base storage."""
 
+import hashlib
 import json
+import math
 import shutil
 import uuid
 from datetime import datetime
@@ -14,6 +16,8 @@ READABLE_EXTENSIONS = {"txt", "md"}
 PREVIEW_LIMIT = 5000
 BACKUP_VERSION = "1.0"
 EMBEDDING_TEXT_LIMIT = 8000
+VECTOR_INDEX_VERSION = "1.0"
+VECTOR_INDEX_FORMAT = "Project Aurora Knowledge Vector Index"
 
 
 class KnowledgeStore:
@@ -24,6 +28,7 @@ class KnowledgeStore:
         self.base_path = Path(base_path) if base_path else root / "data" / "knowledge"
         self.files_path = self.base_path / "files"
         self.metadata_file = self.base_path / "metadata.json"
+        self.vector_index_file = self.base_path / "vector_index.json"
         self.base_path.mkdir(parents=True, exist_ok=True)
         self.files_path.mkdir(parents=True, exist_ok=True)
         if not self.metadata_file.exists():
@@ -50,6 +55,36 @@ class KnowledgeStore:
         self.files_path.mkdir(parents=True, exist_ok=True)
         with self.metadata_file.open("w", encoding="utf-8") as file:
             json.dump(records, file, indent=4, ensure_ascii=False)
+
+    def _read_vector_index(self):
+        try:
+            with self.vector_index_file.open("r", encoding="utf-8") as file:
+                data = json.load(file)
+        except (OSError, ValueError, json.JSONDecodeError):
+            data = {}
+        if not isinstance(data, dict):
+            data = {}
+        items = data.get("items", [])
+        if not isinstance(items, list):
+            items = []
+        return {
+            "format": data.get("format") or VECTOR_INDEX_FORMAT,
+            "version": data.get("version") or VECTOR_INDEX_VERSION,
+            "updated_time": str(data.get("updated_time") or ""),
+            "items": [item for item in items if isinstance(item, dict)]
+        }
+
+    def _write_vector_index(self, index):
+        self.base_path.mkdir(parents=True, exist_ok=True)
+        payload = {
+            "format": VECTOR_INDEX_FORMAT,
+            "version": VECTOR_INDEX_VERSION,
+            "updated_time": self._now(),
+            "items": list(index.get("items", [])) if isinstance(index, dict) else []
+        }
+        with self.vector_index_file.open("w", encoding="utf-8") as file:
+            json.dump(payload, file, indent=4, ensure_ascii=False)
+        return payload
 
     def _record_status(self, file_type, stored_path, content, size):
         if file_type not in {"txt", "md", "pdf"}:
@@ -158,6 +193,7 @@ class KnowledgeStore:
         if stored_path.exists():
             stored_path.unlink()
         self._write(records)
+        self.remove_vector(item_id)
         return removed
 
     def set_enabled(self, item_id, enabled):
@@ -239,6 +275,168 @@ class KnowledgeStore:
                 status="Indexed"
             )
         return payload
+
+    @staticmethod
+    def _normalize_vector(vector):
+        if not isinstance(vector, list):
+            return []
+        values = []
+        for value in vector:
+            try:
+                values.append(float(value))
+            except (TypeError, ValueError):
+                return []
+        return values
+
+    @staticmethod
+    def _cosine_similarity(left, right):
+        if not left or not right or len(left) != len(right):
+            return 0.0
+        dot = sum(a * b for a, b in zip(left, right))
+        left_norm = math.sqrt(sum(a * a for a in left))
+        right_norm = math.sqrt(sum(b * b for b in right))
+        if left_norm <= 0 or right_norm <= 0:
+            return 0.0
+        return dot / (left_norm * right_norm)
+
+    @staticmethod
+    def _content_hash(content):
+        return hashlib.sha256(str(content or "").encode("utf-8")).hexdigest()
+
+    def save_vector(self, item_id, embedding, model="", metadata=None):
+        vector = self._normalize_vector(embedding)
+        if not vector:
+            raise ValueError("Embedding vector is empty or invalid.")
+
+        records = self.list_items()
+        record = next((item for item in records if item.get("id") == item_id), None)
+        if record is None:
+            raise KeyError(item_id)
+
+        index = self._read_vector_index()
+        items = [item for item in index.get("items", []) if item.get("id") != item_id]
+        entry = {
+            "id": item_id,
+            "file_name": record.get("file_name", ""),
+            "stored_name": record.get("stored_name", ""),
+            "model": str(model or record.get("embedding_model") or ""),
+            "dimensions": len(vector),
+            "content_hash": self._content_hash(record.get("content", "")),
+            "updated_time": self._now(),
+            "embedding": vector
+        }
+        if isinstance(metadata, dict):
+            entry["metadata"] = metadata
+        items.append(entry)
+        index["items"] = items
+        self._write_vector_index(index)
+        self.update_embedding_metadata(item_id, entry["model"], len(vector), status="Indexed")
+        return entry
+
+    def remove_vector(self, item_id):
+        index = self._read_vector_index()
+        original_count = len(index.get("items", []))
+        index["items"] = [item for item in index.get("items", []) if item.get("id") != item_id]
+        if len(index["items"]) != original_count:
+            self._write_vector_index(index)
+        return original_count - len(index["items"])
+
+    def index_item(self, item_id, provider=None, text_limit=EMBEDDING_TEXT_LIMIT):
+        payload = self.generate_embedding(
+            item_id,
+            provider=provider,
+            text_limit=text_limit,
+            update_metadata=False
+        )
+        return self.save_vector(
+            item_id,
+            payload.get("embedding", []),
+            model=payload.get("model", ""),
+            metadata={
+                "source": "knowledge",
+                "text_limit": text_limit
+            }
+        )
+
+    def build_vector_index(self, provider=None, item_ids=None, text_limit=EMBEDDING_TEXT_LIMIT):
+        allowed_ids = {str(item_id) for item_id in item_ids} if item_ids else None
+        indexed = []
+        errors = []
+        for item in self.list_items():
+            item_id = str(item.get("id") or "")
+            if allowed_ids is not None and item_id not in allowed_ids:
+                continue
+            if not self.valid_for_retrieval(item):
+                continue
+            try:
+                indexed.append(self.index_item(item_id, provider=provider, text_limit=text_limit))
+            except Exception as error:
+                errors.append({
+                    "id": item_id,
+                    "file_name": item.get("file_name", ""),
+                    "error": str(error)
+                })
+        return {
+            "indexed": len(indexed),
+            "errors": errors,
+            "index_file": str(self.vector_index_file)
+        }
+
+    def vector_search_by_embedding(self, embedding, top_k=3, min_similarity=0.0, enabled_only=True):
+        query_vector = self._normalize_vector(embedding)
+        if not query_vector:
+            return []
+        try:
+            limit = max(1, int(top_k))
+        except (TypeError, ValueError):
+            limit = 3
+        try:
+            threshold = float(min_similarity)
+        except (TypeError, ValueError):
+            threshold = 0.0
+
+        records = {item.get("id"): item for item in self.list_items()}
+        results = []
+        for entry in self._read_vector_index().get("items", []):
+            item_id = entry.get("id")
+            record = records.get(item_id)
+            if record is None:
+                continue
+            if enabled_only and not bool(record.get("enabled", True)):
+                continue
+            if record.get("status", "OK") != "OK":
+                continue
+            vector = self._normalize_vector(entry.get("embedding", []))
+            score = self._cosine_similarity(query_vector, vector)
+            if score < threshold:
+                continue
+            content = str(record.get("content", ""))
+            results.append({
+                "id": item_id,
+                "file_name": record.get("file_name", ""),
+                "file_type": record.get("file_type", ""),
+                "score": score,
+                "similarity": score,
+                "model": entry.get("model", ""),
+                "embedding_updated_time": entry.get("updated_time", ""),
+                "snippet": content[:500],
+                "record": record
+            })
+        results.sort(key=lambda item: item.get("score", 0), reverse=True)
+        return results[:limit]
+
+    def vector_search(self, query, provider=None, top_k=3, min_similarity=0.0, enabled_only=True):
+        text = str(query or "").strip()
+        if not text:
+            return []
+        embedding_provider = provider or get_embedding_provider()
+        query_vector = embedding_provider.embed_text(text)
+        return self.vector_search_by_embedding(
+            query_vector,
+            top_k=top_k,
+            min_similarity=min_similarity,
+            enabled_only=enabled_only
+        )
 
     def preview(self, item_id, limit=PREVIEW_LIMIT):
         record = next((item for item in self.list_items() if item.get("id") == item_id), None)
