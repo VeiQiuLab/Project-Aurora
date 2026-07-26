@@ -444,7 +444,7 @@ def render_mobile_chat_html():
   <style>
     body {
       margin: 0;
-      background: #10131a;
+      background: #0f1117;
       color: #f6f7fb;
       font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
       -webkit-text-size-adjust: 100%;
@@ -456,28 +456,119 @@ def render_mobile_chat_html():
       padding: max(14px, env(safe-area-inset-top)) 14px max(18px, env(safe-area-inset-bottom));
     }
     .card {
-      background: #1c2028;
-      border: 1px solid #303642;
-      border-radius: 22px;
-      padding: 18px;
-      box-shadow: 0 18px 45px rgba(0,0,0,.24);
+      background: #181b22;
+      border: 1px solid #2b303b;
+      border-radius: 18px;
+      padding: 16px;
       min-height: calc(100vh - 40px);
       box-sizing: border-box;
+      display: flex;
+      flex-direction: column;
+      gap: 14px;
+    }
+    .topbar {
+      display: flex;
+      justify-content: space-between;
+      align-items: flex-start;
+      gap: 12px;
     }
     h1 {
-      margin: 0 0 8px;
-      font-size: 28px;
+      margin: 0;
+      font-size: 26px;
+      line-height: 1.1;
     }
-    .status {
-      color: #88d498;
-      margin-bottom: 16px;
+    .subtle {
+      color: #aeb8c7;
+      font-size: 13px;
+      line-height: 1.45;
+    }
+    .online {
+      color: #89d98b;
+      font-weight: 700;
+      white-space: nowrap;
+    }
+    .model {
+      margin-top: 4px;
+      color: #c9d2e3;
+      font-size: 13px;
+    }
+    .status-grid {
+      display: grid;
+      grid-template-columns: repeat(3, minmax(0, 1fr));
+      gap: 8px;
+    }
+    .chip {
+      background: #10141c;
+      border: 1px solid #303746;
+      border-radius: 12px;
+      padding: 10px;
+      min-width: 0;
+    }
+    .chip span {
+      display: block;
+      color: #96a3b8;
+      font-size: 12px;
+      margin-bottom: 4px;
+    }
+    .chip strong {
+      display: block;
+      font-size: 13px;
+      font-weight: 700;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+    .conversation-meta {
+      color: #aeb8c7;
+      font-size: 12px;
+      line-height: 1.45;
+      border-top: 1px solid #2b303b;
+      border-bottom: 1px solid #2b303b;
+      padding: 10px 0;
+    }
+    .messages {
+      flex: 1;
+      min-height: 220px;
+      max-height: 50vh;
+      overflow-y: auto;
+      display: flex;
+      flex-direction: column;
+      gap: 10px;
+      padding: 4px 0;
+    }
+    .bubble {
+      max-width: 86%;
+      border-radius: 16px;
+      padding: 11px 13px;
+      line-height: 1.55;
+      white-space: pre-wrap;
+      word-break: break-word;
+    }
+    .bubble.user {
+      align-self: flex-end;
+      background: #2f6fed;
+      color: #fff;
+      border-bottom-right-radius: 6px;
+    }
+    .bubble.assistant {
+      align-self: flex-start;
+      background: #10141c;
+      border: 1px solid #303746;
+      color: #f6f7fb;
+      border-bottom-left-radius: 6px;
+    }
+    .time {
+      display: block;
+      margin-top: 6px;
+      font-size: 11px;
+      opacity: .68;
     }
     textarea {
       width: 100%;
-      min-height: 120px;
+      min-height: 84px;
       box-sizing: border-box;
       border: 1px solid #3b4250;
-      border-radius: 16px;
+      border-radius: 14px;
       padding: 14px;
       background: #11151d;
       color: #fff;
@@ -488,10 +579,10 @@ def render_mobile_chat_html():
     }
     button {
       width: 100%;
-      margin-top: 12px;
+      margin-top: 10px;
       padding: 14px 16px;
       border: 0;
-      border-radius: 16px;
+      border-radius: 14px;
       background: #4f8cff;
       color: #fff;
       font-size: 17px;
@@ -501,24 +592,11 @@ def render_mobile_chat_html():
     button:disabled {
       opacity: .65;
     }
-    .response {
-      margin-top: 18px;
-      white-space: pre-wrap;
-      line-height: 1.65;
-      background: #11151d;
-      border: 1px solid #303642;
-      border-radius: 16px;
-      padding: 14px;
-      min-height: 120px;
-      max-height: 52vh;
-      overflow-y: auto;
-      word-break: break-word;
-    }
     .hint {
       color: #aeb8c7;
       font-size: 13px;
       line-height: 1.5;
-      margin: 10px 0 0;
+      margin: 8px 0 0;
     }
     code, pre {
       white-space: pre-wrap;
@@ -526,43 +604,63 @@ def render_mobile_chat_html():
     }
     @media (max-width: 480px) {
       h1 { font-size: 24px; }
-      .card { border-radius: 18px; padding: 16px; }
+      .card { border-radius: 16px; padding: 14px; }
+      .status-grid { grid-template-columns: 1fr; }
       button { font-size: 16px; }
-      .response { max-height: 48vh; }
+      .messages { max-height: 46vh; }
     }
   </style>
 </head>
 <body>
   <main>
     <section class="card">
-      <h1>Project Aurora Mobile</h1>
-      <div class="status" id="auroraStatus">Aurora Online</div>
-      <div class="status" id="aiStatus">AI Checking...</div>
-      <label for="message">Message</label>
+      <header class="topbar">
+        <div>
+          <h1>Aurora</h1>
+          <div class="model" id="modelStatus">Model: checking...</div>
+        </div>
+        <div class="online" id="auroraStatus">● Online</div>
+      </header>
+      <section class="status-grid">
+        <div class="chip"><span>Persona</span><strong id="personaStatus">Checking</strong></div>
+        <div class="chip"><span>Memory</span><strong id="memoryStatus">Available</strong></div>
+        <div class="chip"><span>Knowledge</span><strong id="knowledgeStatus">Available</strong></div>
+      </section>
+      <div class="conversation-meta">
+        <div id="conversationTitle">Conversation: New Conversation</div>
+        <div id="conversationId">ID: not saved yet</div>
+      </div>
+      <section class="messages" id="messages">
+        <div class="bubble assistant">Ready.<span class="time">Aurora</span></div>
+      </section>
       <textarea id="message" maxlength="2000" placeholder="Message"></textarea>
       <p class="hint">LAN only. 局域网访问。Long responses are shortened for mobile display.</p>
       <button id="send">Send</button>
-      <h2>Aurora Response</h2>
-      <div class="response" id="response">Ready.</div>
     </section>
   </main>
   <script>
     const message = document.getElementById("message");
     const send = document.getElementById("send");
-    const response = document.getElementById("response");
+    const messages = document.getElementById("messages");
     const auroraStatus = document.getElementById("auroraStatus");
-    const aiStatus = document.getElementById("aiStatus");
+    const modelStatus = document.getElementById("modelStatus");
+    const personaStatus = document.getElementById("personaStatus");
+    const memoryStatus = document.getElementById("memoryStatus");
+    const knowledgeStatus = document.getElementById("knowledgeStatus");
+    const conversationTitle = document.getElementById("conversationTitle");
+    const conversationId = document.getElementById("conversationId");
     let currentConversationId = "";
     loadMobileStatus();
     send.addEventListener("click", async () => {
       const text = message.value.trim();
       if (!text) {
-        response.textContent = "Message is empty.";
+        addBubble("assistant", "Message is empty.");
         return;
       }
       send.disabled = true;
-      aiStatus.textContent = "Sending...";
-      response.textContent = "Waiting for Aurora...";
+      addBubble("user", text);
+      message.value = "";
+      const waiting = addBubble("assistant", "Waiting for Aurora...");
       try {
         const result = await fetch("/api/mobile-chat", {
           method: "POST",
@@ -576,13 +674,11 @@ def render_mobile_chat_html():
         const stage = data.stage ? "\\nStage: " + data.stage : "";
         const reason = data.reason ? "\\nReason: " + data.reason : "";
         const detail = data.detail ? "\\nDetail: " + data.detail : "";
-        response.innerHTML = renderBasicMarkdown(data.ok ? data.response : ((data.message || data.error || "Request failed.") + stage + reason + detail));
-        auroraStatus.textContent = "Aurora Online";
-        aiStatus.textContent = data.ok ? "AI Ready" : "AI Unavailable";
-        response.scrollTop = response.scrollHeight;
+        waiting.innerHTML = renderBasicMarkdown(data.ok ? data.response : ((data.message || data.error || "Request failed.") + stage + reason + detail)) + timeHtml();
+        auroraStatus.textContent = data.ok ? "● Online" : "● Online";
+        updateConversationMeta(data);
       } catch (error) {
-        response.textContent = "Request failed. / 请求失败。";
-        aiStatus.textContent = "AI Unavailable";
+        waiting.innerHTML = renderBasicMarkdown("Request failed. / 请求失败。") + timeHtml();
       } finally {
         send.disabled = false;
       }
@@ -591,12 +687,30 @@ def render_mobile_chat_html():
       try {
         const result = await fetch("/api/mobile-status", {cache: "no-store"});
         const data = await result.json();
-        auroraStatus.textContent = data.remote ? "Aurora Online" : "Remote Disabled";
-        aiStatus.textContent = data.ai_ready ? "AI Ready" : ("AI Unavailable" + (data.reason ? ": " + data.reason : ""));
+        auroraStatus.textContent = data.remote ? "● Online" : "● Remote Disabled";
+        modelStatus.textContent = "Model: " + (data.chat_model || data.model || "Unknown");
+        personaStatus.textContent = data.context ? "Enabled" : "Unknown";
+        memoryStatus.textContent = "Available";
+        knowledgeStatus.textContent = "Available";
       } catch (error) {
-        auroraStatus.textContent = "Aurora Online";
-        aiStatus.textContent = "AI Unavailable";
+        auroraStatus.textContent = "● Online";
+        modelStatus.textContent = "Model: unavailable";
       }
+    }
+    function addBubble(role, text) {
+      const item = document.createElement("div");
+      item.className = "bubble " + role;
+      item.innerHTML = renderBasicMarkdown(text) + timeHtml();
+      messages.appendChild(item);
+      messages.scrollTop = messages.scrollHeight;
+      return item;
+    }
+    function timeHtml() {
+      return '<span class="time">' + new Date().toLocaleTimeString([], {hour: "2-digit", minute: "2-digit"}) + '</span>';
+    }
+    function updateConversationMeta(data) {
+      conversationTitle.textContent = "Conversation: New Conversation";
+      conversationId.textContent = currentConversationId ? ("ID: " + currentConversationId) : "ID: not saved yet";
     }
     function escapeHtml(text) {
       return String(text || "").replace(/[&<>"']/g, item => ({
