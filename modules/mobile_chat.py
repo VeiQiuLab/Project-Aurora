@@ -363,6 +363,71 @@ class MobileChatService:
             }
         }
 
+    @staticmethod
+    def _conversation_payload(data):
+        metadata = data.get("metadata", {}) if isinstance(data, dict) else {}
+        if not isinstance(metadata, dict):
+            metadata = {}
+        messages = data.get("messages", []) if isinstance(data, dict) else []
+        if not isinstance(messages, list):
+            messages = []
+        return {
+            "ok": True,
+            "id": str(data.get("id", "")),
+            "conversation_id": str(data.get("id", "")),
+            "title": str(data.get("title", "New Conversation")),
+            "created_at": str(data.get("created_at", "")),
+            "updated_at": str(data.get("updated_at", "")),
+            "model": str(data.get("model", "")),
+            "source": str(metadata.get("source", "desktop")),
+            "metadata": metadata,
+            "messages": messages
+        }
+
+    def list_conversations(self):
+        records = []
+        for record in self.conversation_manager.list_conversations():
+            metadata = record.get("metadata", {})
+            if not isinstance(metadata, dict):
+                metadata = {}
+            records.append({
+                "id": record.get("id", ""),
+                "conversation_id": record.get("id", ""),
+                "title": record.get("title", "New Conversation"),
+                "created_at": record.get("created_at", ""),
+                "updated_at": record.get("updated_at", ""),
+                "model": record.get("model", ""),
+                "source": str(metadata.get("source", "desktop")),
+                "metadata": metadata
+            })
+        return {
+            "ok": True,
+            "conversations": records
+        }
+
+    def load_conversation(self, conversation_id):
+        if not str(conversation_id or "").strip():
+            return self._error("Invalid Request", detail="Missing conversation id.", stage="conversation_load")
+        try:
+            data = self.conversation_manager.load(str(conversation_id).strip())
+        except (OSError, ValueError, json.JSONDecodeError, TypeError) as error:
+            return self._error("Invalid Request", detail=error, stage="conversation_load")
+        return self._conversation_payload(data)
+
+    def new_conversation(self):
+        return {
+            "ok": True,
+            "conversation_id": "",
+            "title": "New Conversation",
+            "messages": [],
+            "metadata": {
+                "source": "mobile",
+                "persona": {},
+                "context": {}
+            },
+            "deferred": True
+        }
+
     def handle_request(self, message, conversation_id=None):
         started_at = time.perf_counter()
         model = ""

@@ -55,6 +55,29 @@ class _LANStatusHandler(BaseHTTPRequestHandler):
             self.end_headers()
             self.wfile.write(body)
             return
+        parsed_path = urllib.parse.urlparse(self.path)
+        if parsed_path.path == "/api/mobile-conversations":
+            result = self.server.handle_mobile_conversations()
+            body = json.dumps(result, ensure_ascii=False).encode("utf-8")
+            self.send_response(200 if result.get("ok") else 400)
+            self.send_header("Content-Type", "application/json; charset=utf-8")
+            self.send_header("Content-Length", str(len(body)))
+            self.send_header("Cache-Control", "no-store")
+            self.end_headers()
+            self.wfile.write(body)
+            return
+        if parsed_path.path == "/api/mobile-conversation":
+            query = urllib.parse.parse_qs(parsed_path.query)
+            conversation_id = (query.get("id") or query.get("conversation_id") or [""])[0]
+            result = self.server.handle_mobile_conversation(conversation_id)
+            body = json.dumps(result, ensure_ascii=False).encode("utf-8")
+            self.send_response(200 if result.get("ok") else 400)
+            self.send_header("Content-Type", "application/json; charset=utf-8")
+            self.send_header("Content-Length", str(len(body)))
+            self.send_header("Cache-Control", "no-store")
+            self.end_headers()
+            self.wfile.write(body)
+            return
         if self.path not in {"/", "/status", "/chat"}:
             self.send_error(404)
             return
@@ -73,6 +96,16 @@ class _LANStatusHandler(BaseHTTPRequestHandler):
         self.wfile.write(body)
 
     def do_POST(self):
+        if self.path == "/api/mobile-conversation/new":
+            result = self.server.handle_new_mobile_conversation()
+            body = json.dumps(result, ensure_ascii=False).encode("utf-8")
+            self.send_response(200 if result.get("ok") else 400)
+            self.send_header("Content-Type", "application/json; charset=utf-8")
+            self.send_header("Content-Length", str(len(body)))
+            self.send_header("Cache-Control", "no-store")
+            self.end_headers()
+            self.wfile.write(body)
+            return
         if self.path != "/api/mobile-chat":
             self.send_error(405, "Read-only status page.")
             return
@@ -174,6 +207,30 @@ class _LANStatusHTTPServer(_ReusableThreadingHTTPServer):
                 "ai_ready": False,
                 "reason": str(error)
             }
+
+    def handle_mobile_conversations(self):
+        if self.mobile_chat_service is None:
+            return {"ok": False, "error": "LAN Chat Disabled", "conversations": []}
+        try:
+            return self.mobile_chat_service.list_conversations()
+        except Exception as error:
+            return {"ok": False, "error": "Conversation list failed", "reason": str(error), "conversations": []}
+
+    def handle_mobile_conversation(self, conversation_id):
+        if self.mobile_chat_service is None:
+            return {"ok": False, "error": "LAN Chat Disabled"}
+        try:
+            return self.mobile_chat_service.load_conversation(conversation_id)
+        except Exception as error:
+            return {"ok": False, "error": "Conversation load failed", "reason": str(error)}
+
+    def handle_new_mobile_conversation(self):
+        if self.mobile_chat_service is None:
+            return {"ok": False, "error": "LAN Chat Disabled"}
+        try:
+            return self.mobile_chat_service.new_conversation()
+        except Exception as error:
+            return {"ok": False, "error": "Conversation create failed", "reason": str(error)}
 
 
 class LANStatusPageServer:
