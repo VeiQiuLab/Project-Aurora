@@ -1,5 +1,12 @@
 # Project Aurora Changelog
 
+## Project Aurora v2.2 Phase 3-A
+
+- Mobile UI Foundation completed
+- Tested successfully on iPhone Safari LAN access
+- Aurora header/status display verified
+- Conversation ID flow verified
+
 ## v2.1.4 - 2026.07.26
 
 - Split Chat Model and Embedding Model settings so Mobile Chat uses `chat_model` and keeps embedding models out of Ollama chat requests.
