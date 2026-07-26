@@ -377,7 +377,7 @@ def render_status_html(status):
 <html lang="zh-CN">
 <head>
   <meta charset="utf-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
   <title>Project Aurora</title>
   <style>
     body {{
@@ -450,10 +450,13 @@ def render_mobile_chat_html():
       -webkit-text-size-adjust: 100%;
       overflow-wrap: anywhere;
     }
+    body, html {
+      min-height: 100%;
+    }
     main {
       max-width: 760px;
       margin: 0 auto;
-      padding: max(14px, env(safe-area-inset-top)) 14px max(18px, env(safe-area-inset-bottom));
+      padding: max(10px, env(safe-area-inset-top)) 10px max(10px, env(safe-area-inset-bottom));
     }
     .card {
       background: #181b22;
@@ -461,6 +464,7 @@ def render_mobile_chat_html():
       border-radius: 18px;
       padding: 16px;
       min-height: calc(100vh - 40px);
+      min-height: calc(100dvh - 20px);
       box-sizing: border-box;
       display: flex;
       flex-direction: column;
@@ -486,6 +490,23 @@ def render_mobile_chat_html():
       color: #89d98b;
       font-weight: 700;
       white-space: nowrap;
+    }
+    .actions {
+      display: flex;
+      flex-direction: column;
+      align-items: flex-end;
+      gap: 8px;
+    }
+    .secondary {
+      width: auto;
+      margin: 0;
+      padding: 8px 11px;
+      border: 1px solid #303746;
+      background: #10141c;
+      color: #d7dfec;
+      font-size: 13px;
+      font-weight: 700;
+      border-radius: 12px;
     }
     .model {
       margin-top: 4px;
@@ -526,15 +547,22 @@ def render_mobile_chat_html():
       border-bottom: 1px solid #2b303b;
       padding: 10px 0;
     }
+    .debug-id {
+      opacity: .5;
+      font-size: 11px;
+      margin-top: 2px;
+    }
     .messages {
       flex: 1;
-      min-height: 220px;
-      max-height: 50vh;
+      min-height: 260px;
+      max-height: 54vh;
       overflow-y: auto;
       display: flex;
       flex-direction: column;
       gap: 10px;
-      padding: 4px 0;
+      padding: 4px 2px;
+      scroll-behavior: smooth;
+      -webkit-overflow-scrolling: touch;
     }
     .bubble {
       max-width: 86%;
@@ -566,6 +594,7 @@ def render_mobile_chat_html():
     textarea {
       width: 100%;
       min-height: 84px;
+      max-height: 160px;
       box-sizing: border-box;
       border: 1px solid #3b4250;
       border-radius: 14px;
@@ -576,6 +605,13 @@ def render_mobile_chat_html():
       resize: vertical;
       -webkit-appearance: none;
       line-height: 1.5;
+    }
+    .composer {
+      position: sticky;
+      bottom: 0;
+      padding-top: 8px;
+      padding-bottom: env(safe-area-inset-bottom);
+      background: #181b22;
     }
     button {
       width: 100%;
@@ -607,7 +643,8 @@ def render_mobile_chat_html():
       .card { border-radius: 16px; padding: 14px; }
       .status-grid { grid-template-columns: 1fr; }
       button { font-size: 16px; }
-      .messages { max-height: 46vh; }
+      .messages { max-height: 50vh; min-height: 240px; }
+      .topbar { align-items: flex-start; }
     }
   </style>
 </head>
@@ -619,7 +656,10 @@ def render_mobile_chat_html():
           <h1>Aurora</h1>
           <div class="model" id="modelStatus">Model: checking...</div>
         </div>
-        <div class="online" id="auroraStatus">● Online</div>
+        <div class="actions">
+          <div class="online" id="auroraStatus">● Online</div>
+          <button class="secondary" id="newConversation" type="button">New</button>
+        </div>
       </header>
       <section class="status-grid">
         <div class="chip"><span>Persona</span><strong id="personaStatus">Checking</strong></div>
@@ -628,14 +668,16 @@ def render_mobile_chat_html():
       </section>
       <div class="conversation-meta">
         <div id="conversationTitle">Conversation: New Conversation</div>
-        <div id="conversationId">ID: not saved yet</div>
+        <div class="debug-id" id="conversationId">ID: not saved yet</div>
       </div>
       <section class="messages" id="messages">
         <div class="bubble assistant">Ready.<span class="time">Aurora</span></div>
       </section>
-      <textarea id="message" maxlength="2000" placeholder="Message"></textarea>
-      <p class="hint">LAN only. 局域网访问。Long responses are shortened for mobile display.</p>
-      <button id="send">Send</button>
+      <section class="composer">
+        <textarea id="message" maxlength="2000" placeholder="Message"></textarea>
+        <p class="hint">LAN only. 局域网访问。Long responses are shortened for mobile display.</p>
+        <button id="send">Send</button>
+      </section>
     </section>
   </main>
   <script>
@@ -644,6 +686,7 @@ def render_mobile_chat_html():
     const messages = document.getElementById("messages");
     const auroraStatus = document.getElementById("auroraStatus");
     const modelStatus = document.getElementById("modelStatus");
+    const newConversation = document.getElementById("newConversation");
     const personaStatus = document.getElementById("personaStatus");
     const memoryStatus = document.getElementById("memoryStatus");
     const knowledgeStatus = document.getElementById("knowledgeStatus");
@@ -651,7 +694,30 @@ def render_mobile_chat_html():
     const conversationId = document.getElementById("conversationId");
     let currentConversationId = "";
     loadMobileStatus();
+    newConversation.addEventListener("click", async () => {
+      try {
+        const result = await fetch("/api/mobile-conversation/new", {method: "POST"});
+        const data = await result.json();
+        if (data.ok) {
+          currentConversationId = data.conversation_id || "";
+          messages.innerHTML = '<div class="bubble assistant">New conversation ready.<span class="time">Aurora</span></div>';
+          updateConversationMeta(data);
+          message.focus();
+        }
+      } catch (error) {
+        addBubble("assistant", "New conversation failed.");
+      }
+    });
     send.addEventListener("click", async () => {
+      sendMessage();
+    });
+    message.addEventListener("keydown", event => {
+      if (event.key === "Enter" && !event.shiftKey) {
+        event.preventDefault();
+        sendMessage();
+      }
+    });
+    async function sendMessage() {
       const text = message.value.trim();
       if (!text) {
         addBubble("assistant", "Message is empty.");
@@ -682,7 +748,7 @@ def render_mobile_chat_html():
       } finally {
         send.disabled = false;
       }
-    });
+    }
     async function loadMobileStatus() {
       try {
         const result = await fetch("/api/mobile-status", {cache: "no-store"});
@@ -702,15 +768,20 @@ def render_mobile_chat_html():
       item.className = "bubble " + role;
       item.innerHTML = renderBasicMarkdown(text) + timeHtml();
       messages.appendChild(item);
-      messages.scrollTop = messages.scrollHeight;
+      scrollMessages();
       return item;
+    }
+    function scrollMessages() {
+      requestAnimationFrame(() => {
+        messages.scrollTop = messages.scrollHeight;
+      });
     }
     function timeHtml() {
       return '<span class="time">' + new Date().toLocaleTimeString([], {hour: "2-digit", minute: "2-digit"}) + '</span>';
     }
     function updateConversationMeta(data) {
       conversationTitle.textContent = "Conversation: New Conversation";
-      conversationId.textContent = currentConversationId ? ("ID: " + currentConversationId) : "ID: not saved yet";
+      conversationId.textContent = currentConversationId ? ("ID: " + currentConversationId) : "ID: deferred until first message";
     }
     function escapeHtml(text) {
       return String(text || "").replace(/[&<>"']/g, item => ({
