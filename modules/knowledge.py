@@ -6,11 +6,14 @@ import uuid
 from datetime import datetime
 from pathlib import Path
 
+from modules.embedding import EmbeddingError, get_embedding_provider
+
 
 SUPPORTED_EXTENSIONS = {".txt", ".md", ".pdf"}
 READABLE_EXTENSIONS = {"txt", "md"}
 PREVIEW_LIMIT = 5000
 BACKUP_VERSION = "1.0"
+EMBEDDING_TEXT_LIMIT = 8000
 
 
 class KnowledgeStore:
@@ -75,6 +78,10 @@ class KnowledgeStore:
             enabled = enabled.strip().casefold() not in {"false", "0", "no", "disabled"}
         content = str(item.get("content") or self._read_text(stored_path, file_type))
         status = self._record_status(file_type, stored_path, content, size)
+        try:
+            embedding_dimensions = int(item.get("embedding_dimensions") or 0)
+        except (TypeError, ValueError):
+            embedding_dimensions = 0
         return {
             "id": record_id,
             "file_name": source_name,
@@ -88,6 +95,10 @@ class KnowledgeStore:
             "source_path": str(item.get("source_path") or ""),
             "stored_path": str(stored_path),
             "status": status,
+            "embedding_status": str(item.get("embedding_status") or "Not Indexed"),
+            "embedding_model": str(item.get("embedding_model") or ""),
+            "embedding_updated_time": str(item.get("embedding_updated_time") or ""),
+            "embedding_dimensions": embedding_dimensions,
             "content": content
         }
 
@@ -124,6 +135,10 @@ class KnowledgeStore:
             "content": self._read_text(target, extension.lstrip("."))
         }
         record["character_count"] = len(record["content"])
+        record["embedding_status"] = "Not Indexed"
+        record["embedding_model"] = ""
+        record["embedding_updated_time"] = ""
+        record["embedding_dimensions"] = 0
         records = self.list_items()
         records.append(record)
         self._write(records)
@@ -168,6 +183,62 @@ class KnowledgeStore:
             return False
         file_type = str(item.get("file_type", "")).lower().lstrip(".")
         return file_type in READABLE_EXTENSIONS and bool(str(item.get("content", "")).strip())
+
+    def embedding_payload(self, item_id, provider=None, text_limit=EMBEDDING_TEXT_LIMIT):
+        record = next((item for item in self.list_items() if item.get("id") == item_id), None)
+        if record is None:
+            raise KeyError(item_id)
+        if not self.valid_for_retrieval(record):
+            raise ValueError("Knowledge item is not readable for embedding.")
+
+        content = str(record.get("content") or "")
+        try:
+            limit = max(500, int(text_limit))
+        except (TypeError, ValueError):
+            limit = EMBEDDING_TEXT_LIMIT
+        embedding_provider = provider or get_embedding_provider()
+        vector = embedding_provider.embed_text(content[:limit])
+        return {
+            "id": record.get("id"),
+            "file_name": record.get("file_name"),
+            "model": getattr(embedding_provider, "model", record.get("embedding_model", "")),
+            "dimensions": len(vector),
+            "embedding": vector
+        }
+
+    def update_embedding_metadata(self, item_id, model, dimensions, status="Indexed"):
+        records = self.list_items()
+        changed = None
+        for item in records:
+            if item.get("id") == item_id:
+                item["embedding_status"] = str(status or "Indexed")
+                item["embedding_model"] = str(model or "")
+                try:
+                    item["embedding_dimensions"] = max(0, int(dimensions or 0))
+                except (TypeError, ValueError):
+                    item["embedding_dimensions"] = 0
+                item["embedding_updated_time"] = self._now()
+                item["updated_time"] = self._now()
+                changed = item
+                break
+        if changed is None:
+            raise KeyError(item_id)
+        self._write(records)
+        return changed
+
+    def generate_embedding(self, item_id, provider=None, text_limit=EMBEDDING_TEXT_LIMIT, update_metadata=True):
+        try:
+            payload = self.embedding_payload(item_id, provider=provider, text_limit=text_limit)
+        except EmbeddingError:
+            raise
+        if update_metadata:
+            self.update_embedding_metadata(
+                item_id,
+                payload.get("model", ""),
+                payload.get("dimensions", 0),
+                status="Indexed"
+            )
+        return payload
 
     def preview(self, item_id, limit=PREVIEW_LIMIT):
         record = next((item for item in self.list_items() if item.get("id") == item_id), None)
