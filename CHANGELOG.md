@@ -14,6 +14,12 @@
 - Added Memory, Knowledge, and Conversation count summaries.
 - Reused existing `system_self_check()` health logic for dashboard display.
 
+### Settings Polish
+
+- Reorganized Settings sections for General, AI, Persona, Memory, Knowledge, Remote, and Developer.
+- Added read-only status overview for Persona, Memory, Knowledge, Vector Index, Conversation, Remote, Debug, and Log Level.
+- Kept Remote access safety-gated and local-only from Settings.
+
 ## v2.4.1 - 2026.07.26
 
 ### Stability & Testing

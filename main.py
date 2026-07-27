@@ -4835,15 +4835,36 @@ def show_settings():
         entry.pack(side="right")
         return entry
 
-    add_section_title("搴旂敤")
+    def add_status_row(label_text, value_text, color="gray"):
+        row = ctk.CTkFrame(content, fg_color="transparent")
+        row.pack(fill="x", padx=10, pady=4)
+        ctk.CTkLabel(
+            row,
+            text=label_text,
+            anchor="w",
+            font=("Microsoft YaHei", 13)
+        ).pack(side="left")
+        ctk.CTkLabel(
+            row,
+            text=str(value_text),
+            font=("Microsoft YaHei", 12),
+            text_color=color
+        ).pack(side="right")
+
+    add_section_title("General")
     appearance_option = add_option_row(
         TEXT["appearance"],
         list(appearance_display.values()),
         appearance_display[appearance_value]
     )
     theme_option = add_option_row(TEXT["theme"], theme_options, theme_value)
+    language_option = add_option_row(
+        "Language",
+        ["\u7b80\u4f53\u4e2d\u6587", "English"],
+        settings.get("language", "\u7b80\u4f53\u4e2d\u6587")
+    )
 
-    add_section_title("鏈嶅姟")
+    add_section_title("AI")
     ollama_host_entry = add_entry_row(
         TEXT["ollama_host"],
         settings.get("ollama.host", "http://127.0.0.1:11434")
@@ -4859,6 +4880,14 @@ def show_settings():
     ollama_command_entry = add_entry_row(
         "Ollama Command",
         settings.get("services.ollama.command", "ollama serve")
+    )
+    chat_model_entry = add_entry_row(
+        TEXT["chat_model"],
+        settings.get("chat_model", "qwen3:8b")
+    )
+    embedding_model_entry = add_entry_row(
+        TEXT["embedding_model"],
+        settings.get("embedding_model", "nomic-embed-text:latest")
     )
     openwebui_url_entry = add_entry_row(
         TEXT["openwebui_url"],
@@ -4898,13 +4927,15 @@ def show_settings():
         settings.get("services.docker.startup_timeout", 60)
     )
 
-    add_section_title("绯荤粺")
+    add_section_title("Developer")
     refresh_interval_entry = add_entry_row(
         TEXT["refresh_interval"],
         settings.get("status.refresh_interval", 3)
     )
+    add_status_row("Debug Mode", "Enabled" if settings.get("mobile_debug_mode", False) else "Disabled")
+    add_status_row("Log Level", settings.get("log.level", "INFO"))
 
-    add_section_title(TEXT["remote_access"])
+    add_section_title("Remote")
     remote_enabled_var = ctk.BooleanVar(
         value=bool(settings.get("remote.enabled", False))
     )
@@ -4918,6 +4949,7 @@ def show_settings():
         ["local"],
         settings.get("remote.mode", "local")
     )
+    add_status_row("Public Access", "Not available in this version", "orange")
     preferred_interface_entry = add_entry_row(
         TEXT["preferred_interface"],
         settings.get("network.preferred_interface", "")
@@ -4962,29 +4994,12 @@ def show_settings():
         TEXT["mobile_response_limit"],
         settings.get("mobile_response_limit", 12000)
     )
-    chat_model_entry = add_entry_row(
-        TEXT["chat_model"],
-        settings.get("chat_model", "qwen3:8b")
-    )
-    embedding_model_entry = add_entry_row(
-        TEXT["embedding_model"],
-        settings.get("embedding_model", "nomic-embed-text:latest")
-    )
-
-    add_section_title("Memory Injection Settings")
-    language_option = add_option_row(
-        "Language",
-        ["\u7b80\u4f53\u4e2d\u6587", "English"],
-        settings.get("language", "\u7b80\u4f53\u4e2d\u6587")
-    )
-    max_injection_entry = add_entry_row(
-        "Maximum Memory Injection",
-        settings.get("memory.max_injection", 5)
-    )
-    min_importance_entry = add_entry_row(
-        "Minimum Memory Importance",
-        settings.get("memory.min_importance", 0)
-    )
+    add_section_title("Persona")
+    try:
+        current_persona = persona_store.status(settings.get("persona.enabled", True), persona_store.load(update_timestamp=False))
+        add_status_row("Current Persona", current_persona.get("name", "Aurora"), "#32CD32")
+    except Exception as error:
+        add_status_row("Current Persona", error, "red")
     persona_enabled_var = ctk.BooleanVar(
         value=bool(settings.get("persona.enabled", True))
     )
@@ -4993,6 +5008,19 @@ def show_settings():
         text=TEXT["persona_enable"],
         variable=persona_enabled_var
     ).pack(anchor="w", padx=10, pady=6)
+
+    add_section_title("Memory")
+    add_status_row("Memory Available", "Yes")
+    max_injection_entry = add_entry_row(
+        "Maximum Memory Injection",
+        settings.get("memory.max_injection", 5)
+    )
+    min_importance_entry = add_entry_row(
+        "Minimum Memory Importance",
+        settings.get("memory.min_importance", 0)
+    )
+
+    add_section_title("Knowledge")
     knowledge_enabled_var = ctk.BooleanVar(
         value=bool(settings.get("knowledge.enabled", True))
     )
@@ -5005,6 +5033,48 @@ def show_settings():
         "Maximum Knowledge Results",
         settings.get("knowledge.max_results", 3)
     )
+
+    add_section_title("Status Overview")
+    try:
+        health_report = system_self_check(timeout=2)
+        health_items = {
+            item.get("name"): item
+            for item in health_report.get("items", [])
+            if isinstance(item, dict)
+        }
+    except Exception as error:
+        health_report = {"status": "Error"}
+        health_items = {}
+        add_status_row("Health Check", error, "red")
+
+    def status_value(name):
+        item = health_items.get(name, {})
+        status = item.get("status", "Unknown")
+        color = health_status_color(status) if status in {"Healthy", "Warning", "Error"} else "gray"
+        return status, color, item.get("details", {})
+
+    for status_name in [
+        "Ollama",
+        "Chat Model",
+        "Embedding Model",
+        "Persona",
+        "Memory",
+        "Knowledge",
+        "Vector Index",
+        "Conversation Store",
+        "Remote"
+    ]:
+        value, color, _details = status_value(status_name)
+        add_status_row("Conversation" if status_name == "Conversation Store" else status_name, value, color)
+
+    _memory_status, _memory_color, memory_details = status_value("Memory")
+    _knowledge_status, _knowledge_color, knowledge_details = status_value("Knowledge")
+    _conversation_status, _conversation_color, conversation_details = status_value("Conversation Store")
+    add_status_row("Memory Count", memory_details.get("records", 0))
+    add_status_row("Knowledge Documents", knowledge_details.get("total", 0))
+    add_status_row("Conversation Count", conversation_details.get("records", 0))
+    add_status_row("Remote Enabled", "Yes" if settings.get("remote.enabled", False) else "No")
+    add_status_row("Log Level", settings.get("log.level", "INFO"))
 
     result_label = ctk.CTkLabel(
         settings_window,
