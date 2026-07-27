@@ -156,7 +156,7 @@ from modules.memory_retrieval import format_memory_context, retrieve_memories
 from modules.retrieval import format_knowledge_context, search_knowledge, retrieval_summary
 from modules.service_manager import ServiceManager
 
-set_language(settings.get("language", "绠€浣撲腑鏂?))
+set_language(settings.get("language", "English"))
 
 
 appearance = settings.get("appearance", "System")
@@ -245,7 +245,7 @@ title.pack(pady=(20, 5))
 
 version = ctk.CTkLabel(
     app,
-    text=f"Version {VERSION}   鈥?  Build {BUILD}",
+    text=f"Version {VERSION} - Build {BUILD}",
     font=("Microsoft YaHei", 14)
 )
 version.pack()
@@ -815,10 +815,10 @@ def run_diagnostic():
         ollama = result["ollama"]
         docker = result["docker"]
         webui = result["openwebui"]
-        lines.append(f"{'鉁? if ollama['available'] else '鉁?} Ollama API: {ollama['status']} 鈥?{ollama['reason']}")
-        lines.append(f"{'鉁? if docker['engine_ready'] else '鉁?} Docker Engine: {docker['status']}")
-        lines.append(f"{'鉁? if webui['container'] == 'running' else '鉁?} Open WebUI Container: {webui['container']}")
-        lines.append(f"{'鉁? if webui['available'] else '鉁?} Open WebUI HTTP: {webui['status']} 鈥?{webui['reason']}")
+        lines.append(f"{'OK' if ollama['available'] else 'FAIL'} Ollama API: {ollama['status']} - {ollama['reason']}")
+        lines.append(f"{'OK' if docker['engine_ready'] else 'FAIL'} Docker Engine: {docker['status']}")
+        lines.append(f"{'OK' if webui['container'] == 'running' else 'FAIL'} Open WebUI Container: {webui['container']}")
+        lines.append(f"{'OK' if webui['available'] else 'FAIL'} Open WebUI HTTP: {webui['status']} - {webui['reason']}")
         if not ollama["available"]:
             logger.error("Ollama API unavailable")
         if not docker["engine_ready"]:
@@ -992,7 +992,7 @@ def show_models():
     else:
         ctk.CTkLabel(
             model_table,
-            text="鏈壘鍒?Ollama 妯″瀷銆?,
+            text="No Ollama models found.",
             font=("Microsoft YaHei", 13),
             text_color="gray"
         ).grid(row=1, column=0, columnspan=len(columns), padx=8, pady=20)
@@ -1340,7 +1340,7 @@ def show_chat():
 
     conversation_search_frame = ctk.CTkFrame(chat_window, fg_color="transparent")
     conversation_search_frame.pack(fill="x", padx=25, pady=(0, 8))
-    conversation_search_entry = ctk.CTkEntry(conversation_search_frame, placeholder_text="鎼滅储浼氳瘽")
+    conversation_search_entry = ctk.CTkEntry(conversation_search_frame, placeholder_text="Search conversations")
     conversation_search_entry.pack(side="left", fill="x", expand=True, padx=(0, 6))
 
     def search_conversation_list():
@@ -1349,7 +1349,7 @@ def show_chat():
 
     ctk.CTkButton(
         conversation_search_frame,
-        text="鎼滅储",
+        text="Search",
         width=80,
         command=search_conversation_list
     ).pack(side="right")
@@ -1450,7 +1450,7 @@ def show_chat():
 
     def new_conversation():
         if stream_state["running"]:
-            chat_status.configure(text="璇峰厛鍋滄鐢熸垚銆?, text_color="orange")
+            chat_status.configure(text="Please stop generation first.", text_color="orange")
             return
         if len(session.snapshot()) > 1:
             save_conversation(auto=True)
@@ -1459,16 +1459,16 @@ def show_chat():
         conversation_state["created_at"] = None
         conversation_state["title"] = "New Conversation"
         render_messages(session.snapshot())
-        chat_status.configure(text="鏂颁細璇?, text_color="gray")
+        chat_status.configure(text="New conversation.", text_color="gray")
         logger.info("Conversation created")
 
     def save_conversation(auto=False):
         if stream_state["running"]:
-            chat_status.configure(text="璇峰厛鍋滄鐢熸垚鍐嶄繚瀛樸€?, text_color="orange")
+            chat_status.configure(text="Please stop generation before saving.", text_color="orange")
             return
         messages = session.snapshot()
         if len(messages) <= 1:
-            chat_status.configure(text="鏆傛棤鍙繚瀛樺唴瀹广€?, text_color="orange")
+            chat_status.configure(text="No conversation content to save.", text_color="orange")
             return
         title = conversation_state["title"]
         if title == "New Conversation":
@@ -1484,12 +1484,12 @@ def show_chat():
         conversation_state["created_at"] = data["created_at"]
         conversation_state["title"] = data["title"]
         refresh_conversations()
-        chat_status.configure(text="浼氳瘽宸茶嚜鍔ㄤ繚瀛? if auto else "浼氳瘽宸蹭繚瀛?, text_color="#32CD32")
+        chat_status.configure(text="Conversation auto saved." if auto else "Conversation saved.", text_color="#32CD32")
         logger.info("Conversation auto saved" if auto else "Conversation saved")
 
     def load_conversation():
         if stream_state["running"]:
-            chat_status.configure(text="璇峰厛鍋滄鐢熸垚鍐嶅姞杞姐€?, text_color="orange")
+            chat_status.configure(text="Please stop generation before loading.", text_color="orange")
             return
         selected = conversation_selector.get()
         record = next((item for item in conversation_records if conversation_label(item) == selected), None)
@@ -1507,33 +1507,33 @@ def show_chat():
                 selected_model["name"] = data["model"]
                 model_selector.set(data["model"])
             render_messages(session.snapshot())
-            chat_status.configure(text="浼氳瘽宸插姞杞?, text_color="#32CD32")
+            chat_status.configure(text="Conversation loaded.", text_color="#32CD32")
             logger.info("Conversation loaded")
             logger.info("Conversation switched")
         except (OSError, ValueError, json.JSONDecodeError) as error:
             logger.error(f"Conversation load failed: {error}")
-            chat_status.configure(text="鏃犳硶鍔犺浇浼氳瘽銆?, text_color="red")
+            chat_status.configure(text="Unable to load conversation.", text_color="red")
 
     def delete_conversation():
         selected = conversation_selector.get()
         record = next((item for item in conversation_records if conversation_label(item) == selected), None)
-        if record is None or not messagebox.askyesno("Delete Chat", "鏄惁鍒犻櫎褰撳墠浼氳瘽锛?, parent=chat_window):
+        if record is None or not messagebox.askyesno("Delete Chat", "Delete selected conversation?", parent=chat_window):
             return
         try:
             conversation_manager.delete(record["id"])
             if conversation_state["id"] == record["id"]:
                 new_conversation()
             refresh_conversations()
-            chat_status.configure(text="浼氳瘽宸插垹闄?, text_color="gray")
+            chat_status.configure(text="Conversation deleted.", text_color="gray")
             logger.info("Conversation deleted")
         except OSError as error:
             logger.error(f"Conversation delete failed: {error}")
 
     def rename_conversation():
         if not conversation_state["id"]:
-            chat_status.configure(text="璇峰厛鍔犺浇浼氳瘽銆?, text_color="orange")
+            chat_status.configure(text="Please load a conversation first.", text_color="orange")
             return
-        dialog = ctk.CTkInputDialog(text="璇疯緭鍏ヤ細璇濇爣棰橈細", title=TEXT["rename_chat"])
+        dialog = ctk.CTkInputDialog(text="Enter conversation title:", title=TEXT["rename_chat"])
         title = dialog.get_input()
         if not title or not title.strip():
             return
@@ -1541,7 +1541,7 @@ def show_chat():
             data = conversation_manager.rename(conversation_state["id"], title)
             conversation_state["title"] = data["title"]
             refresh_conversations()
-            chat_status.configure(text="浼氳瘽宸查噸鍛藉悕", text_color="#32CD32")
+            chat_status.configure(text="Conversation renamed.", text_color="#32CD32")
             logger.info("Conversation renamed")
         except (OSError, ValueError, json.JSONDecodeError) as error:
             logger.error(f"Conversation rename failed: {error}")
@@ -1559,7 +1559,7 @@ def show_chat():
             model_selector.configure(values=["No models available"])
             model_selector.set("No models available")
             chat_status.configure(
-                text="鏈壘鍒?Ollama 妯″瀷锛岃鍚姩 Ollama 鍚庨噸璇曘€?,
+                text="No Ollama models found. Start Ollama and retry.",
                 text_color="orange"
             )
             return
@@ -1703,9 +1703,9 @@ def show_chat():
                     chat_status.configure(text=error_message, text_color="red")
                 elif result == "stopped":
                     append_text("[Generation stopped]")
-                    chat_status.configure(text="宸插仠姝㈢敓鎴?, text_color="orange")
+                    chat_status.configure(text="Generation stopped.", text_color="orange")
                 else:
-                    chat_status.configure(text="宸叉敹鍒板洖澶?, text_color="#32CD32")
+                    chat_status.configure(text="Response received.", text_color="#32CD32")
                 stream_state["running"] = False
                 stream_state["stop_event"] = None
                 send_button.configure(state="normal")
@@ -1722,16 +1722,16 @@ def show_chat():
 
     def clear_chat():
         if stream_state["running"]:
-            chat_status.configure(text="璇峰厛鍋滄鐢熸垚鍐嶆竻绌恒€?, text_color="orange")
+            chat_status.configure(text="Please stop generation before clearing.", text_color="orange")
             return
-        if not messagebox.askyesno("Clear Chat", "鏄惁娓呯┖褰撳墠瀵硅瘽锛?, parent=chat_window):
+        if not messagebox.askyesno("Clear Chat", "Clear current conversation?", parent=chat_window):
             return
         chat_display.configure(state="normal")
         chat_display.delete("1.0", "end")
         chat_display.configure(state="disabled")
         input_box.delete("1.0", "end")
         session.clear()
-        chat_status.configure(text="浼氳瘽宸叉竻绌?, text_color="gray")
+        chat_status.configure(text="Conversation cleared.", text_color="gray")
         logger.info("Conversation cleared")
 
     def stop_generation():
@@ -1893,7 +1893,7 @@ def show_memory():
 
     memory_search_frame = ctk.CTkFrame(memory_window, fg_color="transparent")
     memory_search_frame.pack(fill="x", padx=25, pady=(0, 10))
-    memory_search_entry = ctk.CTkEntry(memory_search_frame, placeholder_text="鎼滅储璁板繂")
+    memory_search_entry = ctk.CTkEntry(memory_search_frame, placeholder_text="Search memories")
     memory_search_entry.pack(side="left", fill="x", expand=True, padx=(0, 6))
 
     form = ctk.CTkFrame(memory_window, fg_color="transparent")
@@ -1910,7 +1910,7 @@ def show_memory():
     importance_box.set("normal")
     importance_box.pack(fill="x", pady=(2, 12))
     enabled_var = ctk.BooleanVar(value=True)
-    enabled_switch = ctk.CTkSwitch(form, text="鍚敤璁板繂", variable=enabled_var, command=lambda: toggle_memory())
+    enabled_switch = ctk.CTkSwitch(form, text="Enable Memory", variable=enabled_var, command=lambda: toggle_memory())
     enabled_switch.pack(anchor="w", pady=(0, 10))
     status = ctk.CTkLabel(form, text="", text_color="gray")
     status.pack(anchor="w", pady=(0, 8))
@@ -1919,18 +1919,18 @@ def show_memory():
         refresh_memory_list(memory_search_entry.get())
         logger.info("Memory searched")
 
-    ctk.CTkButton(memory_search_frame, text="鎼滅储", width=80, command=search_memory_list).pack(side="right")
+    ctk.CTkButton(memory_search_frame, text="Search", width=80, command=search_memory_list).pack(side="right")
 
     memory_filter_frame = ctk.CTkFrame(memory_window, fg_color="transparent")
     memory_filter_frame.pack(fill="x", padx=25, pady=(0, 10))
-    type_filter = ctk.CTkOptionMenu(memory_filter_frame, values=["鍏ㄩ儴绫诲瀷", "preference", "fact", "project", "temporary"], width=150)
-    type_filter.set("鍏ㄩ儴绫诲瀷")
+    type_filter = ctk.CTkOptionMenu(memory_filter_frame, values=["All Types", "preference", "fact", "project", "temporary"], width=150)
+    type_filter.set("All Types")
     type_filter.pack(side="left", padx=(0, 6))
-    importance_filter = ctk.CTkOptionMenu(memory_filter_frame, values=["鍏ㄩ儴閲嶈鎬?, "low", "normal", "high"], width=150)
-    importance_filter.set("鍏ㄩ儴閲嶈鎬?)
+    importance_filter = ctk.CTkOptionMenu(memory_filter_frame, values=["All Importance", "low", "normal", "high"], width=150)
+    importance_filter.set("All Importance")
     importance_filter.pack(side="left", padx=6)
-    enabled_filter = ctk.CTkOptionMenu(memory_filter_frame, values=["鍏ㄩ儴鐘舵€?, "鍚敤", "鍋滅敤"], width=120)
-    enabled_filter.set("鍏ㄩ儴鐘舵€?)
+    enabled_filter = ctk.CTkOptionMenu(memory_filter_frame, values=["All Status", "Enabled", "Disabled"], width=120)
+    enabled_filter.set("All Status")
     enabled_filter.pack(side="left", padx=6)
 
     def refresh_memory_list(keyword=""):
@@ -1941,15 +1941,15 @@ def show_memory():
         records = search_memories(
             store.list_memories(),
             keyword,
-            memory_type=None if selected_type == "鍏ㄩ儴绫诲瀷" else selected_type,
-            importance=None if selected_importance == "鍏ㄩ儴閲嶈鎬? else selected_importance,
-            enabled=None if selected_enabled == "鍏ㄩ儴鐘舵€? else selected_enabled == "鍚敤"
+            memory_type=None if selected_type == "All Types" else selected_type,
+            importance=None if selected_importance == "All Importance" else selected_importance,
+            enabled=None if selected_enabled == "All Status" else selected_enabled == "Enabled"
         )
         logger.info(f"Memory loaded: {len(records)}")
         labels = [
             f"{item.get('type', 'fact')} | {item.get('content', '')[:45]} | "
             f"{item.get('importance', 'normal')} | "
-            f"{'鍚敤' if item.get('enabled', True) else '鍋滅敤'} | "
+            f"{'Enabled' if item.get('enabled', True) else 'Disabled'} | "
             f"{item.get('updated_time', '').replace('T', ' ')}"
             for item in records
         ]
@@ -1988,17 +1988,17 @@ def show_memory():
     def save_memory():
         content = content_box.get("1.0", "end").strip()
         if not content:
-            status.configure(text="璇疯緭鍏ヨ蹇嗗唴瀹广€?, text_color="orange")
+            status.configure(text="Please enter memory content.", text_color="orange")
             return
         if selected_id["value"]:
             store.update(selected_id["value"], type_box.get(), content, importance_box.get())
             store.set_enabled(selected_id["value"], enabled_var.get())
             logger.info("Memory updated")
-            status.configure(text="璁板繂宸叉洿鏂?, text_color="#32CD32")
+            status.configure(text="Memory updated.", text_color="#32CD32")
         else:
             store.create(type_box.get(), content, importance_box.get())
             logger.info("Memory created")
-            status.configure(text="璁板繂宸插垱寤?, text_color="#32CD32")
+            status.configure(text="Memory created.", text_color="#32CD32")
         clear_form()
         refresh_memory_list()
 
@@ -2007,17 +2007,17 @@ def show_memory():
             return
         store.set_enabled(selected_id["value"], enabled_var.get())
         logger.info("Memory enabled changed")
-        status.configure(text="璁板繂鐘舵€佸凡鏇存柊", text_color="#32CD32")
+        status.configure(text="Memory status updated.", text_color="#32CD32")
         refresh_memory_list(memory_search_entry.get())
 
     def delete_memory():
         if not selected_id["value"]:
             return
-        if not messagebox.askyesno("Delete Memory", "鏄惁鍒犻櫎褰撳墠璁板繂锛?, parent=memory_window):
+        if not messagebox.askyesno("Delete Memory", "Delete selected memory?", parent=memory_window):
             return
         store.delete(selected_id["value"])
         logger.info("Memory deleted")
-        status.configure(text="璁板繂宸插垹闄?, text_color="gray")
+        status.configure(text="Memory deleted.", text_color="gray")
         clear_form()
         refresh_memory_list()
 
@@ -2036,10 +2036,10 @@ def show_memory():
                 encoding="utf-8"
             )
             logger.info("Memory exported")
-            status.configure(text="璁板繂宸插鍑?, text_color="#32CD32")
+            status.configure(text="Memory exported.", text_color="#32CD32")
         except (OSError, TypeError) as error:
             logger.error(f"Memory export failed: {error}")
-            status.configure(text="璁板繂瀵煎嚭澶辫触銆?, text_color="red")
+            status.configure(text="Memory export failed.", text_color="red")
 
     def import_memory():
         source = filedialog.askopenfilename(
@@ -2056,10 +2056,10 @@ def show_memory():
             added = store.merge(imported)
             refresh_memory_list(memory_search_entry.get())
             logger.info("Memory imported")
-            status.configure(text=f"宸插鍏?{added} 鏉¤蹇?, text_color="#32CD32")
+            status.configure(text=f"Imported {added} memory record(s).", text_color="#32CD32")
         except (OSError, ValueError, TypeError, json.JSONDecodeError) as error:
             logger.error(f"Memory import failed: {error}")
-            status.configure(text="璁板繂鏂囦欢鏍煎紡鏃犳晥锛屽鍏ュけ璐ャ€?, text_color="red")
+            status.configure(text="Invalid memory file format. Import failed.", text_color="red")
 
     buttons = ctk.CTkFrame(memory_window, fg_color="transparent")
     buttons.pack(fill="x", padx=25, pady=(0, 20))
@@ -4807,7 +4807,7 @@ btn1.pack(fill="x", padx=40, pady=8)
 
 btn_diagnostic = ctk.CTkButton(
     actions_frame,
-    text="杩愯鐜璇婃柇",
+    text="Runtime Environment Diagnostics",
     command=run_diagnostic
 )
 btn_diagnostic.pack(fill="x", padx=40, pady=8)
@@ -5387,7 +5387,7 @@ def show_settings():
                 raise ValueError
         except ValueError:
             result_label.configure(
-                text="鍒锋柊闂撮殧銆佹敞鍏ユ暟閲忓拰閲嶈鎬ч槇鍊兼牸寮忔棤鏁堛€?,
+                text="Invalid refresh interval, injection count, or importance threshold.",
                 text_color="red"
             )
             return
@@ -5537,7 +5537,7 @@ def show_settings():
             logger.info("Settings saved")
             logger.info("Language changed")
             result_label.configure(
-                text="璁剧疆宸蹭繚瀛樸€?,
+                text="Settings saved.",
                 text_color="#32CD32"
             )
 
@@ -5553,7 +5553,7 @@ def show_settings():
                     ollama_test_button.configure(state="normal")
                     openwebui_test_button.configure(state="normal")
                     result_label.configure(
-                        text="宸插彇娑堜繚瀛樸€?,
+                        text="Save canceled.",
                         text_color="gray"
                     )
                     return
@@ -5564,7 +5564,7 @@ def show_settings():
         ollama_test_button.configure(state="disabled")
         openwebui_test_button.configure(state="disabled")
         result_label.configure(
-            text="淇濆瓨鍓嶆祴璇曚腑...",
+            text="Testing before save...",
             text_color="gray"
         )
         check_service_connection(
@@ -5614,12 +5614,12 @@ def health_check_legacy():
 
     for name, ok in status.items():
         if ok:
-            result.append(f"鉁?{name} 姝ｅ父")
+            result.append(f"OK {name}")
         else:
-            result.append(f"鉂?{name} 鏈繛鎺?)
+            result.append(f"Offline {name}")
 
     messagebox.showinfo(
-        "鍋ュ悍妫€鏌?,
+        "Health Check",
         "\n".join(result)
     )
 
@@ -5969,7 +5969,7 @@ def apply_status(status):
         )
     else:
         status_summary_label.configure(
-            text=f"{online_count} / {len(mapping)} 椤规湇鍔″湪绾?,
+            text=f"{online_count} / {len(mapping)} services online",
             text_color="orange"
         )
 
