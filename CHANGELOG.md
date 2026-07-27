@@ -1,5 +1,16 @@
 # Project Aurora Changelog
 
+## v2.4.3 - 2026.07.27
+
+### Localization & UI Stability
+
+- Added JSON-backed i18n foundation with `zh_CN` default and `en_US` fallback.
+- Added shared UI font tokens using Microsoft YaHei UI for future desktop UI work.
+- Improved Dashboard Health Center grouping for AI Services, Memory & Knowledge, and System status.
+- Split Knowledge Base status text into multiple lines to reduce horizontal layout pressure.
+- Improved Settings window sizing and row layout for Chinese text stability.
+- Repaired high-frequency mojibake UI strings in version, settings, action buttons, Memory import/export, and Persona test prompt.
+
 ## v2.4.2 - 2026.07.27
 
 ### First Run Wizard

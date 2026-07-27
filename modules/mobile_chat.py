@@ -35,58 +35,57 @@ DEFAULT_MOBILE_RESPONSE_LIMIT = 12000
 ERROR_MESSAGES = {
     "Remote Disabled": {
         "error": "Remote Disabled",
-        "message": "Remote Access Disabled / 远程访问未启用。"
+        "message": "Remote access is disabled."
     },
     "LAN Chat Disabled": {
         "error": "LAN Chat Disabled",
-        "message": "LAN Chat Disabled / 局域网聊天已关闭。"
+        "message": "LAN Chat is disabled."
     },
     "Server Starting": {
         "error": "Server Starting",
-        "message": "Server is starting. Please try again. / 服务正在启动，请稍后重试。"
+        "message": "Server is starting. Please try again."
     },
     "Server Stopped": {
         "error": "Server Stopped",
-        "message": "Server stopped. / 服务已停止。"
+        "message": "Server stopped."
     },
     "Request Timeout": {
         "error": "Request Timeout",
-        "message": "AI response timeout. / AI 回复超时。"
+        "message": "AI response timeout."
     },
     "Ollama Unavailable": {
         "error": "Ollama unavailable",
-        "message": "Ollama service unavailable / Ollama 不可用"
+        "message": "Ollama service unavailable."
     },
     "Context Build Failed": {
         "error": "Context build failed",
-        "message": "Context build failed / 上下文构建失败"
+        "message": "Context build failed."
     },
     "Chat Generation Failed": {
         "error": "Chat generation failed",
-        "message": "Chat generation failed / AI 生成失败"
+        "message": "Chat generation failed."
     },
     "Model Unavailable": {
         "error": "Model unavailable",
-        "message": "Model unavailable / \u6a21\u578b\u4e0d\u53ef\u7528"
+        "message": "Model unavailable."
     },
     "Model Cannot Chat": {
         "error": "Model cannot chat",
-        "message": "Model cannot chat. Please select a chat model. / \u5f53\u524d\u6a21\u578b\u4e0d\u652f\u6301\u804a\u5929\uff0c\u8bf7\u9009\u62e9\u804a\u5929\u6a21\u578b\u3002"
+        "message": "Model cannot chat. Please select a chat model."
     },
     "Invalid Response": {
         "error": "Invalid response",
-        "message": "Invalid response / 返回格式错误"
+        "message": "Invalid response."
     },
     "AI Response Failed": {
         "error": "Unknown error",
-        "message": "Unknown error / 未知错误"
+        "message": "Unknown error."
     },
     "Invalid Request": {
         "error": "Invalid Request",
-        "message": "Invalid request. / 请求无效。"
+        "message": "Invalid request."
     }
 }
-
 
 class MobileChatService:
     """Handle one-at-a-time local LAN mobile chat requests."""
@@ -247,11 +246,10 @@ class MobileChatService:
     def validate_message(self, message):
         text = str(message or "").strip()
         if not text:
-            raise ValueError("Message is empty. / 消息不能为空。")
+            raise ValueError("Message is empty.")
         if len(text) > MAX_MOBILE_MESSAGE_LENGTH:
-            raise ValueError(f"Message is too long. Limit: {MAX_MOBILE_MESSAGE_LENGTH} characters. / 消息过长。")
+            raise ValueError(f"Message is too long. Limit: {MAX_MOBILE_MESSAGE_LENGTH} characters.")
         return text
-
     @staticmethod
     def _error(key, status=None, detail="", stage="", reason=""):
         payload = dict(ERROR_MESSAGES.get(key, ERROR_MESSAGES["AI Response Failed"]))
@@ -264,7 +262,6 @@ class MobileChatService:
         payload["ok"] = False
         payload["status"] = status or {}
         return payload
-
     @staticmethod
     def _mobile_response_limit():
         try:

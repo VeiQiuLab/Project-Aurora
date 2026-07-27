@@ -1,0 +1,12 @@
+"""Shared UI font tokens for Project Aurora."""
+
+FONT_FAMILY = "Microsoft YaHei UI"
+
+FONT_TITLE = (FONT_FAMILY, 22, "bold")
+FONT_APP_TITLE = (FONT_FAMILY, 24, "bold")
+FONT_HEADER = (FONT_FAMILY, 16, "bold")
+FONT_SECTION = (FONT_FAMILY, 15, "bold")
+FONT_NORMAL = (FONT_FAMILY, 13)
+FONT_NORMAL_BOLD = (FONT_FAMILY, 13, "bold")
+FONT_SMALL = (FONT_FAMILY, 12)
+FONT_SMALL_BOLD = (FONT_FAMILY, 12, "bold")

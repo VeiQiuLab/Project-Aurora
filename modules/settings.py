@@ -10,10 +10,10 @@ class Settings:
         self.config_file = self.config_dir / "settings.json"
 
         self.default_settings = {
-            "app_name": "Project Aurora · Xu",
+            "app_name": "Project Aurora \u00b7 Xu",
             "theme": "System",
             "appearance": "System",
-            "language": "简体中文",
+            "language": "\u7b80\u4f53\u4e2d\u6587",
             "first_run": {
                 "completed": False
             },
@@ -168,7 +168,11 @@ class Settings:
         if not isinstance(self.data, dict):
             return False
         legacy_mobile = self.data.get("mobile", {})
-        legacy_model = str(self.data.get("model") or (legacy_mobile.get("model", "") if isinstance(legacy_mobile, dict) else "") or "").strip()
+        legacy_model = str(
+            self.data.get("model")
+            or (legacy_mobile.get("model", "") if isinstance(legacy_mobile, dict) else "")
+            or ""
+        ).strip()
         current_chat_model = str(self.data.get("chat_model", "") or "").strip()
         if legacy_model and (not current_chat_model or current_chat_model == self.default_settings["chat_model"]):
             self.data["chat_model"] = legacy_model

@@ -148,7 +148,18 @@ from modules.knowledge import KnowledgeStore
 from modules.persona import PersonaStore
 from modules.authentication import AuthenticationManager
 from modules.remote import RemoteAccessManager
-from modules.language import TEXT, set_language
+from modules.language import TEXT, set_language as set_legacy_language
+from modules.i18n import set_language as set_i18n_language, t
+from modules.ui_theme import (
+    FONT_APP_TITLE,
+    FONT_HEADER,
+    FONT_NORMAL,
+    FONT_NORMAL_BOLD,
+    FONT_SECTION,
+    FONT_SMALL,
+    FONT_SMALL_BOLD,
+    FONT_TITLE
+)
 from modules.lan_server import LANStatusPageServer, DEFAULT_LAN_STATUS_PORT
 from modules.mobile_chat import MobileChatService
 from modules.search import search_memories, search_conversations
@@ -156,7 +167,12 @@ from modules.memory_retrieval import format_memory_context, retrieve_memories
 from modules.retrieval import format_knowledge_context, search_knowledge, retrieval_summary
 from modules.service_manager import ServiceManager
 
-set_language(settings.get("language", "English"))
+def apply_language(language):
+    set_legacy_language(language)
+    set_i18n_language(language)
+
+
+apply_language(settings.get("language", "\u7b80\u4f53\u4e2d\u6587"))
 
 
 appearance = settings.get("appearance", "System")
@@ -622,14 +638,14 @@ health_center_header.pack(fill="x", padx=15, pady=(12, 6))
 
 ctk.CTkLabel(
     health_center_header,
-    text="Dashboard Health Center",
-    font=("Microsoft YaHei", 16, "bold")
+    text=t("dashboard_health_center"),
+    font=FONT_HEADER
 ).pack(side="left")
 
 health_center_summary = ctk.CTkLabel(
     health_center_header,
-    text="Checking...",
-    font=("Microsoft YaHei", 13, "bold"),
+    text=t("checking"),
+    font=FONT_NORMAL_BOLD,
     text_color="gray"
 )
 health_center_summary.pack(side="right")
@@ -641,37 +657,41 @@ for health_column in range(3):
     health_center_grid.grid_columnconfigure(health_column, weight=1)
 
 health_center_labels = {}
-health_center_names = [
-    "Ollama",
-    "Chat Model",
-    "Embedding Model",
-    "Persona",
-    "Memory",
-    "Knowledge",
-    "Vector Index",
-    "Conversation Store",
-    "Remote"
+health_center_groups = [
+    (t("ai_services"), ["Ollama", "Chat Model", "Embedding Model"]),
+    (t("memory_knowledge"), ["Memory", "Knowledge", "Vector Index"]),
+    (t("system"), ["Conversation Store", "Persona", "Remote"])
 ]
 
-for index, health_name in enumerate(health_center_names):
-    row = index // 3
-    column = index % 3
-    item_frame = ctk.CTkFrame(health_center_grid)
-    item_frame.grid(row=row, column=column, sticky="ew", padx=5, pady=5)
+for column, (group_title, health_names) in enumerate(health_center_groups):
+    group_frame = ctk.CTkFrame(health_center_grid)
+    group_frame.grid(row=0, column=column, sticky="nsew", padx=5, pady=5)
     ctk.CTkLabel(
-        item_frame,
-        text="Conversation" if health_name == "Conversation Store" else health_name,
-        font=("Microsoft YaHei", 13),
+        group_frame,
+        text=group_title,
+        font=FONT_NORMAL_BOLD,
         anchor="w"
-    ).pack(anchor="w", padx=10, pady=(8, 2))
-    value_label = ctk.CTkLabel(
-        item_frame,
-        text="Checking",
-        font=("Microsoft YaHei", 12, "bold"),
-        text_color="gray"
-    )
-    value_label.pack(anchor="w", padx=10, pady=(0, 8))
-    health_center_labels[health_name] = value_label
+    ).pack(anchor="w", padx=12, pady=(10, 6))
+    for health_name in health_names:
+        row_frame = ctk.CTkFrame(group_frame, fg_color="transparent")
+        row_frame.pack(fill="x", padx=12, pady=3)
+        display_name = t("conversation") if health_name == "Conversation Store" else health_name
+        ctk.CTkLabel(
+            row_frame,
+            text=display_name,
+            font=FONT_SMALL,
+            anchor="w"
+        ).pack(side="left", fill="x", expand=True)
+        value_label = ctk.CTkLabel(
+            row_frame,
+            text=t("checking"),
+            font=FONT_SMALL_BOLD,
+            text_color="gray",
+            anchor="e",
+            width=78
+        )
+        value_label.pack(side="right")
+        health_center_labels[health_name] = value_label
 
 health_stats_frame = ctk.CTkFrame(health_center_frame, fg_color="transparent")
 health_stats_frame.pack(fill="x", padx=15, pady=(0, 12))
@@ -681,7 +701,7 @@ for stat_name in ["Memory", "Knowledge", "Conversation"]:
     stat_label = ctk.CTkLabel(
         health_stats_frame,
         text=f"{stat_name}: --",
-        font=("Microsoft YaHei", 12),
+        font=FONT_SMALL,
         text_color="gray"
     )
     stat_label.pack(side="left", padx=(0, 18))
@@ -703,9 +723,9 @@ def refresh_system_health_center():
     if health_center_running:
         return
     health_center_running = True
-    health_center_summary.configure(text="Checking...", text_color="gray")
+    health_center_summary.configure(text=t("checking"), text_color="gray")
     for label in health_center_labels.values():
-        label.configure(text="Checking", text_color="gray")
+        label.configure(text=t("checking"), text_color="gray")
 
     def run_check():
         try:
@@ -730,9 +750,9 @@ def refresh_system_health_center():
             memory_details = items.get("Memory", {}).get("details", {})
             knowledge_details = items.get("Knowledge", {}).get("details", {})
             conversation_details = items.get("Conversation Store", {}).get("details", {})
-            health_stat_labels["Memory"].configure(text=f"Memory: {memory_details.get('records', 0)}")
-            health_stat_labels["Knowledge"].configure(text=f"Knowledge: {knowledge_details.get('total', 0)}")
-            health_stat_labels["Conversation"].configure(text=f"Conversation: {conversation_details.get('records', 0)}")
+            health_stat_labels["Memory"].configure(text=f"{t('memory_count')}: {memory_details.get('records', 0)}")
+            health_stat_labels["Knowledge"].configure(text=f"{t('knowledge_documents')}: {knowledge_details.get('total', 0)}")
+            health_stat_labels["Conversation"].configure(text=f"{t('conversation_count')}: {conversation_details.get('records', 0)}")
 
             overall = report.get("status", "Error")
             if error_message:
@@ -2267,7 +2287,7 @@ def show_memory():
 
     def export_memory():
         target = filedialog.asksaveasfilename(
-            title="瀵煎嚭璁板繂",
+            title=t("export_memory"),
             defaultextension=".json",
             filetypes=[("JSON", "*.json")],
             parent=memory_window
@@ -2287,7 +2307,7 @@ def show_memory():
 
     def import_memory():
         source = filedialog.askopenfilename(
-            title="瀵煎叆璁板繂",
+            title=t("import_memory"),
             filetypes=[("JSON", "*.json")],
             parent=memory_window
         )
@@ -2310,8 +2330,8 @@ def show_memory():
     ctk.CTkButton(buttons, text=TEXT["add"], command=clear_form).pack(side="left", expand=True, fill="x", padx=(0, 6))
     ctk.CTkButton(buttons, text=TEXT["save"], command=save_memory).pack(side="left", expand=True, fill="x", padx=6)
     ctk.CTkButton(buttons, text=TEXT["delete"], command=delete_memory).pack(side="left", expand=True, fill="x", padx=6)
-    ctk.CTkButton(buttons, text="瀵煎嚭璁板繂", command=export_memory).pack(side="left", expand=True, fill="x", padx=6)
-    ctk.CTkButton(buttons, text="瀵煎叆璁板繂", command=import_memory).pack(side="left", expand=True, fill="x", padx=6)
+    ctk.CTkButton(buttons, text=t("export_memory"), command=export_memory).pack(side="left", expand=True, fill="x", padx=6)
+    ctk.CTkButton(buttons, text=t("import_memory"), command=import_memory).pack(side="left", expand=True, fill="x", padx=6)
 
     def close_memory():
         global memory_window
@@ -2332,21 +2352,21 @@ def show_knowledge():
 
     logger.info("Knowledge loaded")
     knowledge_window = ctk.CTkToplevel(app)
-    knowledge_window.title("Knowledge Base")
+    knowledge_window.title(t("knowledge_base"))
     knowledge_window.geometry("900x760")
     knowledge_window.minsize(760, 640)
     knowledge_window.transient(app)
 
     ctk.CTkLabel(
         knowledge_window,
-        text="Knowledge Base",
-        font=("Microsoft YaHei", 22, "bold")
+        text=t("knowledge_base"),
+        font=FONT_TITLE
     ).pack(anchor="w", padx=25, pady=(20, 12))
 
     search_frame = ctk.CTkFrame(knowledge_window, fg_color="transparent")
     search_frame.pack(fill="x", padx=25, pady=(0, 10))
 
-    search_entry = ctk.CTkEntry(search_frame, placeholder_text="Search knowledge")
+    search_entry = ctk.CTkEntry(search_frame, placeholder_text=t("search_knowledge"))
     search_entry.pack(side="left", fill="x", expand=True, padx=(0, 6))
 
     enabled_filter = ctk.CTkOptionMenu(
@@ -2367,7 +2387,7 @@ def show_knowledge():
     stats_label = ctk.CTkLabel(
         knowledge_window,
         text="",
-        font=("Microsoft YaHei", 12),
+        font=FONT_SMALL,
         text_color="gray"
     )
     stats_label.pack(anchor="w", padx=25, pady=(0, 8))
@@ -2375,7 +2395,7 @@ def show_knowledge():
     index_status_label = ctk.CTkLabel(
         knowledge_window,
         text="",
-        font=("Microsoft YaHei", 12),
+        font=FONT_SMALL,
         text_color="gray"
     )
     index_status_label.pack(anchor="w", padx=25, pady=(0, 8))
@@ -2389,12 +2409,12 @@ def show_knowledge():
 
     preview_search_frame = ctk.CTkFrame(knowledge_window, fg_color="transparent")
     preview_search_frame.pack(fill="x", padx=25, pady=(0, 10))
-    preview_search_entry = ctk.CTkEntry(preview_search_frame, placeholder_text="Search in Preview")
+    preview_search_entry = ctk.CTkEntry(preview_search_frame, placeholder_text=t("search_in_preview"))
     preview_search_entry.pack(side="left", fill="x", expand=True, padx=(0, 6))
     preview_search_label = ctk.CTkLabel(
         preview_search_frame,
         text="Matches: 0",
-        font=("Microsoft YaHei", 12),
+        font=FONT_SMALL,
         text_color="gray"
     )
     preview_search_label.pack(side="left", padx=(0, 6))
@@ -2491,23 +2511,19 @@ def show_knowledge():
         index_health = stats.get("vector_index", {})
         stats_label.configure(
             text=(
-                f"Knowledge Enabled: {'Yes' if settings.get('knowledge.enabled', True) else 'No'} | "
-                f"Total: {stats['total']} | TXT: {stats['txt']} | "
-                f"Markdown: {stats['md']} | PDF: {stats['pdf']} | "
-                f"Enabled: {stats['enabled']} | Disabled: {stats['disabled']} | "
-                f"Retrievable: {stats['retrievable']} | "
-                f"Indexed: {stats.get('embedding_indexed', 0)} | "
+                f"{t('knowledge_status')}: {TEXT['enabled'] if settings.get('knowledge.enabled', True) else TEXT['disabled']}\n"
+                f"Documents: {stats['total']} | TXT: {stats['txt']} | Markdown: {stats['md']} | PDF: {stats['pdf']}\n"
+                f"Enabled: {stats['enabled']} | Disabled: {stats['disabled']} | Retrievable: {stats['retrievable']}\n"
+                f"{t('indexed')}: {stats.get('embedding_indexed', 0)} | "
                 f"Stale: {stats.get('embedding_stale', 0)} | "
                 f"Needs Reindex: {stats.get('embedding_needs_reindex', 0)}"
             )
         )
         index_status_label.configure(
             text=(
-                f"Vector Index: {'Present' if index_health.get('exists') else 'Missing'} | "
-                f"Entries: {index_health.get('entries', 0)} | "
-                f"Indexed: {index_health.get('indexed', 0)} | "
-                f"Missing: {index_health.get('missing', 0)} | "
-                f"Invalid: {index_health.get('invalid', 0)} | "
+                f"{t('vector_status')}: {'Present' if index_health.get('exists') else 'Missing'}\n"
+                f"Entries: {index_health.get('entries', 0)} | Indexed: {index_health.get('indexed', 0)} | "
+                f"Missing: {index_health.get('missing', 0)} | Invalid: {index_health.get('invalid', 0)} | "
                 f"Orphaned: {index_health.get('orphaned', 0)} | "
                 f"Updated: {index_health.get('updated_time', '') or 'Never'}"
             )
@@ -3440,8 +3456,8 @@ def show_persona():
     character_label = ctk.CTkLabel(content, text="", font=("Microsoft YaHei", 12), text_color="gray")
     character_label.pack(anchor="w", padx=10, pady=(0, 6))
 
-    add_label("Test Persona")
-    test_prompt_entry = ctk.CTkEntry(content, placeholder_text="杈撳叆娴嬭瘯 Prompt")
+    add_label(t("test_persona"))
+    test_prompt_entry = ctk.CTkEntry(content, placeholder_text=t("knowledge_test_prompt"))
     test_prompt_entry.pack(fill="x", padx=10, pady=(0, 6))
 
     preview_box = ctk.CTkTextbox(content, height=180, wrap="word")
@@ -5051,28 +5067,28 @@ btn1.pack(fill="x", padx=40, pady=8)
 
 btn_diagnostic = ctk.CTkButton(
     actions_frame,
-    text="Runtime Environment Diagnostics",
+    text=t("runtime_environment_diagnostics"),
     command=run_diagnostic
 )
 btn_diagnostic.pack(fill="x", padx=40, pady=8)
 
 btn_start_ollama = ctk.CTkButton(
     actions_frame,
-    text="鍚姩 Ollama",
+    text=t("start_ollama"),
     command=start_ollama_manual
 )
 btn_start_ollama.pack(fill="x", padx=40, pady=8)
 
 btn_restart_webui = ctk.CTkButton(
     actions_frame,
-    text="閲嶅惎 Open WebUI",
+    text=t("restart_openwebui"),
     command=restart_openwebui_manual
 )
 btn_restart_webui.pack(fill="x", padx=40, pady=8)
 
 btn_restart_container = ctk.CTkButton(
     actions_frame,
-    text="閲嶅惎瀹瑰櫒",
+    text=t("restart_container"),
     command=restart_container_manual
 )
 btn_restart_container.pack(fill="x", padx=40, pady=8)
@@ -5161,14 +5177,14 @@ def show_settings():
 
     settings_window = ctk.CTkToplevel(app)
     settings_window.title(TEXT["settings"])
-    settings_window.geometry("560x560")
-    settings_window.resizable(False, False)
+    settings_window.geometry("680x680")
+    settings_window.minsize(560, 560)
     settings_window.transient(app)
 
     settings_title = ctk.CTkLabel(
         settings_window,
         text=TEXT["settings"],
-        font=("Microsoft YaHei", 20, "bold")
+        font=FONT_TITLE
     )
     settings_title.pack(anchor="w", padx=25, pady=(20, 15))
 
@@ -5178,7 +5194,11 @@ def show_settings():
     appearance_value = settings.get("appearance", "System")
     if appearance_value not in ["System", "Light", "Dark"]:
         appearance_value = "System"
-    appearance_display = {"System": "绯荤粺", "Light": "娴呰壊", "Dark": "娣辫壊"}
+    appearance_display = {
+        "System": t("appearance_system"),
+        "Light": t("appearance_light"),
+        "Dark": t("appearance_dark")
+    }
 
     theme_value = settings.get("theme", "blue")
     theme_options = ["blue", "green", "dark-blue"]
@@ -5189,58 +5209,70 @@ def show_settings():
         ctk.CTkLabel(
             content,
             text=text,
-            font=("Microsoft YaHei", 15, "bold")
+            font=FONT_SECTION
         ).pack(anchor="w", padx=10, pady=(12, 6))
 
     def add_option_row(label_text, values, current_value):
         row = ctk.CTkFrame(content, fg_color="transparent")
         row.pack(fill="x", padx=10, pady=6)
+        row.grid_columnconfigure(0, weight=1)
 
         ctk.CTkLabel(
             row,
             text=label_text,
             anchor="w",
-            font=("Microsoft YaHei", 13)
-        ).pack(side="left")
+            font=FONT_NORMAL,
+            wraplength=320,
+            justify="left"
+        ).grid(row=0, column=0, sticky="w", padx=(0, 12))
 
         option = ctk.CTkOptionMenu(row, values=values, width=180)
         option.set(current_value)
-        option.pack(side="right")
+        option.grid(row=0, column=1, sticky="e")
         return option
 
     def add_entry_row(label_text, current_value):
         row = ctk.CTkFrame(content, fg_color="transparent")
         row.pack(fill="x", padx=10, pady=6)
+        row.grid_columnconfigure(0, weight=1)
 
         ctk.CTkLabel(
             row,
             text=label_text,
             anchor="w",
-            font=("Microsoft YaHei", 13)
-        ).pack(side="left")
+            font=FONT_NORMAL,
+            wraplength=300,
+            justify="left"
+        ).grid(row=0, column=0, sticky="w", padx=(0, 12))
 
         entry = ctk.CTkEntry(row, width=250)
         entry.insert(0, str(current_value))
-        entry.pack(side="right")
+        entry.grid(row=0, column=1, sticky="e")
         return entry
 
     def add_status_row(label_text, value_text, color="gray"):
         row = ctk.CTkFrame(content, fg_color="transparent")
         row.pack(fill="x", padx=10, pady=4)
+        row.grid_columnconfigure(0, weight=1)
         ctk.CTkLabel(
             row,
             text=label_text,
             anchor="w",
-            font=("Microsoft YaHei", 13)
-        ).pack(side="left")
+            font=FONT_NORMAL,
+            wraplength=300,
+            justify="left"
+        ).grid(row=0, column=0, sticky="w", padx=(0, 12))
         ctk.CTkLabel(
             row,
             text=str(value_text),
-            font=("Microsoft YaHei", 12),
-            text_color=color
-        ).pack(side="right")
+            font=FONT_SMALL,
+            text_color=color,
+            anchor="e",
+            wraplength=240,
+            justify="right"
+        ).grid(row=0, column=1, sticky="e")
 
-    add_section_title("General")
+    add_section_title(t("general"))
     appearance_option = add_option_row(
         TEXT["appearance"],
         list(appearance_display.values()),
@@ -5248,12 +5280,12 @@ def show_settings():
     )
     theme_option = add_option_row(TEXT["theme"], theme_options, theme_value)
     language_option = add_option_row(
-        "Language",
+        t("language"),
         ["\u7b80\u4f53\u4e2d\u6587", "English"],
         settings.get("language", "\u7b80\u4f53\u4e2d\u6587")
     )
 
-    add_section_title("AI")
+    add_section_title(t("ai"))
     ollama_host_entry = add_entry_row(
         TEXT["ollama_host"],
         settings.get("ollama.host", "http://127.0.0.1:11434")
@@ -5263,11 +5295,11 @@ def show_settings():
     )
     ctk.CTkSwitch(
         content,
-        text="Ollama Auto Start",
+        text=t("ollama_auto_start"),
         variable=auto_start_ollama_var
     ).pack(anchor="w", padx=10, pady=6)
     ollama_command_entry = add_entry_row(
-        "Ollama Command",
+        t("ollama_command"),
         settings.get("services.ollama.command", "ollama serve")
     )
     chat_model_entry = add_entry_row(
@@ -5283,12 +5315,12 @@ def show_settings():
         settings.get("openwebui.host", "http://localhost:8080")
     )
     openwebui_type_option = add_option_row(
-        "Open WebUI Type",
+        t("openwebui_type"),
         ["docker"],
         settings.get("openwebui.type", "docker")
     )
     openwebui_container_entry = add_entry_row(
-        "Container Name",
+        t("container_name"),
         settings.get("openwebui.container_name", "open-webui")
     )
     auto_start_openwebui_var = ctk.BooleanVar(
@@ -5296,7 +5328,7 @@ def show_settings():
     )
     ctk.CTkSwitch(
         content,
-        text="Auto Start Open WebUI",
+        text=t("auto_start_openwebui"),
         variable=auto_start_openwebui_var
     ).pack(anchor="w", padx=10, pady=6)
     docker_auto_start_var = ctk.BooleanVar(
@@ -5304,27 +5336,27 @@ def show_settings():
     )
     ctk.CTkSwitch(
         content,
-        text="Docker Desktop Auto Start",
+        text=t("docker_desktop_auto_start"),
         variable=docker_auto_start_var
     ).pack(anchor="w", padx=10, pady=6)
     docker_path_entry = add_entry_row(
-        "Docker Desktop Path",
+        t("docker_desktop_path"),
         settings.get("services.docker.path", r"C:\Program Files\Docker\Docker\Docker Desktop.exe")
     )
     docker_timeout_entry = add_entry_row(
-        "Docker Startup Timeout",
+        t("docker_startup_timeout"),
         settings.get("services.docker.startup_timeout", 60)
     )
 
-    add_section_title("Developer")
+    add_section_title(t("developer"))
     refresh_interval_entry = add_entry_row(
         TEXT["refresh_interval"],
         settings.get("status.refresh_interval", 3)
     )
-    add_status_row("Debug Mode", "Enabled" if settings.get("mobile_debug_mode", False) else "Disabled")
-    add_status_row("Log Level", settings.get("log.level", "INFO"))
+    add_status_row(t("debug_mode"), t("enabled") if settings.get("mobile_debug_mode", False) else TEXT["disabled"])
+    add_status_row(t("log_level"), settings.get("log.level", "INFO"))
 
-    add_section_title("Remote")
+    add_section_title(t("remote"))
     remote_enabled_var = ctk.BooleanVar(
         value=bool(settings.get("remote.enabled", False))
     )
@@ -5338,7 +5370,7 @@ def show_settings():
         ["local"],
         settings.get("remote.mode", "local")
     )
-    add_status_row("Public Access", "Not available in this version", "orange")
+    add_status_row(t("public_access"), t("not_available_this_version"), "orange")
     preferred_interface_entry = add_entry_row(
         TEXT["preferred_interface"],
         settings.get("network.preferred_interface", "")
@@ -5383,7 +5415,7 @@ def show_settings():
         TEXT["mobile_response_limit"],
         settings.get("mobile_response_limit", 12000)
     )
-    add_section_title("Persona")
+    add_section_title(t("persona"))
     try:
         current_persona = persona_store.status(settings.get("persona.enabled", True), persona_store.load(update_timestamp=False))
         add_status_row("Current Persona", current_persona.get("name", "Aurora"), "#32CD32")
@@ -5398,32 +5430,32 @@ def show_settings():
         variable=persona_enabled_var
     ).pack(anchor="w", padx=10, pady=6)
 
-    add_section_title("Memory")
-    add_status_row("Memory Available", "Yes")
+    add_section_title(t("memory"))
+    add_status_row(t("memory_available"), TEXT["yes"])
     max_injection_entry = add_entry_row(
-        "Maximum Memory Injection",
+        t("maximum_memory_injection"),
         settings.get("memory.max_injection", 5)
     )
     min_importance_entry = add_entry_row(
-        "Minimum Memory Importance",
+        t("minimum_memory_importance"),
         settings.get("memory.min_importance", 0)
     )
 
-    add_section_title("Knowledge")
+    add_section_title(t("knowledge"))
     knowledge_enabled_var = ctk.BooleanVar(
         value=bool(settings.get("knowledge.enabled", True))
     )
     ctk.CTkSwitch(
         content,
-        text="Knowledge Enable",
+        text=t("knowledge_enable"),
         variable=knowledge_enabled_var
     ).pack(anchor="w", padx=10, pady=6)
     max_knowledge_entry = add_entry_row(
-        "Maximum Knowledge Results",
+        t("maximum_knowledge_results"),
         settings.get("knowledge.max_results", 3)
     )
 
-    add_section_title("Status Overview")
+    add_section_title(t("status_overview"))
     try:
         health_report = system_self_check(timeout=2)
         health_items = {
@@ -5434,7 +5466,7 @@ def show_settings():
     except Exception as error:
         health_report = {"status": "Error"}
         health_items = {}
-        add_status_row("Health Check", error, "red")
+        add_status_row(t("health_check"), error, "red")
 
     def status_value(name):
         item = health_items.get(name, {})
@@ -5459,16 +5491,16 @@ def show_settings():
     _memory_status, _memory_color, memory_details = status_value("Memory")
     _knowledge_status, _knowledge_color, knowledge_details = status_value("Knowledge")
     _conversation_status, _conversation_color, conversation_details = status_value("Conversation Store")
-    add_status_row("Memory Count", memory_details.get("records", 0))
-    add_status_row("Knowledge Documents", knowledge_details.get("total", 0))
-    add_status_row("Conversation Count", conversation_details.get("records", 0))
-    add_status_row("Remote Enabled", "Yes" if settings.get("remote.enabled", False) else "No")
-    add_status_row("Log Level", settings.get("log.level", "INFO"))
+    add_status_row(t("memory_count"), memory_details.get("records", 0))
+    add_status_row(t("knowledge_documents"), knowledge_details.get("total", 0))
+    add_status_row(t("conversation_count"), conversation_details.get("records", 0))
+    add_status_row(t("remote_enabled"), TEXT["yes"] if settings.get("remote.enabled", False) else TEXT["no"])
+    add_status_row(t("log_level"), settings.get("log.level", "INFO"))
 
     result_label = ctk.CTkLabel(
         settings_window,
         text="",
-        font=("Microsoft YaHei", 12),
+        font=FONT_SMALL,
         text_color="#32CD32"
     )
     result_label.pack(pady=(0, 8))
@@ -5489,18 +5521,18 @@ def show_settings():
             except urllib.error.HTTPError:
                 connected = True
             except (socket.timeout, TimeoutError):
-                reason = "Timeout"
+                reason = t("timeout")
             except ConnectionRefusedError:
-                reason = "Connection refused"
+                reason = t("connection_refused")
             except urllib.error.URLError as error:
                 if isinstance(error.reason, socket.timeout):
-                    reason = "Timeout"
+                    reason = t("timeout")
                 elif isinstance(error.reason, ConnectionRefusedError):
-                    reason = "Connection refused"
+                    reason = t("connection_refused")
                 else:
-                    reason = "Connection error"
+                    reason = t("connection_error")
             except (OSError, ValueError):
-                reason = "Connection error"
+                reason = t("connection_error")
 
             elapsed_ms = int((time.perf_counter() - started_at) * 1000)
 
@@ -5563,7 +5595,7 @@ def show_settings():
         url = ollama_host_entry.get().strip()
         ollama_test_button.configure(state="disabled")
         ollama_result_label.configure(
-                text="娴嬭瘯涓?..",
+            text=t("testing"),
             text_color="gray"
         )
         check_service_connection(
@@ -5582,7 +5614,7 @@ def show_settings():
         url = openwebui_url_entry.get().strip()
         openwebui_test_button.configure(state="disabled")
         openwebui_result_label.configure(
-                text="娴嬭瘯涓?..",
+            text=t("testing"),
             text_color="gray"
         )
         check_service_connection(
@@ -5639,16 +5671,16 @@ def show_settings():
                 raise ValueError
         except ValueError:
             result_label.configure(
-                text="Invalid refresh interval, injection count, or importance threshold.",
+                text=t("invalid_settings"),
                 text_color="red"
             )
             return
 
         def persist_settings():
             selected_appearance = {
-                "绯荤粺": "System",
-                "娴呰壊": "Light",
-                "娣辫壊": "Dark"
+                t("appearance_system"): "System",
+                t("appearance_light"): "Light",
+                t("appearance_dark"): "Dark"
             }.get(appearance_option.get(), "System")
             settings.set("appearance", selected_appearance)
             settings.set("theme", theme_option.get())
@@ -5774,7 +5806,7 @@ def show_settings():
             settings.set("knowledge.enabled", knowledge_enabled_var.get())
             settings.set("knowledge.max_results", max_knowledge)
             settings.set("language", language_option.get())
-            set_language(language_option.get())
+            apply_language(language_option.get())
 
             if selected_appearance.lower() == "system":
                 ctk.set_appearance_mode("System")
@@ -5789,7 +5821,7 @@ def show_settings():
             logger.info("Settings saved")
             logger.info("Language changed")
             result_label.configure(
-                text="Settings saved.",
+                text=t("settings_saved"),
                 text_color="#32CD32"
             )
 
