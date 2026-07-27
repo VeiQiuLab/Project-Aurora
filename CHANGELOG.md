@@ -20,6 +20,12 @@
 - Added read-only status overview for Persona, Memory, Knowledge, Vector Index, Conversation, Remote, Debug, and Log Level.
 - Kept Remote access safety-gated and local-only from Settings.
 
+### Knowledge Manager
+
+- Added Knowledge document list fields for embedding and vector index status.
+- Added Knowledge status summary for enabled state, indexed documents, stale documents, and vector index health.
+- Added GUI actions for vector index status checks and rebuilds using existing KnowledgeStore interfaces.
+
 ## v2.4.1 - 2026.07.26
 
 ### Stability & Testing

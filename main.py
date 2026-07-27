@@ -2128,6 +2128,14 @@ def show_knowledge():
     )
     stats_label.pack(anchor="w", padx=25, pady=(0, 8))
 
+    index_status_label = ctk.CTkLabel(
+        knowledge_window,
+        text="",
+        font=("Microsoft YaHei", 12),
+        text_color="gray"
+    )
+    index_status_label.pack(anchor="w", padx=25, pady=(0, 8))
+
     list_box = ctk.CTkOptionMenu(knowledge_window, values=["No knowledge files available"], width=680)
     list_box.pack(fill="x", padx=25, pady=(0, 12))
 
@@ -2174,11 +2182,16 @@ def show_knowledge():
             "Read Error": "Read Error"
         }.get(record.get("status", "OK"), "Read Error")
         enabled_text = status if status != "OK" else ("Enabled" if record.get("enabled", True) else "Disabled")
+        embedding_state = knowledge_store.embedding_state(record)
+        embedding_text = embedding_state.get("status", record.get("embedding_status", "Not Indexed"))
+        vector_text = "Ready" if embedding_state.get("has_embedding") and not embedding_state.get("stale") else embedding_text
         return (
             f"{record.get('file_name', 'Unknown')}\n"
             f"{record.get('file_type', '').upper()} | "
             f"{format_size(record.get('file_size', 0))} | "
             f"{enabled_text} | "
+            f"Embedding: {embedding_text} | "
+            f"Vector: {vector_text} | "
             f"{record.get('added_time', '')} | "
             f"Updated: {record.get('updated_time', '')}"
         )
@@ -2201,8 +2214,9 @@ def show_knowledge():
     def show_detail(record):
         if record:
             selected_record["record"] = record
-            retrievable = str(record.get("file_type", "")).lower().lstrip(".") in {"txt", "md"} and bool(str(record.get("content", "")).strip())
             enabled_text = "Yes" if record.get("enabled", True) else "No"
+            embedding_state = knowledge_store.embedding_state(record)
+            vector_text = "Ready" if embedding_state.get("has_embedding") and not embedding_state.get("stale") else embedding_state.get("status", "Not Indexed")
             set_detail(
                 f"File: {record.get('file_name', '')}\n"
                 f"Type: {record.get('file_type', '')}\n"
@@ -2213,6 +2227,13 @@ def show_knowledge():
                 f"Retrievable: {'Yes' if knowledge_store.valid_for_retrieval(record) else 'No'}\n"
                 f"Enabled: {enabled_text}\n"
                 f"Status: {record.get('status', 'OK')}\n"
+                f"Embedding Status: {embedding_state.get('status', record.get('embedding_status', 'Not Indexed'))}\n"
+                f"Embedding Model: {record.get('embedding_model', '') or 'None'}\n"
+                f"Embedding Updated: {record.get('embedding_updated_time', '') or 'Never'}\n"
+                f"Embedding Dimensions: {record.get('embedding_dimensions', 0)}\n"
+                f"Vector Index Status: {vector_text}\n"
+                f"Needs Reindex: {'Yes' if embedding_state.get('needs_reindex') else 'No'}\n"
+                f"Index Reason: {embedding_state.get('reason', '') or 'OK'}\n"
                 f"Source Path: {record.get('source_path', '') or 'Unknown'}\n"
                 f"Stored Path: {record.get('stored_path', '')}\n\n"
                 "Click Preview to load a limited content preview."
@@ -2222,14 +2243,29 @@ def show_knowledge():
             set_detail("No knowledge file selected.")
 
     def update_stats(records):
-        stats = knowledge_store.stats(records)
+        stats = knowledge_store.health()
+        index_health = stats.get("vector_index", {})
         stats_label.configure(
             text=(
+                f"Knowledge Enabled: {'Yes' if settings.get('knowledge.enabled', True) else 'No'} | "
                 f"Total: {stats['total']} | TXT: {stats['txt']} | "
                 f"Markdown: {stats['md']} | PDF: {stats['pdf']} | "
                 f"Enabled: {stats['enabled']} | Disabled: {stats['disabled']} | "
-                f"Retrievable: {stats['retrievable']} | Characters: {stats['characters']} | "
-                f"Missing: {stats['missing']} | Errors: {stats['errors']}"
+                f"Retrievable: {stats['retrievable']} | "
+                f"Indexed: {stats.get('embedding_indexed', 0)} | "
+                f"Stale: {stats.get('embedding_stale', 0)} | "
+                f"Needs Reindex: {stats.get('embedding_needs_reindex', 0)}"
+            )
+        )
+        index_status_label.configure(
+            text=(
+                f"Vector Index: {'Present' if index_health.get('exists') else 'Missing'} | "
+                f"Entries: {index_health.get('entries', 0)} | "
+                f"Indexed: {index_health.get('indexed', 0)} | "
+                f"Missing: {index_health.get('missing', 0)} | "
+                f"Invalid: {index_health.get('invalid', 0)} | "
+                f"Orphaned: {index_health.get('orphaned', 0)} | "
+                f"Updated: {index_health.get('updated_time', '') or 'Never'}"
             )
         )
 
@@ -2737,6 +2773,16 @@ def show_knowledge():
                     f"Total Characters: {health.get('characters', 0)}\n"
                     f"Missing Files: {health.get('missing', 0)}\n"
                     f"Metadata Errors: {health.get('metadata_errors', 0)}\n"
+                    f"Embedding Indexed: {health.get('embedding_indexed', 0)}\n"
+                    f"Embedding Not Indexed: {health.get('embedding_not_indexed', 0)}\n"
+                    f"Embedding Stale: {health.get('embedding_stale', 0)}\n"
+                    f"Embedding Invalid: {health.get('embedding_invalid', 0)}\n"
+                    f"Embedding Needs Reindex: {health.get('embedding_needs_reindex', 0)}\n"
+                    f"Vector Index Entries: {health.get('vector_index', {}).get('entries', 0)}\n"
+                    f"Vector Index Missing: {health.get('vector_index', {}).get('missing', 0)}\n"
+                    f"Vector Index Stale: {health.get('vector_index', {}).get('stale', 0)}\n"
+                    f"Vector Index Invalid: {health.get('vector_index', {}).get('invalid', 0)}\n"
+                    f"Vector Index Orphaned: {health.get('vector_index', {}).get('orphaned', 0)}\n"
                     f"Backups: {health.get('backup_count', 0)}\n"
                     f"Last Backup: {health.get('last_backup_time', 'None')}\n"
                     f"Latest Backup Version: {health.get('latest_backup_version', 'None')}"
@@ -2749,6 +2795,92 @@ def show_knowledge():
                 return
 
         threading.Thread(target=run_health, daemon=True).start()
+
+    def show_index_status():
+        set_detail("Checking Vector Index...")
+
+        def run_index_health():
+            try:
+                records = knowledge_store.list_items()
+                health = knowledge_store.vector_index_health(records)
+                error_message = None
+            except Exception as error:
+                records = []
+                health = {}
+                error_message = str(error)
+
+            def finish_index_health():
+                if knowledge_window is None or not knowledge_window.winfo_exists():
+                    return
+                if error_message:
+                    set_detail(f"Vector index check failed: {error_message}")
+                    logger.error(f"Knowledge vector index check failed: {error_message}")
+                    return
+                set_detail(
+                    "Vector Index Status\n\n"
+                    f"Knowledge Enabled: {'Yes' if settings.get('knowledge.enabled', True) else 'No'}\n"
+                    f"Documents: {len(records)}\n"
+                    f"Index File: {health.get('path', '')}\n"
+                    f"Exists: {'Yes' if health.get('exists') else 'No'}\n"
+                    f"Format: {health.get('format', '')}\n"
+                    f"Version: {health.get('version', '')}\n"
+                    f"Updated: {health.get('updated_time', '') or 'Never'}\n"
+                    f"Entries: {health.get('entries', 0)}\n"
+                    f"Indexed: {health.get('indexed', 0)}\n"
+                    f"Missing: {health.get('missing', 0)}\n"
+                    f"Stale: {health.get('stale', 0)}\n"
+                    f"Invalid: {health.get('invalid', 0)}\n"
+                    f"Orphaned: {health.get('orphaned', 0)}\n"
+                    f"Needs Reindex: {health.get('needs_reindex', 0)}"
+                )
+                logger.info("Knowledge vector index checked")
+
+            try:
+                knowledge_window.after(0, finish_index_health)
+            except Exception:
+                return
+
+        threading.Thread(target=run_index_health, daemon=True).start()
+
+    def rebuild_vector_index():
+        if not messagebox.askyesno("Rebuild Vector Index", "Rebuild Knowledge vector index now?", parent=knowledge_window):
+            return
+        set_detail("Rebuilding Vector Index...")
+
+        def run_rebuild():
+            try:
+                result = knowledge_store.build_vector_index()
+                health = knowledge_store.vector_index_health()
+                error_message = None
+            except Exception as error:
+                result = {}
+                health = {}
+                error_message = str(error)
+
+            def finish_rebuild():
+                if knowledge_window is None or not knowledge_window.winfo_exists():
+                    return
+                if error_message:
+                    set_detail(f"Vector index rebuild failed: {error_message}")
+                    logger.error(f"Knowledge vector index rebuild failed: {error_message}")
+                    return
+                refresh_knowledge_list()
+                set_detail(
+                    "Vector Index Rebuilt\n\n"
+                    f"Indexed: {result.get('indexed', 0)}\n"
+                    f"Errors: {len(result.get('errors', []))}\n"
+                    f"Index File: {result.get('index_file', '')}\n"
+                    f"Entries: {health.get('entries', 0)}\n"
+                    f"Needs Reindex: {health.get('needs_reindex', 0)}"
+                )
+                logger.info("Knowledge vector index rebuilt")
+
+            try:
+                knowledge_window.after(0, finish_rebuild)
+            except Exception:
+                return
+
+        threading.Thread(target=run_rebuild, daemon=True).start()
 
     def repair_knowledge_metadata():
         set_detail("Repairing Knowledge Metadata...")
@@ -2959,6 +3091,11 @@ def show_knowledge():
     ctk.CTkButton(maintenance_frame, text="Import", command=import_knowledge).pack(side="left", expand=True, fill="x", padx=6)
     ctk.CTkButton(maintenance_frame, text="Health Check", command=health_check_knowledge).pack(side="left", expand=True, fill="x", padx=6)
     ctk.CTkButton(maintenance_frame, text="Repair Metadata", command=repair_knowledge_metadata).pack(side="left", expand=True, fill="x", padx=(6, 0))
+
+    index_frame = ctk.CTkFrame(knowledge_window, fg_color="transparent")
+    index_frame.pack(fill="x", padx=25, pady=(0, 10))
+    ctk.CTkButton(index_frame, text="Index Status", command=show_index_status).pack(side="left", expand=True, fill="x", padx=(0, 6))
+    ctk.CTkButton(index_frame, text="Rebuild Index", command=rebuild_vector_index).pack(side="left", expand=True, fill="x", padx=6)
 
     backup_frame = ctk.CTkFrame(knowledge_window, fg_color="transparent")
     backup_frame.pack(fill="x", padx=25, pady=(0, 10))
