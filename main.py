@@ -10,7 +10,7 @@ import urllib.error
 import urllib.parse
 import urllib.request
 from datetime import datetime
-from tkinter import filedialog, messagebox
+from tkinter import filedialog, messagebox, StringVar
 
 from modules.version import *
 from modules.logger import logger
@@ -62,6 +62,7 @@ def inspect_configuration_file():
         "context.warning_tokens",
         "context.preview_limit",
         "context.inspector_preview_limit",
+        "first_run.completed",
         "remote.enabled",
         "remote.mode",
         "remote.auth_required",
@@ -220,6 +221,9 @@ logger.info("Loading configuration...")
 
 app = ctk.CTk()
 app.title(WINDOW_TITLE)
+first_run_required = not bool(settings.get("first_run.completed", False))
+if first_run_required:
+    app.withdraw()
 
 width = settings.get("window.width", 520)
 height = settings.get("window.height", 560)
@@ -349,6 +353,196 @@ mobile_chat_service = MobileChatService(
     remote_manager=remote_manager,
     event_callback=mobile_chat_logger
 )
+
+
+def fetch_ollama_models_from_api(timeout=5):
+    host = str(settings.get("ollama.host", "http://127.0.0.1:11434") or "").strip().rstrip("/")
+    if not host:
+        return {
+            "ok": False,
+            "models": [],
+            "reason": "Ollama host is not configured."
+        }
+    try:
+        with urllib.request.urlopen(f"{host}/api/tags", timeout=timeout) as response:
+            payload = json.loads(response.read().decode("utf-8"))
+    except Exception as error:
+        return {
+            "ok": False,
+            "models": [],
+            "reason": str(error)
+        }
+
+    records = []
+    for item in payload.get("models", []) if isinstance(payload, dict) else []:
+        if not isinstance(item, dict):
+            continue
+        name = str(item.get("name") or item.get("model") or "").strip()
+        if not name:
+            continue
+        records.append({
+            "name": name,
+            "capability": infer_model_capability(name)
+        })
+    return {
+        "ok": True,
+        "models": records,
+        "reason": ""
+    }
+
+
+def show_first_run_wizard():
+    wizard = ctk.CTkToplevel(app)
+    wizard.title("Project Aurora First Run")
+    wizard.geometry("620x520")
+    wizard.minsize(560, 480)
+    wizard.protocol("WM_DELETE_WINDOW", lambda: None)
+    wizard.grab_set()
+
+    state = {
+        "step": 0,
+        "models": [],
+        "ollama_ok": False,
+        "chat_model": str(settings.get("chat_model", "qwen3:8b") or "qwen3:8b"),
+        "embedding_model": str(settings.get("embedding_model", "nomic-embed-text:latest") or "nomic-embed-text:latest")
+    }
+
+    container = ctk.CTkFrame(wizard)
+    container.pack(fill="both", expand=True, padx=24, pady=24)
+
+    title_label = ctk.CTkLabel(container, text="", font=("Microsoft YaHei", 24, "bold"))
+    title_label.pack(anchor="w", pady=(4, 10))
+
+    content_frame = ctk.CTkFrame(container, fg_color="transparent")
+    content_frame.pack(fill="both", expand=True)
+
+    nav_frame = ctk.CTkFrame(container, fg_color="transparent")
+    nav_frame.pack(fill="x", pady=(16, 0))
+
+    back_button = ctk.CTkButton(nav_frame, text="Back", width=100)
+    back_button.pack(side="left")
+    next_button = ctk.CTkButton(nav_frame, text="Next", width=120)
+    next_button.pack(side="right")
+
+    def clear_content():
+        for child in content_frame.winfo_children():
+            child.destroy()
+
+    def text_row(text, color="gray", size=14):
+        label = ctk.CTkLabel(content_frame, text=text, font=("Microsoft YaHei", size), text_color=color, anchor="w", justify="left")
+        label.pack(fill="x", pady=6)
+        return label
+
+    def refresh_nav():
+        back_button.configure(state="normal" if state["step"] > 0 else "disabled")
+        next_button.configure(text="Finish" if state["step"] == 5 else "Next")
+
+    def load_models_async(status_label=None):
+        def run():
+            result = fetch_ollama_models_from_api()
+
+            def finish():
+                state["ollama_ok"] = bool(result.get("ok"))
+                state["models"] = result.get("models", [])
+                if status_label is not None:
+                    if result.get("ok"):
+                        status_label.configure(text=f"✓ 已安装 | Models: {len(state['models'])}", text_color="#32CD32")
+                    else:
+                        status_label.configure(text=f"✗ 未检测到 | {result.get('reason', '')}", text_color="red")
+
+            try:
+                wizard.after(0, finish)
+            except Exception:
+                return
+
+        threading.Thread(target=run, daemon=True).start()
+
+    def choose_model_step(kind):
+        clear_content()
+        is_chat = kind == "chat"
+        title_label.configure(text="Step 3 · Chat Model" if is_chat else "Step 4 · Embedding Model")
+        text_row("自动读取 Ollama /api/tags，并选择用于聊天或向量检索的模型。")
+        candidates = [
+            item["name"]
+            for item in state["models"]
+            if (item.get("capability") == "Chat Supported") == is_chat
+        ]
+        if not candidates:
+            candidates = [item["name"] for item in state["models"]]
+        current = state["chat_model"] if is_chat else state["embedding_model"]
+        if current and current not in candidates:
+            candidates.insert(0, current)
+        values = candidates or [current or "No models available"]
+        selected = StringVar(value=current if current in values else values[0])
+        menu = ctk.CTkOptionMenu(content_frame, values=values, variable=selected, width=360)
+        menu.pack(anchor="w", pady=12)
+
+        def remember_choice(*_args):
+            if is_chat:
+                state["chat_model"] = selected.get()
+            else:
+                state["embedding_model"] = selected.get()
+
+        selected.trace_add("write", remember_choice)
+        remember_choice()
+
+    def render():
+        clear_content()
+        step = state["step"]
+        if step == 0:
+            title_label.configure(text="Welcome to Project Aurora")
+            ctk.CTkLabel(content_frame, text="Aurora", font=("Microsoft YaHei", 42, "bold")).pack(anchor="w", pady=(12, 6))
+            text_row(f"Version: {RELEASE} | Build: {BUILD}", "#32CD32")
+            text_row("欢迎使用 Project Aurora。本向导会完成首次启动所需的本地 AI 基础配置。", size=15)
+        elif step == 1:
+            title_label.configure(text="Step 2 · Detect Ollama")
+            text_row("检测本机 Ollama 服务状态。")
+            status_label = text_row("Checking Ollama...", "gray", 16)
+            load_models_async(status_label)
+        elif step == 2:
+            choose_model_step("chat")
+        elif step == 3:
+            choose_model_step("embedding")
+        elif step == 4:
+            title_label.configure(text="Step 5 · Persona")
+            persona = persona_store.load(update_timestamp=False)
+            persona_status = persona_store.status(settings.get("persona.enabled", True), persona)
+            text_row(f"Current Persona: {persona_status.get('name', 'Aurora')}", "#32CD32", 16)
+            text_row(f"Rules: {persona_status.get('rules_count', 0)}")
+            text_row(f"Enabled: {'Yes' if persona_status.get('enabled') else 'No'}")
+        else:
+            title_label.configure(text="Step 6 · Complete")
+            text_row("Aurora 已准备完成。", "#32CD32", 18)
+            text_row(f"Chat Model: {state['chat_model']}")
+            text_row(f"Embedding Model: {state['embedding_model']}")
+            text_row("点击 Finish 进入主界面。")
+        refresh_nav()
+
+    def next_step():
+        if state["step"] >= 5:
+            settings.set("chat_model", state["chat_model"])
+            settings.set("embedding_model", state["embedding_model"])
+            settings.set("first_run.completed", True)
+            logger.info("First Run Wizard completed")
+            wizard.grab_release()
+            wizard.destroy()
+            app.deiconify()
+            startup_check()
+            refresh_recent_logs()
+            refresh_status()
+            return
+        state["step"] += 1
+        render()
+
+    def prev_step():
+        if state["step"] > 0:
+            state["step"] -= 1
+            render()
+
+    back_button.configure(command=prev_step)
+    next_button.configure(command=next_step)
+    logger.info("First Run Wizard opened")
+    render()
 
 status_summary_label = ctk.CTkLabel(
     status_frame,
@@ -5614,8 +5808,11 @@ logger.info("Application started")
 
 app.protocol("WM_DELETE_WINDOW", shutdown_app)
 
-startup_check()
-refresh_recent_logs()
-refresh_status()
+if first_run_required:
+    app.after(100, show_first_run_wizard)
+else:
+    startup_check()
+    refresh_recent_logs()
+    refresh_status()
 
 app.mainloop()

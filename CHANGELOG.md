@@ -1,5 +1,13 @@
 # Project Aurora Changelog
 
+## v2.4.2 - 2026.07.27
+
+### First Run Wizard
+
+- Added first-run setup flow for welcome, Ollama detection, Chat Model, Embedding Model, Persona confirmation, and completion.
+- Added `first_run.completed` settings flag so the wizard only appears once.
+- Restored Settings module syntax and default configuration compatibility for startup.
+
 ## v2.4.1 - 2026.07.26
 
 ### Stability & Testing

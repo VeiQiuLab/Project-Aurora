@@ -1,6 +1,5 @@
-import json
-import os
 import copy
+import json
 from pathlib import Path
 
 
@@ -15,6 +14,9 @@ class Settings:
             "theme": "System",
             "appearance": "System",
             "language": "简体中文",
+            "first_run": {
+                "completed": False
+            },
             "memory": {
                 "max_injection": 5,
                 "min_importance": 0
@@ -138,24 +140,24 @@ class Settings:
         self.config_dir.mkdir(parents=True, exist_ok=True)
 
         if not self.config_file.exists():
-            self.data = self.default_settings.copy()
+            self.data = copy.deepcopy(self.default_settings)
             self.save()
             return
 
         try:
-            with open(self.config_file, "r", encoding="utf-8") as f:
-                self.data = json.load(f)
+            with self.config_file.open("r", encoding="utf-8") as file:
+                self.data = json.load(file)
         except Exception:
-            self.data = self.default_settings.copy()
+            self.data = copy.deepcopy(self.default_settings)
             self.save()
             return
 
+        changed = False
         if self._merge_defaults(self.data, self.default_settings):
-            try:
-                self.save()
-            except OSError:
-                pass
+            changed = True
         if self._migrate_model_settings():
+            changed = True
+        if changed:
             try:
                 self.save()
             except OSError:
@@ -165,7 +167,8 @@ class Settings:
         changed = False
         if not isinstance(self.data, dict):
             return False
-        legacy_model = str(self.data.get("model") or self.data.get("mobile", {}).get("model", "") or "").strip()
+        legacy_mobile = self.data.get("mobile", {})
+        legacy_model = str(self.data.get("model") or (legacy_mobile.get("model", "") if isinstance(legacy_mobile, dict) else "") or "").strip()
         current_chat_model = str(self.data.get("chat_model", "") or "").strip()
         if legacy_model and (not current_chat_model or current_chat_model == self.default_settings["chat_model"]):
             self.data["chat_model"] = legacy_model
@@ -196,55 +199,29 @@ class Settings:
 
     def save(self):
         self.config_dir.mkdir(parents=True, exist_ok=True)
-
-        with open(self.config_file, "w", encoding="utf-8") as f:
-            json.dump(self.data, f, indent=4, ensure_ascii=False)
+        with self.config_file.open("w", encoding="utf-8") as file:
+            json.dump(self.data, file, indent=4, ensure_ascii=False)
 
     def get(self, key, default=None):
         keys = key.split(".")
         value = self.data
-
-        for k in keys:
+        for item in keys:
             if not isinstance(value, dict):
                 return default
-
-            if k not in value:
+            if item not in value:
                 return default
-
-            value = value[k]
-
+            value = value[item]
         return value
 
     def set(self, key, value):
         keys = key.split(".")
         target = self.data
-
-        for k in keys[:-1]:
-            if k not in target or not isinstance(target[k], dict):
-                target[k] = {}
-
-            target = target[k]
-
+        for item in keys[:-1]:
+            if item not in target or not isinstance(target[item], dict):
+                target[item] = {}
+            target = target[item]
         target[keys[-1]] = value
         self.save()
 
 
 settings = Settings()
-
-{
-    "app_name": "Project Aurora · Xu",
-    "theme": "System",
-    "appearance": "System",
-    "window": {
-        "width": 1200,
-        "height": 760
-    },
-    "ollama": {
-        "host": "http://127.0.0.1:11434",
-        "auto_start": False
-    },
-    "openwebui": {
-        "host": "http://127.0.0.1:3000",
-        "auto_start": False
-    }
-}
