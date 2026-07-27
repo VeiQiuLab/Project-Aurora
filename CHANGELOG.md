@@ -8,6 +8,12 @@
 - Added `first_run.completed` settings flag so the wizard only appears once.
 - Restored Settings module syntax and default configuration compatibility for startup.
 
+### Dashboard Health Center
+
+- Added main dashboard health panel for Ollama, Chat Model, Embedding Model, Persona, Memory, Knowledge, Vector Index, Conversation, and Remote.
+- Added Memory, Knowledge, and Conversation count summaries.
+- Reused existing `system_self_check()` health logic for dashboard display.
+
 ## v2.4.1 - 2026.07.26
 
 ### Stability & Testing
