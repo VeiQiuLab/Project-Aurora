@@ -322,9 +322,13 @@ chat_window = None
 context_inspector_window = None
 memory_window = None
 knowledge_window = None
+conversation_browser_window = None
 persona_window = None
 remote_window = None
 remote_diagnostics_window = None
+active_conversation_id = None
+chat_load_conversation_callback = None
+pending_conversation_id = None
 memory_store = MemoryStore()
 knowledge_store = KnowledgeStore()
 persona_store = PersonaStore()
@@ -1275,7 +1279,7 @@ def show_context_inspector(payload, parent_window=None):
 
 
 def show_chat():
-    global chat_window
+    global active_conversation_id, chat_load_conversation_callback, chat_window, pending_conversation_id
 
     if chat_window is not None and chat_window.winfo_exists():
         chat_window.focus()
@@ -1437,6 +1441,35 @@ def show_chat():
         conversation_selector.configure(values=labels or [TEXT["no_conversations"]])
         conversation_selector.set(labels[0] if labels else TEXT["no_conversations"])
 
+    def load_conversation_by_id(conversation_id):
+        global active_conversation_id
+        if stream_state["running"]:
+            chat_status.configure(text="Please stop generation before loading a conversation.", text_color="orange")
+            return
+        if not conversation_id:
+            return
+        try:
+            if conversation_state["id"] and len(session.snapshot()) > 1:
+                save_conversation(auto=True)
+            data = conversation_manager.load(conversation_id)
+            session.replace(data.get("messages", []))
+            conversation_state["id"] = data.get("id")
+            conversation_state["created_at"] = data.get("created_at")
+            conversation_state["title"] = data.get("title", "New Conversation")
+            active_conversation_id = conversation_state["id"]
+            if data.get("model"):
+                selected_model["name"] = data["model"]
+                model_selector.set(data["model"])
+            render_messages(session.snapshot())
+            chat_status.configure(text="Conversation loaded.", text_color="#32CD32")
+            logger.info("Conversation loaded")
+            logger.info("Conversation switched")
+        except (OSError, ValueError, json.JSONDecodeError) as error:
+            logger.error(f"Conversation load failed: {error}")
+            chat_status.configure(text="Unable to load conversation.", text_color="red")
+
+    chat_load_conversation_callback = load_conversation_by_id
+
     def render_messages(messages):
         chat_display.configure(state="normal")
         chat_display.delete("1.0", "end")
@@ -1449,6 +1482,7 @@ def show_chat():
         chat_display.configure(state="disabled")
 
     def new_conversation():
+        global active_conversation_id
         if stream_state["running"]:
             chat_status.configure(text="Please stop generation first.", text_color="orange")
             return
@@ -1458,11 +1492,13 @@ def show_chat():
         conversation_state["id"] = None
         conversation_state["created_at"] = None
         conversation_state["title"] = "New Conversation"
+        active_conversation_id = None
         render_messages(session.snapshot())
         chat_status.configure(text="New conversation.", text_color="gray")
         logger.info("Conversation created")
 
     def save_conversation(auto=False):
+        global active_conversation_id
         if stream_state["running"]:
             chat_status.configure(text="Please stop generation before saving.", text_color="orange")
             return
@@ -1483,6 +1519,7 @@ def show_chat():
         conversation_state["id"] = data["id"]
         conversation_state["created_at"] = data["created_at"]
         conversation_state["title"] = data["title"]
+        active_conversation_id = data["id"]
         refresh_conversations()
         chat_status.configure(text="Conversation auto saved." if auto else "Conversation saved.", text_color="#32CD32")
         logger.info("Conversation auto saved" if auto else "Conversation saved")
@@ -1495,26 +1532,10 @@ def show_chat():
         record = next((item for item in conversation_records if conversation_label(item) == selected), None)
         if record is None:
             return
-        try:
-            if conversation_state["id"] and len(session.snapshot()) > 1:
-                save_conversation(auto=True)
-            data = conversation_manager.load(record["id"])
-            session.replace(data.get("messages", []))
-            conversation_state["id"] = data.get("id")
-            conversation_state["created_at"] = data.get("created_at")
-            conversation_state["title"] = data.get("title", "New Conversation")
-            if data.get("model"):
-                selected_model["name"] = data["model"]
-                model_selector.set(data["model"])
-            render_messages(session.snapshot())
-            chat_status.configure(text="Conversation loaded.", text_color="#32CD32")
-            logger.info("Conversation loaded")
-            logger.info("Conversation switched")
-        except (OSError, ValueError, json.JSONDecodeError) as error:
-            logger.error(f"Conversation load failed: {error}")
-            chat_status.configure(text="Unable to load conversation.", text_color="red")
+        load_conversation_by_id(record["id"])
 
     def delete_conversation():
+        global active_conversation_id
         selected = conversation_selector.get()
         record = next((item for item in conversation_records if conversation_label(item) == selected), None)
         if record is None or not messagebox.askyesno("Delete Chat", "Delete selected conversation?", parent=chat_window):
@@ -1523,6 +1544,8 @@ def show_chat():
             conversation_manager.delete(record["id"])
             if conversation_state["id"] == record["id"]:
                 new_conversation()
+            if active_conversation_id == record["id"]:
+                active_conversation_id = None
             refresh_conversations()
             chat_status.configure(text="Conversation deleted.", text_color="gray")
             logger.info("Conversation deleted")
@@ -1802,9 +1825,10 @@ def show_chat():
         threading.Thread(target=run_preview, daemon=True).start()
 
     def close_chat_window():
-        global chat_window
+        global chat_load_conversation_callback, chat_window
         chat_window.destroy()
         chat_window = None
+        chat_load_conversation_callback = None
 
     send_button = ctk.CTkButton(
         button_frame,
@@ -1865,7 +1889,227 @@ def show_chat():
 
     chat_window.protocol("WM_DELETE_WINDOW", close_chat_window)
     refresh_conversations()
+    if pending_conversation_id:
+        pending_id = pending_conversation_id
+        pending_conversation_id = None
+        chat_window.after(0, lambda: load_conversation_by_id(pending_id))
     threading.Thread(target=load_models, daemon=True).start()
+
+
+def show_conversation_browser():
+    global active_conversation_id, conversation_browser_window, pending_conversation_id
+    if conversation_browser_window is not None and conversation_browser_window.winfo_exists():
+        conversation_browser_window.focus()
+        conversation_browser_window.lift()
+        return
+
+    manager = ConversationManager()
+    conversation_browser_window = ctk.CTkToplevel(app)
+    conversation_browser_window.title("Conversation Browser")
+    conversation_browser_window.geometry("860x680")
+    conversation_browser_window.minsize(720, 560)
+    conversation_browser_window.transient(app)
+
+    ctk.CTkLabel(
+        conversation_browser_window,
+        text="Conversation Browser",
+        font=("Microsoft YaHei", 22, "bold")
+    ).pack(anchor="w", padx=25, pady=(20, 12))
+
+    summary_label = ctk.CTkLabel(
+        conversation_browser_window,
+        text="",
+        font=("Microsoft YaHei", 12),
+        text_color="gray"
+    )
+    summary_label.pack(anchor="w", padx=25, pady=(0, 8))
+
+    search_frame = ctk.CTkFrame(conversation_browser_window, fg_color="transparent")
+    search_frame.pack(fill="x", padx=25, pady=(0, 10))
+    search_entry = ctk.CTkEntry(search_frame, placeholder_text="Search conversation title")
+    search_entry.pack(side="left", fill="x", expand=True, padx=(0, 6))
+
+    conversation_selector = ctk.CTkOptionMenu(
+        conversation_browser_window,
+        values=["No conversations available"],
+        width=700
+    )
+    conversation_selector.pack(fill="x", padx=25, pady=(0, 12))
+
+    detail_box = ctk.CTkTextbox(conversation_browser_window, height=300, wrap="word")
+    detail_box.pack(fill="both", expand=True, padx=25, pady=(0, 10))
+    detail_box.configure(state="disabled")
+
+    records = []
+    selected_record = {"record": None}
+
+    def format_time(value):
+        return str(value or "").replace("T", " ").replace("+00:00", " UTC") or "Unknown"
+
+    def message_count(record):
+        try:
+            data = manager.load(record["id"])
+            return len([item for item in data.get("messages", []) if item.get("role") != "system"])
+        except Exception:
+            return 0
+
+    def browser_label(record):
+        count = message_count(record)
+        status = "Current" if record.get("id") == active_conversation_id else "Saved"
+        return (
+            f"{record.get('title', 'New Conversation')}\n"
+            f"Created: {format_time(record.get('created_at'))} | "
+            f"Updated: {format_time(record.get('updated_at'))} | "
+            f"Messages: {count} | "
+            f"Status: {status}"
+        )
+
+    def set_detail(text):
+        detail_box.configure(state="normal")
+        detail_box.delete("1.0", "end")
+        detail_box.insert("end", text)
+        detail_box.configure(state="disabled")
+
+    def show_detail(record):
+        selected_record["record"] = record
+        if record is None:
+            set_detail("No conversation selected.")
+            return
+        try:
+            data = manager.load(record["id"])
+            messages = [item for item in data.get("messages", []) if item.get("role") != "system"]
+            preview = []
+            for item in messages[-6:]:
+                role = "You" if item.get("role") == "user" else "Aurora"
+                preview.append(f"{role}: {str(item.get('content', ''))[:300]}")
+            status = "Current" if record.get("id") == active_conversation_id else "Saved"
+            set_detail(
+                f"Conversation ID: {data.get('id', '')}\n"
+                f"Title: {data.get('title', 'New Conversation')}\n"
+                f"Created: {format_time(data.get('created_at'))}\n"
+                f"Updated: {format_time(data.get('updated_at'))}\n"
+                f"Message Count: {len(messages)}\n"
+                f"Model: {data.get('model', '') or 'Unknown'}\n"
+                f"Status: {status}\n\n"
+                "Recent Messages\n\n"
+                f"{chr(10).join(preview) if preview else 'No messages.'}"
+            )
+        except Exception as error:
+            set_detail(f"Conversation load failed: {error}")
+
+    def refresh_conversation_browser(keyword=""):
+        nonlocal records
+        keyword = str(keyword or "").strip().casefold()
+        loaded = manager.list_conversations()
+        if keyword:
+            loaded = [
+                item for item in loaded
+                if keyword in str(item.get("title", "")).casefold()
+            ]
+        records = sorted(loaded, key=lambda item: item.get("updated_at", ""), reverse=True)
+        labels = [browser_label(item) for item in records]
+        conversation_selector.configure(values=labels or ["No conversations available"])
+        conversation_selector.set(labels[0] if labels else "No conversations available")
+        latest = format_time(records[0].get("updated_at")) if records else "None"
+        current = active_conversation_id or "None"
+        summary_label.configure(
+            text=f"Total: {len(manager.list_conversations())} | Current: {current} | Latest Updated: {latest}"
+        )
+        show_detail(records[0] if records else None)
+        logger.info("Conversation browser refreshed")
+
+    def select_conversation(value):
+        record = next((item for item in records if browser_label(item) == value), None)
+        show_detail(record)
+
+    conversation_selector.configure(command=select_conversation)
+
+    def search_conversation_browser():
+        refresh_conversation_browser(search_entry.get())
+        logger.info("Conversation browser searched")
+
+    def clear_conversation_search():
+        search_entry.delete(0, "end")
+        refresh_conversation_browser()
+
+    ctk.CTkButton(search_frame, text="Search", width=90, command=search_conversation_browser).pack(side="left", padx=(0, 6))
+    ctk.CTkButton(search_frame, text="Clear", width=80, command=clear_conversation_search).pack(side="left")
+
+    def open_conversation():
+        record = selected_record["record"]
+        if record is None:
+            set_detail("No conversation selected.")
+            return
+        show_detail(record)
+        logger.info("Conversation opened")
+
+    def continue_conversation():
+        global pending_conversation_id
+        record = selected_record["record"]
+        if record is None:
+            set_detail("No conversation selected.")
+            return
+        if callable(chat_load_conversation_callback):
+            chat_load_conversation_callback(record["id"])
+        else:
+            pending_conversation_id = record["id"]
+            show_chat()
+        if chat_window is not None and chat_window.winfo_exists():
+            chat_window.focus()
+            chat_window.lift()
+        logger.info("Conversation continued")
+
+    def rename_browser_conversation():
+        record = selected_record["record"]
+        if record is None:
+            set_detail("No conversation selected.")
+            return
+        dialog = ctk.CTkInputDialog(text="Enter conversation title:", title="Rename Conversation")
+        title = dialog.get_input()
+        if not title or not title.strip():
+            return
+        try:
+            manager.rename(record["id"], title)
+            refresh_conversation_browser(search_entry.get())
+            logger.info("Conversation renamed")
+        except Exception as error:
+            set_detail(f"Conversation rename failed: {error}")
+            logger.error(f"Conversation rename failed: {error}")
+
+    def delete_browser_conversation():
+        global active_conversation_id
+        record = selected_record["record"]
+        if record is None:
+            set_detail("No conversation selected.")
+            return
+        if not messagebox.askyesno("Delete Conversation", "Delete selected conversation?", parent=conversation_browser_window):
+            return
+        try:
+            manager.delete(record["id"])
+            if active_conversation_id == record["id"]:
+                active_conversation_id = None
+            refresh_conversation_browser(search_entry.get())
+            logger.info("Conversation deleted")
+        except Exception as error:
+            set_detail(f"Conversation delete failed: {error}")
+            logger.error(f"Conversation delete failed: {error}")
+
+    button_frame = ctk.CTkFrame(conversation_browser_window, fg_color="transparent")
+    button_frame.pack(fill="x", padx=25, pady=(0, 20))
+    ctk.CTkButton(button_frame, text="Open", command=open_conversation).pack(side="left", expand=True, fill="x", padx=(0, 6))
+    ctk.CTkButton(button_frame, text="Continue Chat", command=continue_conversation).pack(side="left", expand=True, fill="x", padx=6)
+    ctk.CTkButton(button_frame, text="Rename", command=rename_browser_conversation).pack(side="left", expand=True, fill="x", padx=6)
+    ctk.CTkButton(button_frame, text="Delete", command=delete_browser_conversation).pack(side="left", expand=True, fill="x", padx=6)
+    ctk.CTkButton(button_frame, text="Refresh", command=lambda: refresh_conversation_browser(search_entry.get())).pack(side="left", expand=True, fill="x", padx=6)
+
+    def close_conversation_browser():
+        global conversation_browser_window
+        conversation_browser_window.destroy()
+        conversation_browser_window = None
+
+    ctk.CTkButton(button_frame, text=TEXT["close"], command=close_conversation_browser).pack(side="left", expand=True, fill="x", padx=(6, 0))
+    conversation_browser_window.protocol("WM_DELETE_WINDOW", close_conversation_browser)
+    refresh_conversation_browser()
 
 
 def show_memory():
@@ -4855,6 +5099,14 @@ btn_chat = ctk.CTkButton(
     command=show_chat
 )
 btn_chat.pack(fill="x", padx=40, pady=8)
+
+
+btn_conversation_browser = ctk.CTkButton(
+    actions_frame,
+    text="Conversation Browser",
+    command=show_conversation_browser
+)
+btn_conversation_browser.pack(fill="x", padx=40, pady=8)
 
 
 btn_memory = ctk.CTkButton(

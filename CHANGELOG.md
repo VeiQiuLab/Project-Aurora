@@ -26,6 +26,12 @@
 - Added Knowledge status summary for enabled state, indexed documents, stale documents, and vector index health.
 - Added GUI actions for vector index status checks and rebuilds using existing KnowledgeStore interfaces.
 
+### Conversation Browser
+
+- Added GUI browser for saved conversations with search, updated-time sorting, current conversation status, and metadata detail view.
+- Added actions to open, continue, rename, delete, and refresh conversations through existing ConversationManager storage.
+- Added conversation summary for total records, current conversation, and latest updated time.
+
 ## v2.4.1 - 2026.07.26
 
 ### Stability & Testing
