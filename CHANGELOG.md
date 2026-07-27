@@ -11,6 +11,13 @@
 - Improved Settings window sizing and row layout for Chinese text stability.
 - Repaired high-frequency mojibake UI strings in version, settings, action buttons, Memory import/export, and Persona test prompt.
 
+### UI Refinement
+
+- Added shared Primary / Secondary / Danger button style tokens.
+- Added shared Healthy / Warning / Error / Disabled status color mapping.
+- Unified main window default sizing and improved Dashboard, Settings, Knowledge, and Conversation layout stability.
+- Converted dense Knowledge and Conversation action rows into wrapping button grids.
+
 ## v2.4.2 - 2026.07.27
 
 ### First Run Wizard

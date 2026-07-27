@@ -151,6 +151,7 @@ from modules.remote import RemoteAccessManager
 from modules.language import TEXT, set_language as set_legacy_language
 from modules.i18n import set_language as set_i18n_language, t
 from modules.ui_theme import (
+    button_style,
     FONT_APP_TITLE,
     FONT_HEADER,
     FONT_NORMAL,
@@ -158,7 +159,8 @@ from modules.ui_theme import (
     FONT_SECTION,
     FONT_SMALL,
     FONT_SMALL_BOLD,
-    FONT_TITLE
+    FONT_TITLE,
+    status_color
 )
 from modules.lan_server import LANStatusPageServer, DEFAULT_LAN_STATUS_PORT
 from modules.mobile_chat import MobileChatService
@@ -191,6 +193,16 @@ ctk.set_default_color_theme(theme)
 
 
 logger.startup()
+
+
+def ui_button(parent, text, command=None, kind="secondary", **kwargs):
+    options = button_style(kind)
+    options.update(kwargs)
+    return ctk.CTkButton(parent, text=text, command=command, **options)
+
+
+def configure_status(label, status, text=None):
+    label.configure(text=text if text is not None else str(status), text_color=status_color(status))
 
 
 def restore_configuration_defaults():
@@ -241,11 +253,11 @@ first_run_required = not bool(settings.get("first_run.completed", False))
 if first_run_required:
     app.withdraw()
 
-width = settings.get("window.width", 520)
-height = settings.get("window.height", 560)
+width = settings.get("window.width", 1200)
+height = settings.get("window.height", 760)
 
 app.geometry(f"{width}x{height}")
-app.minsize(520, 560)
+app.minsize(900, 680)
 app.resizable(True, True)
 
 logger.info(f"Window Size: {width} x {height}")
@@ -254,7 +266,7 @@ logger.info(f"Window Size: {width} x {height}")
 title = ctk.CTkLabel(
     app,
     text=APP_NAME,
-    font=("Microsoft YaHei", 24, "bold")
+    font=FONT_APP_TITLE
 )
 title.pack(pady=(20, 5))
 
@@ -262,7 +274,7 @@ title.pack(pady=(20, 5))
 version = ctk.CTkLabel(
     app,
     text=f"Version {VERSION} - Build {BUILD}",
-    font=("Microsoft YaHei", 14)
+    font=FONT_NORMAL
 )
 version.pack()
 
@@ -281,7 +293,7 @@ status_frame.pack(
 status_title = ctk.CTkLabel(
     status_frame,
     text=TEXT["system_status"],
-    font=("Microsoft YaHei", 16, "bold")
+    font=FONT_HEADER
 )
 status_title.pack(anchor="w", padx=15, pady=(12, 6))
 
@@ -296,7 +308,7 @@ startup_frame.pack(
 startup_title = ctk.CTkLabel(
     startup_frame,
     text=TEXT["startup_status"],
-    font=("Microsoft YaHei", 16, "bold")
+    font=FONT_HEADER
 )
 startup_title.pack(anchor="w", padx=15, pady=(12, 6))
 
@@ -439,9 +451,9 @@ def show_first_run_wizard():
     nav_frame = ctk.CTkFrame(container, fg_color="transparent")
     nav_frame.pack(fill="x", pady=(16, 0))
 
-    back_button = ctk.CTkButton(nav_frame, text="Back", width=100)
+    back_button = ui_button(nav_frame, text="Back", width=100)
     back_button.pack(side="left")
-    next_button = ctk.CTkButton(nav_frame, text="Next", width=120)
+    next_button = ui_button(nav_frame, text="Next", width=120, kind="primary")
     next_button.pack(side="right")
 
     def clear_content():
@@ -711,11 +723,7 @@ health_center_running = False
 
 
 def health_status_color(status):
-    if status == "Healthy":
-        return "#32CD32"
-    if status == "Warning":
-        return "orange"
-    return "red"
+    return status_color(status)
 
 
 def refresh_system_health_center():
@@ -1939,8 +1947,10 @@ def show_conversation_browser():
     summary_label = ctk.CTkLabel(
         conversation_browser_window,
         text="",
-        font=("Microsoft YaHei", 12),
-        text_color="gray"
+        font=FONT_SMALL,
+        text_color="gray",
+        wraplength=800,
+        justify="left"
     )
     summary_label.pack(anchor="w", padx=25, pady=(0, 8))
 
@@ -2052,8 +2062,8 @@ def show_conversation_browser():
         search_entry.delete(0, "end")
         refresh_conversation_browser()
 
-    ctk.CTkButton(search_frame, text="Search", width=90, command=search_conversation_browser).pack(side="left", padx=(0, 6))
-    ctk.CTkButton(search_frame, text="Clear", width=80, command=clear_conversation_search).pack(side="left")
+    ui_button(search_frame, text="Search", width=90, command=search_conversation_browser, kind="primary").pack(side="left", padx=(0, 6))
+    ui_button(search_frame, text="Clear", width=80, command=clear_conversation_search).pack(side="left")
 
     def open_conversation():
         record = selected_record["record"]
@@ -2116,18 +2126,30 @@ def show_conversation_browser():
 
     button_frame = ctk.CTkFrame(conversation_browser_window, fg_color="transparent")
     button_frame.pack(fill="x", padx=25, pady=(0, 20))
-    ctk.CTkButton(button_frame, text="Open", command=open_conversation).pack(side="left", expand=True, fill="x", padx=(0, 6))
-    ctk.CTkButton(button_frame, text="Continue Chat", command=continue_conversation).pack(side="left", expand=True, fill="x", padx=6)
-    ctk.CTkButton(button_frame, text="Rename", command=rename_browser_conversation).pack(side="left", expand=True, fill="x", padx=6)
-    ctk.CTkButton(button_frame, text="Delete", command=delete_browser_conversation).pack(side="left", expand=True, fill="x", padx=6)
-    ctk.CTkButton(button_frame, text="Refresh", command=lambda: refresh_conversation_browser(search_entry.get())).pack(side="left", expand=True, fill="x", padx=6)
+    for column in range(3):
+        button_frame.grid_columnconfigure(column, weight=1)
+    conversation_actions = [
+        ("Open", open_conversation, "secondary"),
+        ("Continue Chat", continue_conversation, "primary"),
+        ("Rename", rename_browser_conversation, "secondary"),
+        ("Delete", delete_browser_conversation, "danger"),
+        ("Refresh", lambda: refresh_conversation_browser(search_entry.get()), "secondary")
+    ]
+    for index, (label_text, command, kind) in enumerate(conversation_actions):
+        ui_button(button_frame, text=label_text, command=command, kind=kind).grid(
+            row=index // 3,
+            column=index % 3,
+            sticky="ew",
+            padx=4,
+            pady=4
+        )
 
     def close_conversation_browser():
         global conversation_browser_window
         conversation_browser_window.destroy()
         conversation_browser_window = None
 
-    ctk.CTkButton(button_frame, text=TEXT["close"], command=close_conversation_browser).pack(side="left", expand=True, fill="x", padx=(6, 0))
+    ui_button(button_frame, text=TEXT["close"], command=close_conversation_browser).grid(row=1, column=2, sticky="ew", padx=4, pady=4)
     conversation_browser_window.protocol("WM_DELETE_WINDOW", close_conversation_browser)
     refresh_conversation_browser()
 
@@ -2388,7 +2410,9 @@ def show_knowledge():
         knowledge_window,
         text="",
         font=FONT_SMALL,
-        text_color="gray"
+        text_color="gray",
+        wraplength=820,
+        justify="left"
     )
     stats_label.pack(anchor="w", padx=25, pady=(0, 8))
 
@@ -2396,7 +2420,9 @@ def show_knowledge():
         knowledge_window,
         text="",
         font=FONT_SMALL,
-        text_color="gray"
+        text_color="gray",
+        wraplength=820,
+        justify="left"
     )
     index_status_label.pack(anchor="w", padx=25, pady=(0, 8))
 
@@ -2636,8 +2662,8 @@ def show_knowledge():
         refresh_knowledge_list()
         logger.info("Knowledge search cleared")
 
-    ctk.CTkButton(search_frame, text="Search", width=90, command=search_knowledge_list).pack(side="left", padx=(0, 6))
-    ctk.CTkButton(search_frame, text="Clear Search", width=110, command=clear_search).pack(side="left")
+    ui_button(search_frame, text="Search", width=90, command=search_knowledge_list, kind="primary").pack(side="left", padx=(0, 6))
+    ui_button(search_frame, text="Clear Search", width=110, command=clear_search).pack(side="left")
 
     sort_frame = ctk.CTkFrame(knowledge_window, fg_color="transparent")
     sort_frame.pack(fill="x", padx=25, pady=(0, 8))
@@ -3261,9 +3287,9 @@ def show_knowledge():
         preview_search_label.configure(text="Matches: 0")
         logger.info("Knowledge preview search cleared")
 
-    ctk.CTkButton(preview_search_frame, text="Search", width=85, command=search_preview_content).pack(side="left", padx=(0, 6))
-    ctk.CTkButton(preview_search_frame, text="Next Match", width=105, command=next_preview_match).pack(side="left", padx=(0, 6))
-    ctk.CTkButton(preview_search_frame, text="Clear", width=75, command=clear_preview_search).pack(side="left")
+    ui_button(preview_search_frame, text="Search", width=85, command=search_preview_content, kind="primary").pack(side="left", padx=(0, 6))
+    ui_button(preview_search_frame, text="Next Match", width=105, command=next_preview_match).pack(side="left", padx=(0, 6))
+    ui_button(preview_search_frame, text="Clear", width=75, command=clear_preview_search).pack(side="left")
 
     retrieval_frame = ctk.CTkFrame(knowledge_window, fg_color="transparent")
     retrieval_frame.pack(fill="x", padx=25, pady=(0, 10))
@@ -3342,20 +3368,32 @@ def show_knowledge():
 
         threading.Thread(target=run_test, daemon=True).start()
 
-    ctk.CTkButton(retrieval_frame, text="Test Retrieval", width=120, command=test_retrieval).pack(side="left")
+    ui_button(retrieval_frame, text="Test Retrieval", width=120, command=test_retrieval, kind="primary").pack(side="left")
 
     maintenance_frame = ctk.CTkFrame(knowledge_window, fg_color="transparent")
     maintenance_frame.pack(fill="x", padx=25, pady=(0, 10))
-    ctk.CTkButton(maintenance_frame, text="Create Backup", command=create_knowledge_backup).pack(side="left", expand=True, fill="x", padx=(0, 6))
-    ctk.CTkButton(maintenance_frame, text="Export", command=export_knowledge).pack(side="left", expand=True, fill="x", padx=6)
-    ctk.CTkButton(maintenance_frame, text="Import", command=import_knowledge).pack(side="left", expand=True, fill="x", padx=6)
-    ctk.CTkButton(maintenance_frame, text="Health Check", command=health_check_knowledge).pack(side="left", expand=True, fill="x", padx=6)
-    ctk.CTkButton(maintenance_frame, text="Repair Metadata", command=repair_knowledge_metadata).pack(side="left", expand=True, fill="x", padx=(6, 0))
+    for column in range(3):
+        maintenance_frame.grid_columnconfigure(column, weight=1)
+    maintenance_actions = [
+        ("Create Backup", create_knowledge_backup, "secondary"),
+        ("Export", export_knowledge, "secondary"),
+        ("Import", import_knowledge, "secondary"),
+        ("Health Check", health_check_knowledge, "primary"),
+        ("Repair Metadata", repair_knowledge_metadata, "secondary")
+    ]
+    for index, (label_text, command, kind) in enumerate(maintenance_actions):
+        ui_button(maintenance_frame, text=label_text, command=command, kind=kind).grid(
+            row=index // 3,
+            column=index % 3,
+            sticky="ew",
+            padx=4,
+            pady=4
+        )
 
     index_frame = ctk.CTkFrame(knowledge_window, fg_color="transparent")
     index_frame.pack(fill="x", padx=25, pady=(0, 10))
-    ctk.CTkButton(index_frame, text="Index Status", command=show_index_status).pack(side="left", expand=True, fill="x", padx=(0, 6))
-    ctk.CTkButton(index_frame, text="Rebuild Index", command=rebuild_vector_index).pack(side="left", expand=True, fill="x", padx=6)
+    ui_button(index_frame, text="Index Status", command=show_index_status).pack(side="left", expand=True, fill="x", padx=(0, 6))
+    ui_button(index_frame, text="Rebuild Index", command=rebuild_vector_index, kind="primary").pack(side="left", expand=True, fill="x", padx=6)
 
     backup_frame = ctk.CTkFrame(knowledge_window, fg_color="transparent")
     backup_frame.pack(fill="x", padx=25, pady=(0, 10))
@@ -3366,24 +3404,35 @@ def show_knowledge():
         command=select_backup
     )
     backup_selector.pack(side="left", fill="x", expand=True, padx=(0, 6))
-    ctk.CTkButton(backup_frame, text="Restore Backup", width=130, command=restore_knowledge_backup).pack(side="left", padx=(0, 6))
-    ctk.CTkButton(backup_frame, text="Delete Backup", width=120, command=delete_knowledge_backup).pack(side="left")
+    ui_button(backup_frame, text="Restore Backup", width=130, command=restore_knowledge_backup).pack(side="left", padx=(0, 6))
+    ui_button(backup_frame, text="Delete Backup", width=120, command=delete_knowledge_backup, kind="danger").pack(side="left")
 
     buttons = ctk.CTkFrame(knowledge_window, fg_color="transparent")
     buttons.pack(fill="x", padx=25, pady=(0, 20))
-
-    ctk.CTkButton(buttons, text="Add Knowledge", command=add_knowledge).pack(side="left", expand=True, fill="x", padx=(0, 6))
-    ctk.CTkButton(buttons, text="Delete Knowledge", command=delete_knowledge).pack(side="left", expand=True, fill="x", padx=6)
-    ctk.CTkButton(buttons, text="Toggle Enabled", command=toggle_knowledge_enabled).pack(side="left", expand=True, fill="x", padx=6)
-    ctk.CTkButton(buttons, text="Preview", command=preview_knowledge).pack(side="left", expand=True, fill="x", padx=6)
-    ctk.CTkButton(buttons, text="Refresh", command=refresh_knowledge_list).pack(side="left", expand=True, fill="x", padx=6)
+    for column in range(3):
+        buttons.grid_columnconfigure(column, weight=1)
+    knowledge_actions = [
+        ("Add Knowledge", add_knowledge, "primary"),
+        ("Delete Knowledge", delete_knowledge, "danger"),
+        ("Toggle Enabled", toggle_knowledge_enabled, "secondary"),
+        ("Preview", preview_knowledge, "secondary"),
+        ("Refresh", refresh_knowledge_list, "secondary")
+    ]
+    for index, (label_text, command, kind) in enumerate(knowledge_actions):
+        ui_button(buttons, text=label_text, command=command, kind=kind).grid(
+            row=index // 3,
+            column=index % 3,
+            sticky="ew",
+            padx=4,
+            pady=4
+        )
 
     def close_knowledge():
         global knowledge_window
         knowledge_window.destroy()
         knowledge_window = None
 
-    ctk.CTkButton(buttons, text=TEXT["close"], command=close_knowledge).pack(side="left", expand=True, fill="x", padx=(6, 0))
+    ui_button(buttons, text=TEXT["close"], command=close_knowledge).grid(row=1, column=2, sticky="ew", padx=4, pady=4)
     knowledge_window.protocol("WM_DELETE_WINDOW", close_knowledge)
     refresh_knowledge_list()
     refresh_backup_history()
@@ -5053,55 +5102,58 @@ actions_frame.pack(fill="x", padx=20, pady=(0, 8))
 action_title = ctk.CTkLabel(
     actions_frame,
     text=TEXT["quick_actions"],
-    font=("Microsoft YaHei", 16, "bold")
+    font=FONT_HEADER
 )
 action_title.pack(anchor="w", padx=15, pady=(5, 10))
 
 
-btn1 = ctk.CTkButton(
+btn1 = ui_button(
     actions_frame,
     text=TEXT["open_webui"],
-    command=launch_open_webui
+    command=launch_open_webui,
+    kind="primary"
 )
 btn1.pack(fill="x", padx=40, pady=8)
 
-btn_diagnostic = ctk.CTkButton(
+btn_diagnostic = ui_button(
     actions_frame,
     text=t("runtime_environment_diagnostics"),
     command=run_diagnostic
 )
 btn_diagnostic.pack(fill="x", padx=40, pady=8)
 
-btn_start_ollama = ctk.CTkButton(
+btn_start_ollama = ui_button(
     actions_frame,
     text=t("start_ollama"),
-    command=start_ollama_manual
+    command=start_ollama_manual,
+    kind="primary"
 )
 btn_start_ollama.pack(fill="x", padx=40, pady=8)
 
-btn_restart_webui = ctk.CTkButton(
+btn_restart_webui = ui_button(
     actions_frame,
     text=t("restart_openwebui"),
     command=restart_openwebui_manual
 )
 btn_restart_webui.pack(fill="x", padx=40, pady=8)
 
-btn_restart_container = ctk.CTkButton(
+btn_restart_container = ui_button(
     actions_frame,
     text=t("restart_container"),
     command=restart_container_manual
 )
 btn_restart_container.pack(fill="x", padx=40, pady=8)
 
-btn_close_webui = ctk.CTkButton(
+btn_close_webui = ui_button(
     actions_frame,
-    text="鍏抽棴 Open WebUI",
-    command=close_open_webui
+    text=t("close_openwebui"),
+    command=close_open_webui,
+    kind="danger"
 )
 btn_close_webui.pack(fill="x", padx=40, pady=8)
 
 
-btn2 = ctk.CTkButton(
+btn2 = ui_button(
     actions_frame,
     text=TEXT["models"],
     command=show_models
@@ -5109,23 +5161,24 @@ btn2 = ctk.CTkButton(
 btn2.pack(fill="x", padx=40, pady=8)
 
 
-btn_chat = ctk.CTkButton(
+btn_chat = ui_button(
     actions_frame,
     text=TEXT["chat"],
-    command=show_chat
+    command=show_chat,
+    kind="primary"
 )
 btn_chat.pack(fill="x", padx=40, pady=8)
 
 
-btn_conversation_browser = ctk.CTkButton(
+btn_conversation_browser = ui_button(
     actions_frame,
-    text="Conversation Browser",
+    text=t("conversation_browser"),
     command=show_conversation_browser
 )
 btn_conversation_browser.pack(fill="x", padx=40, pady=8)
 
 
-btn_memory = ctk.CTkButton(
+btn_memory = ui_button(
     actions_frame,
     text=TEXT["memory"],
     command=show_memory
@@ -5133,7 +5186,7 @@ btn_memory = ctk.CTkButton(
 btn_memory.pack(fill="x", padx=40, pady=8)
 
 
-btn_persona = ctk.CTkButton(
+btn_persona = ui_button(
     actions_frame,
     text=TEXT["persona"],
     command=show_persona
@@ -5141,15 +5194,15 @@ btn_persona = ctk.CTkButton(
 btn_persona.pack(fill="x", padx=40, pady=8)
 
 
-btn_knowledge = ctk.CTkButton(
+btn_knowledge = ui_button(
     actions_frame,
-    text="Knowledge Base",
+    text=t("knowledge_base"),
     command=show_knowledge
 )
 btn_knowledge.pack(fill="x", padx=40, pady=8)
 
 
-btn_remote = ctk.CTkButton(
+btn_remote = ui_button(
     actions_frame,
     text=TEXT["remote_access"],
     command=show_remote_access
@@ -5157,7 +5210,7 @@ btn_remote = ctk.CTkButton(
 btn_remote.pack(fill="x", padx=40, pady=8)
 
 
-btn_remote_diagnostics = ctk.CTkButton(
+btn_remote_diagnostics = ui_button(
     actions_frame,
     text=TEXT["remote_diagnostics"],
     command=show_remote_diagnostics
@@ -5629,19 +5682,21 @@ def show_settings():
             )
         )
 
-    ollama_test_button = ctk.CTkButton(
+    ollama_test_button = ui_button(
         ollama_host_entry.master,
         text=TEXT["test"],
         width=70,
-        command=test_ollama_url
+        command=test_ollama_url,
+        kind="primary"
     )
     ollama_test_button.pack(side="right", padx=(0, 8))
 
-    openwebui_test_button = ctk.CTkButton(
+    openwebui_test_button = ui_button(
         openwebui_url_entry.master,
         text=TEXT["test"],
         width=70,
-        command=test_openwebui_url
+        command=test_openwebui_url,
+        kind="primary"
     )
     openwebui_test_button.pack(side="right", padx=(0, 8))
 
@@ -5837,7 +5892,7 @@ def show_settings():
                     ollama_test_button.configure(state="normal")
                     openwebui_test_button.configure(state="normal")
                     result_label.configure(
-                        text="Save canceled.",
+                        text=t("save_canceled"),
                         text_color="gray"
                     )
                     return
@@ -5848,7 +5903,7 @@ def show_settings():
         ollama_test_button.configure(state="disabled")
         openwebui_test_button.configure(state="disabled")
         result_label.configure(
-            text="Testing before save...",
+            text=t("testing_before_save"),
             text_color="gray"
         )
         check_service_connection(
@@ -5865,14 +5920,15 @@ def show_settings():
     button_frame = ctk.CTkFrame(settings_window, fg_color="transparent")
     button_frame.pack(fill="x", padx=25, pady=(0, 20))
 
-    save_button = ctk.CTkButton(
+    save_button = ui_button(
         button_frame,
         text=TEXT["save"],
-        command=save_settings
+        command=save_settings,
+        kind="primary"
     )
     save_button.pack(side="left", expand=True, fill="x", padx=(0, 6))
 
-    ctk.CTkButton(
+    ui_button(
         button_frame,
         text=TEXT["close"],
         command=close_settings_window
