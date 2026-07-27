@@ -885,6 +885,9 @@ class RemoteAccessManager:
             "mode_descriptions": {
                 "local": "Local Only",
                 "lan": "LAN Only",
-                "secure": "Secure Remote"
+                "disabled": "Disabled",
+                "paired_lan": "Paired LAN",
+                "secure": "Secure Remote",
+                "secure_remote_ready": "Secure Remote Ready"
             }
         }

@@ -13,6 +13,7 @@ import threading
 import time
 import urllib.parse
 
+from modules.auth_middleware import authenticate_request
 from modules.version import RELEASE
 
 
@@ -46,6 +47,7 @@ class _LANStatusHandler(BaseHTTPRequestHandler):
 
     def do_GET(self):
         if self.path == "/api/mobile-status":
+            self.server.authenticate_handler_request(self)
             result = self.server.handle_mobile_status()
             body = json.dumps(result, ensure_ascii=False).encode("utf-8")
             self.send_response(200)
@@ -57,6 +59,7 @@ class _LANStatusHandler(BaseHTTPRequestHandler):
             return
         parsed_path = urllib.parse.urlparse(self.path)
         if parsed_path.path == "/api/mobile-conversations":
+            self.server.authenticate_handler_request(self)
             result = self.server.handle_mobile_conversations()
             body = json.dumps(result, ensure_ascii=False).encode("utf-8")
             self.send_response(200 if result.get("ok") else 400)
@@ -67,6 +70,7 @@ class _LANStatusHandler(BaseHTTPRequestHandler):
             self.wfile.write(body)
             return
         if parsed_path.path == "/api/mobile-conversation":
+            self.server.authenticate_handler_request(self)
             query = urllib.parse.parse_qs(parsed_path.query)
             conversation_id = (query.get("id") or query.get("conversation_id") or [""])[0]
             result = self.server.handle_mobile_conversation(conversation_id)
@@ -97,6 +101,7 @@ class _LANStatusHandler(BaseHTTPRequestHandler):
 
     def do_POST(self):
         if self.path == "/api/mobile-conversation/new":
+            self.server.authenticate_handler_request(self)
             result = self.server.handle_new_mobile_conversation()
             body = json.dumps(result, ensure_ascii=False).encode("utf-8")
             self.send_response(200 if result.get("ok") else 400)
@@ -109,6 +114,7 @@ class _LANStatusHandler(BaseHTTPRequestHandler):
         if self.path != "/api/mobile-chat":
             self.send_error(405, "Read-only status page.")
             return
+        self.server.authenticate_handler_request(self)
         try:
             length = min(int(self.headers.get("Content-Length", "0") or 0), 8192)
         except ValueError:
@@ -148,6 +154,18 @@ class _LANStatusHTTPServer(_ReusableThreadingHTTPServer):
         self.status_provider = status_provider
         self.mobile_chat_service = mobile_chat_service
         self.event_callback = event_callback
+        self.auth_enforce = False
+        self.last_auth_decision = {}
+
+    def authenticate_handler_request(self, handler):
+        decision = authenticate_request(
+            request=handler,
+            remote_manager=getattr(self.mobile_chat_service, "remote_manager", None),
+            authentication_manager=getattr(self.mobile_chat_service, "authentication_manager", None),
+            enforce=self.auth_enforce
+        )
+        self.last_auth_decision = decision
+        return decision
 
     def render_status_page(self):
         try:
