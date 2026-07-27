@@ -13,7 +13,7 @@ import threading
 import time
 import urllib.parse
 
-from modules.auth_middleware import authenticate_request
+from modules.access_control import AccessAuditLog, evaluate_request_access
 from modules.version import RELEASE
 
 
@@ -156,16 +156,48 @@ class _LANStatusHTTPServer(_ReusableThreadingHTTPServer):
         self.event_callback = event_callback
         self.auth_enforce = False
         self.last_auth_decision = {}
+        self.last_access_decision = {}
+        self.access_audit_log = AccessAuditLog()
 
     def authenticate_handler_request(self, handler):
-        decision = authenticate_request(
+        api_name = self.api_name_for_path(getattr(handler, "path", ""))
+        device_id = str(handler.headers.get("X-Aurora-Device-ID", "") or "").strip()
+        device_status = str(handler.headers.get("X-Aurora-Device-Status", "") or "").strip()
+        pairing_status = str(handler.headers.get("X-Aurora-Pairing-Status", "") or "").strip()
+        decision = evaluate_request_access(
             request=handler,
+            device_id=device_id,
+            device_status=device_status,
+            pairing_status=pairing_status,
+            api_name=api_name,
             remote_manager=getattr(self.mobile_chat_service, "remote_manager", None),
             authentication_manager=getattr(self.mobile_chat_service, "authentication_manager", None),
             enforce=self.auth_enforce
         )
-        self.last_auth_decision = decision
+        self.last_access_decision = decision
+        self.last_auth_decision = dict(decision.get("auth", {}))
+        self.access_audit_log.record(
+            device_id=device_id,
+            api_name=api_name,
+            result=decision.get("result", ""),
+            reason=decision.get("reason", "")
+        )
         return decision
+
+    @staticmethod
+    def api_name_for_path(path):
+        route = str(path or "").split("?", 1)[0].rstrip("/")
+        if route == "/api/mobile-status":
+            return "mobile.status"
+        if route == "/api/mobile-chat":
+            return "mobile.chat"
+        if route == "/api/mobile-conversations":
+            return "mobile.conversations"
+        if route == "/api/mobile-conversation":
+            return "mobile.conversation"
+        if route == "/api/mobile-conversation/new":
+            return "mobile.conversation.new"
+        return route.lstrip("/") or "unknown"
 
     def render_status_page(self):
         try:
