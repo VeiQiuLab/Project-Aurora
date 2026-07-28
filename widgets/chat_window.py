@@ -5,7 +5,16 @@ import customtkinter as ctk
 
 from modules.chat import ChatError, ChatSession
 from modules.conversation import ConversationManager
-from modules.ui_theme import FONT_HEADER, FONT_SMALL, FONT_TITLE, status_color
+from modules.ui_theme import (
+    FORM_CONTROL_WIDTH,
+    FONT_HEADER,
+    FONT_SMALL,
+    FONT_TITLE,
+    SPACING_SMALL,
+    SPACING_MEDIUM,
+    SPACING_LARGE,
+    status_color
+)
 from modules.search import search_conversations
 from widgets.ui_components import (
     DangerButton,
@@ -90,45 +99,54 @@ class ChatWindow(ctk.CTkToplevel):
         return ""
 
     def build(self):
-        ctk.CTkLabel(self, text=self.text["chat"], font=FONT_TITLE).pack(anchor="w", padx=25, pady=(20, 12))
+        ctk.CTkLabel(self, text=self.text["chat"], font=FONT_TITLE).pack(
+            anchor="w",
+            padx=SPACING_LARGE + SPACING_SMALL,
+            pady=(SPACING_LARGE, SPACING_MEDIUM)
+        )
 
         model_card = SectionCard(self, self.text["model_selector"])
-        model_card.pack(fill="x", padx=25, pady=(0, 10))
+        model_card.pack(fill="x", padx=SPACING_LARGE + SPACING_SMALL, pady=(0, SPACING_MEDIUM))
         model_row = FormRow(model_card.body, self.text["model_selector"])
-        model_row.pack(fill="x", pady=6)
+        model_row.pack(fill="x", pady=SPACING_SMALL)
         self.model_selector = ctk.CTkOptionMenu(
             model_row.control_frame,
-            values=["Loading..."],
-            width=280,
+            values=[self.t("chat_window_loading_models")],
+            width=FORM_CONTROL_WIDTH + SPACING_LARGE + SPACING_MEDIUM,
             command=self.select_model
         )
-        self.model_selector.set("Loading...")
+        self.model_selector.set(self.t("chat_window_loading_models"))
         self.model_selector.pack(side="left")
 
         conversation_card = SectionCard(self, self.text["conversation_list"])
-        conversation_card.pack(fill="x", padx=25, pady=(0, 10))
+        conversation_card.pack(fill="x", padx=SPACING_LARGE + SPACING_SMALL, pady=(0, SPACING_MEDIUM))
         conversation_row = FormRow(conversation_card.body, self.text["conversation_list"])
-        conversation_row.pack(fill="x", pady=6)
+        conversation_row.pack(fill="x", pady=SPACING_SMALL)
         self.conversation_selector = ctk.CTkOptionMenu(
             conversation_row.control_frame,
             values=[self.text["no_conversations"]],
-            width=320,
+            width=FORM_CONTROL_WIDTH + FORM_CONTROL_WIDTH // 4,
             command=lambda _value: self.load_conversation()
         )
         self.conversation_selector.pack(side="left")
-        search_row = FormRow(conversation_card.body, "Search conversations")
-        search_row.pack(fill="x", pady=6)
+        search_row = FormRow(conversation_card.body, self.t("chat_window_search_conversations"))
+        search_row.pack(fill="x", pady=SPACING_SMALL)
         self.conversation_search_entry = search_row.add_entry("")
-        PrimaryButton(search_row.control_frame, text="Search", width=80, command=self.search_conversation_list).pack(side="left", padx=(6, 0))
+        PrimaryButton(
+            search_row.control_frame,
+            text=self.t("chat_window_search"),
+            width=FORM_CONTROL_WIDTH // 3,
+            command=self.search_conversation_list
+        ).pack(side="left", padx=(SPACING_SMALL, 0))
 
         chat_card = SectionCard(self, self.text["chat"])
-        chat_card.pack(fill="both", expand=True, padx=25, pady=(0, 10))
+        chat_card.pack(fill="both", expand=True, padx=SPACING_LARGE + SPACING_SMALL, pady=(0, SPACING_MEDIUM))
         self.chat_display = ctk.CTkTextbox(chat_card.body, wrap="word")
         self.chat_display.pack(fill="both", expand=True)
         self.chat_display.configure(state="disabled")
 
         input_card = SectionCard(self, self.text["input_box"])
-        input_card.pack(fill="x", padx=25, pady=(0, 10))
+        input_card.pack(fill="x", padx=SPACING_LARGE + SPACING_SMALL, pady=(0, SPACING_MEDIUM))
         self.input_box = ctk.CTkTextbox(input_card.body, height=90, wrap="word")
         self.input_box.pack(fill="x", pady=(0, 8))
         self.debug_switch = ctk.CTkSwitch(
@@ -140,10 +158,10 @@ class ChatWindow(ctk.CTkToplevel):
         self.debug_switch.pack(anchor="w")
 
         self.chat_status = StatusLabel(self, status="disabled", text=self.t("loading_ollama_models"), anchor="w", justify="left")
-        self.chat_status.pack(anchor="w", padx=25, pady=(0, 8))
+        self.chat_status.pack(anchor="w", padx=SPACING_LARGE + SPACING_SMALL, pady=(0, SPACING_SMALL))
 
         footer = FixedFooter(self)
-        footer.pack(fill="x", padx=25, pady=(0, 20))
+        footer.pack(fill="x", padx=SPACING_LARGE + SPACING_SMALL, pady=(0, SPACING_LARGE))
         specs = [
             (PrimaryButton, self.text["send"], self.send_prompt),
             (SecondaryButton, self.text["new_chat"], self.new_conversation),
@@ -152,13 +170,13 @@ class ChatWindow(ctk.CTkToplevel):
             (SecondaryButton, self.text["stop_generate"], self.stop_generation),
             (SecondaryButton, self.text["clear"], self.clear_chat),
             (DangerButton, self.text["delete_chat"], self.delete_conversation),
-            (SecondaryButton, "Context Inspector", self.preview_chat_context),
+            (SecondaryButton, self.t("chat_window_context_inspector"), self.preview_chat_context),
             (SecondaryButton, self.text["close"], self.close),
         ]
         self.buttons = {}
         for index, (button_class, label, command) in enumerate(specs):
             button = button_class(footer.buttons, text=label, command=command)
-            button.grid(row=index // 5, column=index % 5, sticky="ew", padx=4, pady=4)
+            button.grid(row=index // 5, column=index % 5, sticky="ew", padx=SPACING_SMALL, pady=SPACING_SMALL)
             self.buttons[label] = button
         for column in range(5):
             footer.buttons.grid_columnconfigure(column, weight=1)
@@ -189,7 +207,7 @@ class ChatWindow(ctk.CTkToplevel):
 
     def conversation_label(self, record):
         updated = record.get("updated_at", "").replace("T", " ").replace("+00:00", " UTC")
-        return f"{record.get('title', 'New Conversation')}\n{record.get('model', 'Unknown model')}\n{updated}"
+        return f"{record.get('title', 'New Conversation')}\n{record.get('model', self.t('chat_window_unknown_model'))}\n{updated}"
 
     def refresh_conversations(self, keyword=""):
         if keyword.strip():
@@ -205,7 +223,11 @@ class ChatWindow(ctk.CTkToplevel):
         self.logger.info("Conversation searched")
 
     def select_model(self, model):
-        if model and model not in {"Loading...", "No models available"}:
+        unavailable_labels = {
+            self.t("chat_window_loading_models"),
+            self.t("chat_window_no_models_available")
+        }
+        if model and model not in unavailable_labels:
             if callable(self.model_capability_provider) and self.model_capability_provider(model) != "Chat Supported":
                 self.set_status(self.text["model_cannot_chat"], "error")
                 self.logger.info("Embedding model blocked from chat")
@@ -224,16 +246,16 @@ class ChatWindow(ctk.CTkToplevel):
         ]
         names = [name for name in names if name]
         if not names:
-            self.model_selector.configure(values=["No models available"])
-            self.model_selector.set("No models available")
-            self.set_status("No Ollama models found. Start Ollama and retry.", "warning")
+            self.model_selector.configure(values=[self.t("chat_window_no_models_available")])
+            self.model_selector.set(self.t("chat_window_no_models_available"))
+            self.set_status(self.t("chat_window_no_models_found"), "warning")
             return
         configured_chat_model = str(self.settings.get("chat_model", "qwen3:8b") or "").strip()
         selected_name = configured_chat_model if configured_chat_model in names else names[0]
         self.selected_model["name"] = selected_name
         self.model_selector.configure(values=names)
         self.model_selector.set(selected_name)
-        self.set_status(f"{len(names)} model(s) available", "healthy")
+        self.set_status(self.t("chat_window_models_available").format(count=len(names)), "healthy")
         self.logger.info(f"Chat models loaded: {len(names)}")
         self.logger.info("Model capability checked")
 
@@ -254,14 +276,14 @@ class ChatWindow(ctk.CTkToplevel):
         for message in messages:
             if message.get("role") == "system":
                 continue
-            label = "You" if message.get("role") == "user" else "Aurora"
+            label = self.t("chat_window_user_label") if message.get("role") == "user" else "Aurora"
             self.chat_display.insert("end", f"{label}:\n{message.get('content', '')}\n\n")
         self.chat_display.see("end")
         self.chat_display.configure(state="disabled")
 
     def load_conversation_by_id(self, conversation_id):
         if self.stream_state["running"]:
-            self.set_status("Please stop generation before loading a conversation.", "warning")
+            self.set_status(self.t("chat_window_stop_before_loading_conversation"), "warning")
             return
         if not conversation_id:
             return
@@ -278,16 +300,16 @@ class ChatWindow(ctk.CTkToplevel):
                 self.selected_model["name"] = data["model"]
                 self.model_selector.set(data["model"])
             self.render_messages(self.session.snapshot())
-            self.set_status("Conversation loaded.", "healthy")
+            self.set_status(self.t("chat_window_conversation_loaded"), "healthy")
             self.logger.info("Conversation loaded")
             self.logger.info("Conversation switched")
         except (OSError, ValueError) as error:
             self.logger.error(f"Conversation load failed: {error}")
-            self.set_status("Unable to load conversation.", "error")
+            self.set_status(self.t("chat_window_load_conversation_failed"), "error")
 
     def load_conversation(self):
         if self.stream_state["running"]:
-            self.set_status("Please stop generation before loading.", "warning")
+            self.set_status(self.t("chat_window_stop_before_loading"), "warning")
             return
         selected = self.conversation_selector.get()
         record = next((item for item in self.conversation_records if self.conversation_label(item) == selected), None)
@@ -296,7 +318,7 @@ class ChatWindow(ctk.CTkToplevel):
 
     def new_conversation(self):
         if self.stream_state["running"]:
-            self.set_status("Please stop generation first.", "warning")
+            self.set_status(self.t("chat_window_stop_generation_first"), "warning")
             return
         if len(self.session.snapshot()) > 1:
             self.save_conversation(auto=True)
@@ -306,16 +328,16 @@ class ChatWindow(ctk.CTkToplevel):
         self.conversation_state["title"] = "New Conversation"
         self.set_active_conversation_id(None)
         self.render_messages(self.session.snapshot())
-        self.set_status("New conversation.", "disabled")
+        self.set_status(self.t("chat_window_new_conversation"), "disabled")
         self.logger.info("Conversation created")
 
     def save_conversation(self, auto=False):
         if self.stream_state["running"]:
-            self.set_status("Please stop generation before saving.", "warning")
+            self.set_status(self.t("chat_window_stop_before_saving"), "warning")
             return
         messages = self.session.snapshot()
         if len(messages) <= 1:
-            self.set_status("No conversation content to save.", "warning")
+            self.set_status(self.t("chat_window_no_content_to_save"), "warning")
             return
         title = self.conversation_state["title"]
         if title == "New Conversation":
@@ -332,13 +354,20 @@ class ChatWindow(ctk.CTkToplevel):
         self.conversation_state["title"] = data["title"]
         self.set_active_conversation_id(data["id"])
         self.refresh_conversations()
-        self.set_status("Conversation auto saved." if auto else "Conversation saved.", "healthy")
+        self.set_status(
+            self.t("chat_window_conversation_auto_saved") if auto else self.t("chat_window_conversation_saved"),
+            "healthy"
+        )
         self.logger.info("Conversation auto saved" if auto else "Conversation saved")
 
     def delete_conversation(self):
         selected = self.conversation_selector.get()
         record = next((item for item in self.conversation_records if self.conversation_label(item) == selected), None)
-        if record is None or not messagebox.askyesno("Delete Chat", "Delete selected conversation?", parent=self):
+        if record is None or not messagebox.askyesno(
+            self.t("chat_window_delete_chat_title"),
+            self.t("chat_window_delete_chat_message"),
+            parent=self
+        ):
             return
         try:
             self.conversation_manager.delete(record["id"])
@@ -347,16 +376,16 @@ class ChatWindow(ctk.CTkToplevel):
             if self.get_active_conversation_id() == record["id"]:
                 self.set_active_conversation_id(None)
             self.refresh_conversations()
-            self.set_status("Conversation deleted.", "disabled")
+            self.set_status(self.t("chat_window_conversation_deleted"), "disabled")
             self.logger.info("Conversation deleted")
         except OSError as error:
             self.logger.error(f"Conversation delete failed: {error}")
 
     def rename_conversation(self):
         if not self.conversation_state["id"]:
-            self.set_status("Please load a conversation first.", "warning")
+            self.set_status(self.t("chat_window_load_conversation_first"), "warning")
             return
-        dialog = ctk.CTkInputDialog(text="Enter conversation title:", title=self.text["rename_chat"])
+        dialog = ctk.CTkInputDialog(text=self.t("chat_window_rename_prompt"), title=self.text["rename_chat"])
         title = dialog.get_input()
         if not title or not title.strip():
             return
@@ -364,7 +393,7 @@ class ChatWindow(ctk.CTkToplevel):
             data = self.conversation_manager.rename(self.conversation_state["id"], title)
             self.conversation_state["title"] = data["title"]
             self.refresh_conversations()
-            self.set_status("Conversation renamed.", "healthy")
+            self.set_status(self.t("chat_window_conversation_renamed"), "healthy")
             self.logger.info("Conversation renamed")
         except (OSError, ValueError) as error:
             self.logger.error(f"Conversation rename failed: {error}")
@@ -372,14 +401,18 @@ class ChatWindow(ctk.CTkToplevel):
     def send_prompt(self):
         model = self.selected_model["name"].strip()
         prompt = self.input_box.get("1.0", "end").strip()
-        if not model or model in {"Loading...", "No models available"}:
-            self.append_text("Error: No Ollama model is available.")
+        unavailable_labels = {
+            self.t("chat_window_loading_models"),
+            self.t("chat_window_no_models_available")
+        }
+        if not model or model in unavailable_labels:
+            self.append_text(f"{self.t('error')}: {self.t('chat_window_no_model_available')}")
             return
         if not prompt:
-            self.append_text("Please enter a prompt first.")
+            self.append_text(self.t("chat_window_enter_prompt_first"))
             return
         if not callable(self.prepare_prompt_context_callback) or not callable(self.stream_chat_callback):
-            self.append_text("Error: Chat service is unavailable.")
+            self.append_text(f"{self.t('error')}: {self.t('chat_window_service_unavailable')}")
             return
 
         context = self.prepare_prompt_context_callback(prompt, self.session.snapshot(), self.debug_context_var.get())
@@ -387,7 +420,7 @@ class ChatWindow(ctk.CTkToplevel):
         if context.get("debug_text"):
             self.append_text(context["debug_text"])
 
-        self.append_text(f"You ({model}):\n{prompt}")
+        self.append_text(f"{self.t('chat_window_user_label')} ({model}):\n{prompt}")
         self.append_text("Aurora:")
         self.input_box.delete("1.0", "end")
         self.buttons[self.text["send"]].configure(state="disabled")
@@ -420,20 +453,20 @@ class ChatWindow(ctk.CTkToplevel):
                 self.logger.error(f"Chat request failed: {error_message}")
             except Exception as error:
                 result = "failed"
-                error_message = "Unexpected chat error."
+                error_message = self.t("chat_window_unexpected_chat_error")
                 self.logger.error(f"Chat request failed: {error}")
 
             def update_chat():
                 if not self.is_open():
                     return
                 if error_message:
-                    self.append_text(f"Error: {error_message}")
+                    self.append_text(f"{self.t('error')}: {error_message}")
                     self.set_status(error_message, "error")
                 elif result == "stopped":
-                    self.append_text("[Generation stopped]")
-                    self.set_status("Generation stopped.", "warning")
+                    self.append_text(self.t("chat_window_generation_stopped_marker"))
+                    self.set_status(self.t("chat_window_generation_stopped"), "warning")
                 else:
-                    self.set_status("Response received.", "healthy")
+                    self.set_status(self.t("chat_window_response_received"), "healthy")
                 self.stream_state["running"] = False
                 self.stream_state["stop_event"] = None
                 self.buttons[self.text["send"]].configure(state="normal")
@@ -450,16 +483,20 @@ class ChatWindow(ctk.CTkToplevel):
 
     def clear_chat(self):
         if self.stream_state["running"]:
-            self.set_status("Please stop generation before clearing.", "warning")
+            self.set_status(self.t("chat_window_stop_before_clearing"), "warning")
             return
-        if not messagebox.askyesno("Clear Chat", "Clear current conversation?", parent=self):
+        if not messagebox.askyesno(
+            self.t("chat_window_clear_chat_title"),
+            self.t("chat_window_clear_chat_message"),
+            parent=self
+        ):
             return
         self.chat_display.configure(state="normal")
         self.chat_display.delete("1.0", "end")
         self.chat_display.configure(state="disabled")
         self.input_box.delete("1.0", "end")
         self.session.clear()
-        self.set_status("Conversation cleared.", "disabled")
+        self.set_status(self.t("chat_window_conversation_cleared"), "disabled")
         self.logger.info("Conversation cleared")
 
     def stop_generation(self):
@@ -471,7 +508,7 @@ class ChatWindow(ctk.CTkToplevel):
 
     def preview_chat_context(self):
         prompt = self.input_box.get("1.0", "end").strip()
-        self.set_status("Building Context Inspector...", "disabled")
+        self.set_status(self.t("chat_window_building_context_inspector"), "disabled")
         self.logger.info("Context preview opened")
         self.logger.info("Context inspector opened")
 
@@ -491,7 +528,7 @@ class ChatWindow(ctk.CTkToplevel):
                     return
                 if callable(self.context_preview_callback):
                     self.context_preview_callback(payload, self)
-                self.set_status("Context Inspector ready", "healthy")
+                self.set_status(self.t("chat_window_context_inspector_ready"), "healthy")
                 self.logger.info("Context generated")
                 self.logger.info("Context build duration recorded")
                 self.logger.info("Final prompt preview generated")
