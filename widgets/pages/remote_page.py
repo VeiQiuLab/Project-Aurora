@@ -1,6 +1,7 @@
 import customtkinter as ctk
 
 from modules.ui_theme import (
+    FORM_LABEL_WRAP,
     FONT_HEADER,
     FONT_NORMAL,
     FONT_SMALL,
@@ -85,7 +86,7 @@ class RemotePage(ctk.CTkFrame):
             text=self.t("remote_page_status_detail"),
             font=FONT_NORMAL,
             text_color=status_color("disabled"),
-            wraplength=360,
+            wraplength=FORM_LABEL_WRAP,
             justify="left",
             anchor="w"
         ).pack(fill="x", pady=(0, SPACING_SMALL))
@@ -102,7 +103,7 @@ class RemotePage(ctk.CTkFrame):
             text=self.t("remote_page_devices_detail"),
             font=FONT_NORMAL,
             text_color=status_color("disabled"),
-            wraplength=360,
+            wraplength=FORM_LABEL_WRAP,
             justify="left",
             anchor="w"
         ).pack(fill="x", pady=(0, SPACING_SMALL))
@@ -156,7 +157,7 @@ class RemotePage(ctk.CTkFrame):
             text=self.t("remote_page_existing_window_note"),
             font=FONT_SMALL,
             text_color=status_color("disabled"),
-            wraplength=720,
+            wraplength=FORM_LABEL_WRAP * 2,
             justify="left",
             anchor="w"
         ).grid(row=0, column=0, columnspan=3, sticky="ew", pady=(0, SPACING_SMALL))
@@ -185,7 +186,7 @@ class RemotePage(ctk.CTkFrame):
             text="",
             font=FONT_NORMAL,
             text_color=status_color("disabled"),
-            wraplength=360,
+            wraplength=FORM_LABEL_WRAP,
             justify="left",
             anchor="w"
         )
@@ -199,7 +200,7 @@ class RemotePage(ctk.CTkFrame):
             text="",
             font=FONT_NORMAL,
             text_color=status_color("disabled"),
-            wraplength=360,
+            wraplength=FORM_LABEL_WRAP,
             justify="left",
             anchor="w"
         )
