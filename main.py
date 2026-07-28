@@ -1,4 +1,4 @@
-﻿import customtkinter as ctk
+import customtkinter as ctk
 import copy
 import json
 from pathlib import Path
@@ -43,6 +43,7 @@ def inspect_configuration_file():
         "app_name",
         "theme",
         "appearance",
+        "language",
         "window.width",
         "window.height",
         "ollama.host",
@@ -129,6 +130,7 @@ def inspect_configuration_file():
 configuration_issue = inspect_configuration_file()
 
 from modules.settings import settings
+from modules.settings_controller import SettingsController
 from modules.health import check_all, check_ollama_api, check_http_service, system_self_check
 from modules.launcher import open_webui
 from modules.models import get_model_records, get_models, infer_model_capability
@@ -149,7 +151,7 @@ from modules.persona import PersonaStore
 from modules.authentication import AuthenticationManager
 from modules.remote import RemoteAccessManager
 from modules.language import TEXT, set_language as set_legacy_language
-from modules.i18n import set_language as set_i18n_language, t
+from modules.i18n import normalize_language, set_language as set_i18n_language, t
 from modules.ui_theme import (
     button_style,
     FONT_APP_TITLE,
@@ -168,13 +170,21 @@ from modules.search import search_memories, search_conversations
 from modules.memory_retrieval import format_memory_context, retrieve_memories
 from modules.retrieval import format_knowledge_context, search_knowledge, retrieval_summary
 from modules.service_manager import ServiceManager
+from widgets.conversation_browser import ConversationBrowserWindow
+from widgets.knowledge_window import KnowledgeWindow
+from widgets.memory_window import MemoryWindow
+from widgets.persona_window import PersonaWindow
+from widgets.settings_window import SettingsWindow
 
 def apply_language(language):
-    set_legacy_language(language)
-    set_i18n_language(language)
+    normalized = normalize_language(language)
+    set_legacy_language(normalized)
+    set_i18n_language(normalized)
+    return normalized
 
 
-apply_language(settings.get("language", "\u7b80\u4f53\u4e2d\u6587"))
+apply_language(settings.get("language", "zh_CN"))
+settings_controller = SettingsController(settings)
 
 
 appearance = settings.get("appearance", "System")
@@ -203,6 +213,24 @@ def ui_button(parent, text, command=None, kind="secondary", **kwargs):
 
 def configure_status(label, status, text=None):
     label.configure(text=text if text is not None else str(status), text_color=status_color(status))
+
+
+LANGUAGE_DISPLAY = {
+    "zh_CN": "zh_CN",
+    "en_US": "English"
+}
+
+
+def language_display(language):
+    return LANGUAGE_DISPLAY.get(normalize_language(language), LANGUAGE_DISPLAY["zh_CN"])
+
+
+def language_code(display):
+    value = str(display or "").strip()
+    for code, label in LANGUAGE_DISPLAY.items():
+        if value == label:
+            return code
+    return normalize_language(value)
 
 
 def restore_configuration_defaults():
@@ -601,7 +629,7 @@ for name in ["Ollama", "Open WebUI", "API 11434"]:
 
     lbl = ctk.CTkLabel(
         row,
-        text=f"鈿?{name}",
+        text=f"[ ] {name}",
         anchor="w",
         font=("Microsoft YaHei", 15)
     )
@@ -955,7 +983,7 @@ def show_models_legacy():
     models = get_models()
 
     messagebox.showinfo(
-        "妯″瀷鍒楄〃",
+        t("model_list_title"),
         models
     )
 
@@ -978,7 +1006,7 @@ def show_models():
 
     model_title = ctk.CTkLabel(
         models_window,
-        text="Ollama 妯″瀷",
+        text=t("ollama_models_title"),
         font=("Microsoft YaHei", 20, "bold")
     )
     model_title.pack(anchor="w", padx=20, pady=(18, 10))
@@ -1420,14 +1448,14 @@ def show_chat():
 
     debug_switch = ctk.CTkSwitch(
         chat_window,
-        text="鏄剧ず Chat Context 璋冭瘯淇℃伅",
+        text=t("show_chat_context_debug_info"),
         variable=debug_context_var
     )
     debug_switch.pack(anchor="w", padx=25, pady=(0, 8))
 
     chat_status = ctk.CTkLabel(
         chat_window,
-        text="姝ｅ湪鍔犺浇 Ollama 妯″瀷...",
+        text=t("loading_ollama_models"),
         font=("Microsoft YaHei", 12),
         text_color="gray"
     )
@@ -1715,7 +1743,7 @@ def show_chat():
         input_box.delete("1.0", "end")
         send_button.configure(state="disabled")
         stop_button.configure(state="normal")
-        chat_status.configure(text="绛夊緟 Ollama 鍝嶅簲...", text_color="gray")
+        chat_status.configure(text=t("waiting_ollama_response"), text_color="gray")
         logger.info(f"Streaming started: {model}")
         stream_state["running"] = True
         stream_state["stop_event"] = threading.Event()
@@ -1789,7 +1817,7 @@ def show_chat():
         if stream_state["running"] and stream_state["stop_event"] is not None:
             stream_state["stop_event"].set()
             logger.info("Generation stopped")
-            chat_status.configure(text="姝ｅ湪鍋滄鐢熸垚...", text_color="orange")
+            chat_status.configure(text=t("stopping_generation"), text_color="orange")
             stop_button.configure(state="disabled")
 
     def preview_chat_context():
@@ -1925,234 +1953,42 @@ def show_chat():
 
 
 def show_conversation_browser():
-    global active_conversation_id, conversation_browser_window, pending_conversation_id
+    global conversation_browser_window, pending_conversation_id, active_conversation_id
     if conversation_browser_window is not None and conversation_browser_window.winfo_exists():
         conversation_browser_window.focus()
         conversation_browser_window.lift()
         return
 
-    manager = ConversationManager()
-    conversation_browser_window = ctk.CTkToplevel(app)
-    conversation_browser_window.title("Conversation Browser")
-    conversation_browser_window.geometry("860x680")
-    conversation_browser_window.minsize(720, 560)
-    conversation_browser_window.transient(app)
+    def clear_conversation_browser_window():
+        global conversation_browser_window
+        conversation_browser_window = None
 
-    ctk.CTkLabel(
-        conversation_browser_window,
-        text="Conversation Browser",
-        font=("Microsoft YaHei", 22, "bold")
-    ).pack(anchor="w", padx=25, pady=(20, 12))
+    def clear_active_conversation():
+        global active_conversation_id
+        active_conversation_id = None
 
-    summary_label = ctk.CTkLabel(
-        conversation_browser_window,
-        text="",
-        font=FONT_SMALL,
-        text_color="gray",
-        wraplength=800,
-        justify="left"
-    )
-    summary_label.pack(anchor="w", padx=25, pady=(0, 8))
-
-    search_frame = ctk.CTkFrame(conversation_browser_window, fg_color="transparent")
-    search_frame.pack(fill="x", padx=25, pady=(0, 10))
-    search_entry = ctk.CTkEntry(search_frame, placeholder_text="Search conversation title")
-    search_entry.pack(side="left", fill="x", expand=True, padx=(0, 6))
-
-    conversation_selector = ctk.CTkOptionMenu(
-        conversation_browser_window,
-        values=["No conversations available"],
-        width=700
-    )
-    conversation_selector.pack(fill="x", padx=25, pady=(0, 12))
-
-    detail_box = ctk.CTkTextbox(conversation_browser_window, height=300, wrap="word")
-    detail_box.pack(fill="both", expand=True, padx=25, pady=(0, 10))
-    detail_box.configure(state="disabled")
-
-    records = []
-    selected_record = {"record": None}
-
-    def format_time(value):
-        return str(value or "").replace("T", " ").replace("+00:00", " UTC") or "Unknown"
-
-    def message_count(record):
-        try:
-            data = manager.load(record["id"])
-            return len([item for item in data.get("messages", []) if item.get("role") != "system"])
-        except Exception:
-            return 0
-
-    def browser_label(record):
-        count = message_count(record)
-        status = "Current" if record.get("id") == active_conversation_id else "Saved"
-        return (
-            f"{record.get('title', 'New Conversation')}\n"
-            f"Created: {format_time(record.get('created_at'))} | "
-            f"Updated: {format_time(record.get('updated_at'))} | "
-            f"Messages: {count} | "
-            f"Status: {status}"
-        )
-
-    def set_detail(text):
-        detail_box.configure(state="normal")
-        detail_box.delete("1.0", "end")
-        detail_box.insert("end", text)
-        detail_box.configure(state="disabled")
-
-    def show_detail(record):
-        selected_record["record"] = record
-        if record is None:
-            set_detail("No conversation selected.")
-            return
-        try:
-            data = manager.load(record["id"])
-            messages = [item for item in data.get("messages", []) if item.get("role") != "system"]
-            preview = []
-            for item in messages[-6:]:
-                role = "You" if item.get("role") == "user" else "Aurora"
-                preview.append(f"{role}: {str(item.get('content', ''))[:300]}")
-            status = "Current" if record.get("id") == active_conversation_id else "Saved"
-            set_detail(
-                f"Conversation ID: {data.get('id', '')}\n"
-                f"Title: {data.get('title', 'New Conversation')}\n"
-                f"Created: {format_time(data.get('created_at'))}\n"
-                f"Updated: {format_time(data.get('updated_at'))}\n"
-                f"Message Count: {len(messages)}\n"
-                f"Model: {data.get('model', '') or 'Unknown'}\n"
-                f"Status: {status}\n\n"
-                "Recent Messages\n\n"
-                f"{chr(10).join(preview) if preview else 'No messages.'}"
-            )
-        except Exception as error:
-            set_detail(f"Conversation load failed: {error}")
-
-    def refresh_conversation_browser(keyword=""):
-        nonlocal records
-        keyword = str(keyword or "").strip().casefold()
-        loaded = manager.list_conversations()
-        if keyword:
-            loaded = [
-                item for item in loaded
-                if keyword in str(item.get("title", "")).casefold()
-            ]
-        records = sorted(loaded, key=lambda item: item.get("updated_at", ""), reverse=True)
-        labels = [browser_label(item) for item in records]
-        conversation_selector.configure(values=labels or ["No conversations available"])
-        conversation_selector.set(labels[0] if labels else "No conversations available")
-        latest = format_time(records[0].get("updated_at")) if records else "None"
-        current = active_conversation_id or "None"
-        summary_label.configure(
-            text=f"Total: {len(manager.list_conversations())} | Current: {current} | Latest Updated: {latest}"
-        )
-        show_detail(records[0] if records else None)
-        logger.info("Conversation browser refreshed")
-
-    def select_conversation(value):
-        record = next((item for item in records if browser_label(item) == value), None)
-        show_detail(record)
-
-    conversation_selector.configure(command=select_conversation)
-
-    def search_conversation_browser():
-        refresh_conversation_browser(search_entry.get())
-        logger.info("Conversation browser searched")
-
-    def clear_conversation_search():
-        search_entry.delete(0, "end")
-        refresh_conversation_browser()
-
-    ui_button(search_frame, text="Search", width=90, command=search_conversation_browser, kind="primary").pack(side="left", padx=(0, 6))
-    ui_button(search_frame, text="Clear", width=80, command=clear_conversation_search).pack(side="left")
-
-    def open_conversation():
-        record = selected_record["record"]
-        if record is None:
-            set_detail("No conversation selected.")
-            return
-        show_detail(record)
-        logger.info("Conversation opened")
-
-    def continue_conversation():
+    def continue_browser_conversation(conversation_id):
         global pending_conversation_id
-        record = selected_record["record"]
-        if record is None:
-            set_detail("No conversation selected.")
-            return
         if callable(chat_load_conversation_callback):
-            chat_load_conversation_callback(record["id"])
+            chat_load_conversation_callback(conversation_id)
         else:
-            pending_conversation_id = record["id"]
+            pending_conversation_id = conversation_id
             show_chat()
         if chat_window is not None and chat_window.winfo_exists():
             chat_window.focus()
             chat_window.lift()
-        logger.info("Conversation continued")
 
-    def rename_browser_conversation():
-        record = selected_record["record"]
-        if record is None:
-            set_detail("No conversation selected.")
-            return
-        dialog = ctk.CTkInputDialog(text="Enter conversation title:", title="Rename Conversation")
-        title = dialog.get_input()
-        if not title or not title.strip():
-            return
-        try:
-            manager.rename(record["id"], title)
-            refresh_conversation_browser(search_entry.get())
-            logger.info("Conversation renamed")
-        except Exception as error:
-            set_detail(f"Conversation rename failed: {error}")
-            logger.error(f"Conversation rename failed: {error}")
-
-    def delete_browser_conversation():
-        global active_conversation_id
-        record = selected_record["record"]
-        if record is None:
-            set_detail("No conversation selected.")
-            return
-        if not messagebox.askyesno("Delete Conversation", "Delete selected conversation?", parent=conversation_browser_window):
-            return
-        try:
-            manager.delete(record["id"])
-            if active_conversation_id == record["id"]:
-                active_conversation_id = None
-            refresh_conversation_browser(search_entry.get())
-            logger.info("Conversation deleted")
-        except Exception as error:
-            set_detail(f"Conversation delete failed: {error}")
-            logger.error(f"Conversation delete failed: {error}")
-
-    button_frame = ctk.CTkFrame(conversation_browser_window, fg_color="transparent")
-    button_frame.pack(fill="x", padx=25, pady=(0, 20))
-    for column in range(3):
-        button_frame.grid_columnconfigure(column, weight=1)
-    conversation_actions = [
-        ("Open", open_conversation, "secondary"),
-        ("Continue Chat", continue_conversation, "primary"),
-        ("Rename", rename_browser_conversation, "secondary"),
-        ("Delete", delete_browser_conversation, "danger"),
-        ("Refresh", lambda: refresh_conversation_browser(search_entry.get()), "secondary")
-    ]
-    for index, (label_text, command, kind) in enumerate(conversation_actions):
-        ui_button(button_frame, text=label_text, command=command, kind=kind).grid(
-            row=index // 3,
-            column=index % 3,
-            sticky="ew",
-            padx=4,
-            pady=4
-        )
-
-    def close_conversation_browser():
-        global conversation_browser_window
-        conversation_browser_window.destroy()
-        conversation_browser_window = None
-
-    ui_button(button_frame, text=TEXT["close"], command=close_conversation_browser).grid(row=1, column=2, sticky="ew", padx=4, pady=4)
-    conversation_browser_window.protocol("WM_DELETE_WINDOW", close_conversation_browser)
-    refresh_conversation_browser()
-
+    conversation_browser_window = ConversationBrowserWindow(
+        app,
+        conversation_manager=ConversationManager(),
+        text=TEXT,
+        translate=t,
+        logger=logger,
+        get_active_conversation_id=lambda: active_conversation_id,
+        clear_active_conversation_id=clear_active_conversation,
+        continue_conversation_callback=continue_browser_conversation,
+        on_close=clear_conversation_browser_window
+    )
 
 def show_memory():
     global memory_window
@@ -2162,208 +1998,20 @@ def show_memory():
         return
 
     logger.info("Memory window opened")
-    memory_window = ctk.CTkToplevel(app)
-    memory_window.title(TEXT["memory"])
-    memory_window.geometry("760x600")
-    memory_window.minsize(620, 480)
-    memory_window.transient(app)
-    store = memory_store
-    records = []
-    selected_id = {"value": None}
 
-    ctk.CTkLabel(memory_window, text=TEXT["memory"], font=("Microsoft YaHei", 22, "bold")).pack(
-        anchor="w", padx=25, pady=(20, 12)
-    )
-    list_box = ctk.CTkOptionMenu(memory_window, values=["No memories available"], width=680)
-    list_box.pack(fill="x", padx=25, pady=(0, 12))
-
-    memory_search_frame = ctk.CTkFrame(memory_window, fg_color="transparent")
-    memory_search_frame.pack(fill="x", padx=25, pady=(0, 10))
-    memory_search_entry = ctk.CTkEntry(memory_search_frame, placeholder_text="Search memories")
-    memory_search_entry.pack(side="left", fill="x", expand=True, padx=(0, 6))
-
-    form = ctk.CTkFrame(memory_window, fg_color="transparent")
-    form.pack(fill="both", expand=True, padx=25)
-    ctk.CTkLabel(form, text=TEXT["type"]).pack(anchor="w")
-    type_box = ctk.CTkOptionMenu(form, values=["preference", "fact", "project", "temporary"])
-    type_box.set("fact")
-    type_box.pack(fill="x", pady=(2, 10))
-    ctk.CTkLabel(form, text=TEXT["content"]).pack(anchor="w")
-    content_box = ctk.CTkTextbox(form, height=120, wrap="word")
-    content_box.pack(fill="both", expand=True, pady=(2, 10))
-    ctk.CTkLabel(form, text=TEXT["importance"]).pack(anchor="w")
-    importance_box = ctk.CTkOptionMenu(form, values=["low", "normal", "high"])
-    importance_box.set("normal")
-    importance_box.pack(fill="x", pady=(2, 12))
-    enabled_var = ctk.BooleanVar(value=True)
-    enabled_switch = ctk.CTkSwitch(form, text="Enable Memory", variable=enabled_var, command=lambda: toggle_memory())
-    enabled_switch.pack(anchor="w", pady=(0, 10))
-    status = ctk.CTkLabel(form, text="", text_color="gray")
-    status.pack(anchor="w", pady=(0, 8))
-
-    def search_memory_list():
-        refresh_memory_list(memory_search_entry.get())
-        logger.info("Memory searched")
-
-    ctk.CTkButton(memory_search_frame, text="Search", width=80, command=search_memory_list).pack(side="right")
-
-    memory_filter_frame = ctk.CTkFrame(memory_window, fg_color="transparent")
-    memory_filter_frame.pack(fill="x", padx=25, pady=(0, 10))
-    type_filter = ctk.CTkOptionMenu(memory_filter_frame, values=["All Types", "preference", "fact", "project", "temporary"], width=150)
-    type_filter.set("All Types")
-    type_filter.pack(side="left", padx=(0, 6))
-    importance_filter = ctk.CTkOptionMenu(memory_filter_frame, values=["All Importance", "low", "normal", "high"], width=150)
-    importance_filter.set("All Importance")
-    importance_filter.pack(side="left", padx=6)
-    enabled_filter = ctk.CTkOptionMenu(memory_filter_frame, values=["All Status", "Enabled", "Disabled"], width=120)
-    enabled_filter.set("All Status")
-    enabled_filter.pack(side="left", padx=6)
-
-    def refresh_memory_list(keyword=""):
-        nonlocal records
-        selected_type = type_filter.get()
-        selected_importance = importance_filter.get()
-        selected_enabled = enabled_filter.get()
-        records = search_memories(
-            store.list_memories(),
-            keyword,
-            memory_type=None if selected_type == "All Types" else selected_type,
-            importance=None if selected_importance == "All Importance" else selected_importance,
-            enabled=None if selected_enabled == "All Status" else selected_enabled == "Enabled"
-        )
-        logger.info(f"Memory loaded: {len(records)}")
-        labels = [
-            f"{item.get('type', 'fact')} | {item.get('content', '')[:45]} | "
-            f"{item.get('importance', 'normal')} | "
-            f"{'Enabled' if item.get('enabled', True) else 'Disabled'} | "
-            f"{item.get('updated_time', '').replace('T', ' ')}"
-            for item in records
-        ]
-        list_box.configure(values=labels or ["No memories available"])
-        list_box.set(labels[0] if labels else "No memories available")
-
-    def apply_memory_filters(_value=None):
-        refresh_memory_list(memory_search_entry.get())
-
-    type_filter.configure(command=apply_memory_filters)
-    importance_filter.configure(command=apply_memory_filters)
-    enabled_filter.configure(command=apply_memory_filters)
-
-    def select_memory(value):
-        index = list_box.cget("values").index(value) if value in list_box.cget("values") else -1
-        if index < 0 or index >= len(records):
-            selected_id["value"] = None
-            return
-        item = records[index]
-        selected_id["value"] = item.get("id")
-        type_box.set(item.get("type", "fact"))
-        importance_box.set(item.get("importance", "normal"))
-        enabled_var.set(bool(item.get("enabled", True)))
-        content_box.delete("1.0", "end")
-        content_box.insert("1.0", item.get("content", ""))
-
-    list_box.configure(command=select_memory)
-
-    def clear_form():
-        selected_id["value"] = None
-        type_box.set("fact")
-        importance_box.set("normal")
-        enabled_var.set(True)
-        content_box.delete("1.0", "end")
-
-    def save_memory():
-        content = content_box.get("1.0", "end").strip()
-        if not content:
-            status.configure(text="Please enter memory content.", text_color="orange")
-            return
-        if selected_id["value"]:
-            store.update(selected_id["value"], type_box.get(), content, importance_box.get())
-            store.set_enabled(selected_id["value"], enabled_var.get())
-            logger.info("Memory updated")
-            status.configure(text="Memory updated.", text_color="#32CD32")
-        else:
-            store.create(type_box.get(), content, importance_box.get())
-            logger.info("Memory created")
-            status.configure(text="Memory created.", text_color="#32CD32")
-        clear_form()
-        refresh_memory_list()
-
-    def toggle_memory():
-        if not selected_id["value"]:
-            return
-        store.set_enabled(selected_id["value"], enabled_var.get())
-        logger.info("Memory enabled changed")
-        status.configure(text="Memory status updated.", text_color="#32CD32")
-        refresh_memory_list(memory_search_entry.get())
-
-    def delete_memory():
-        if not selected_id["value"]:
-            return
-        if not messagebox.askyesno("Delete Memory", "Delete selected memory?", parent=memory_window):
-            return
-        store.delete(selected_id["value"])
-        logger.info("Memory deleted")
-        status.configure(text="Memory deleted.", text_color="gray")
-        clear_form()
-        refresh_memory_list()
-
-    def export_memory():
-        target = filedialog.asksaveasfilename(
-            title=t("export_memory"),
-            defaultextension=".json",
-            filetypes=[("JSON", "*.json")],
-            parent=memory_window
-        )
-        if not target:
-            return
-        try:
-            Path(target).write_text(
-                json.dumps(store.list_memories(), ensure_ascii=False, indent=2),
-                encoding="utf-8"
-            )
-            logger.info("Memory exported")
-            status.configure(text="Memory exported.", text_color="#32CD32")
-        except (OSError, TypeError) as error:
-            logger.error(f"Memory export failed: {error}")
-            status.configure(text="Memory export failed.", text_color="red")
-
-    def import_memory():
-        source = filedialog.askopenfilename(
-            title=t("import_memory"),
-            filetypes=[("JSON", "*.json")],
-            parent=memory_window
-        )
-        if not source:
-            return
-        try:
-            imported = json.loads(Path(source).read_text(encoding="utf-8"))
-            if not isinstance(imported, list):
-                raise ValueError("Invalid memory format")
-            added = store.merge(imported)
-            refresh_memory_list(memory_search_entry.get())
-            logger.info("Memory imported")
-            status.configure(text=f"Imported {added} memory record(s).", text_color="#32CD32")
-        except (OSError, ValueError, TypeError, json.JSONDecodeError) as error:
-            logger.error(f"Memory import failed: {error}")
-            status.configure(text="Invalid memory file format. Import failed.", text_color="red")
-
-    buttons = ctk.CTkFrame(memory_window, fg_color="transparent")
-    buttons.pack(fill="x", padx=25, pady=(0, 20))
-    ctk.CTkButton(buttons, text=TEXT["add"], command=clear_form).pack(side="left", expand=True, fill="x", padx=(0, 6))
-    ctk.CTkButton(buttons, text=TEXT["save"], command=save_memory).pack(side="left", expand=True, fill="x", padx=6)
-    ctk.CTkButton(buttons, text=TEXT["delete"], command=delete_memory).pack(side="left", expand=True, fill="x", padx=6)
-    ctk.CTkButton(buttons, text=t("export_memory"), command=export_memory).pack(side="left", expand=True, fill="x", padx=6)
-    ctk.CTkButton(buttons, text=t("import_memory"), command=import_memory).pack(side="left", expand=True, fill="x", padx=6)
-
-    def close_memory():
+    def clear_memory_window():
         global memory_window
-        memory_window.destroy()
         memory_window = None
 
-    ctk.CTkButton(buttons, text=TEXT["close"], command=close_memory).pack(side="left", expand=True, fill="x", padx=(6, 0))
-    memory_window.protocol("WM_DELETE_WINDOW", close_memory)
-    refresh_memory_list()
-
+    memory_window = MemoryWindow(
+        app,
+        memory_store=memory_store,
+        search_memories=search_memories,
+        text=TEXT,
+        translate=t,
+        logger=logger,
+        on_close=clear_memory_window
+    )
 
 def show_knowledge():
     global knowledge_window
@@ -2373,1069 +2021,51 @@ def show_knowledge():
         return
 
     logger.info("Knowledge loaded")
-    knowledge_window = ctk.CTkToplevel(app)
-    knowledge_window.title(t("knowledge_base"))
-    knowledge_window.geometry("900x760")
-    knowledge_window.minsize(760, 640)
-    knowledge_window.transient(app)
 
-    ctk.CTkLabel(
-        knowledge_window,
-        text=t("knowledge_base"),
-        font=FONT_TITLE
-    ).pack(anchor="w", padx=25, pady=(20, 12))
-
-    search_frame = ctk.CTkFrame(knowledge_window, fg_color="transparent")
-    search_frame.pack(fill="x", padx=25, pady=(0, 10))
-
-    search_entry = ctk.CTkEntry(search_frame, placeholder_text=t("search_knowledge"))
-    search_entry.pack(side="left", fill="x", expand=True, padx=(0, 6))
-
-    enabled_filter = ctk.CTkOptionMenu(
-        search_frame,
-        values=["All", "Enabled", "Disabled", "Error"],
-        width=130
-    )
-    stored_filter = settings.get("knowledge.enabled_filter", "All")
-    if stored_filter == "Enabled Only":
-        stored_filter = "Enabled"
-    elif stored_filter == "Disabled Only":
-        stored_filter = "Disabled"
-    if stored_filter not in {"All", "Enabled", "Disabled", "Error"}:
-        stored_filter = "All"
-    enabled_filter.set(stored_filter)
-    enabled_filter.pack(side="left", padx=(0, 6))
-
-    stats_label = ctk.CTkLabel(
-        knowledge_window,
-        text="",
-        font=FONT_SMALL,
-        text_color="gray",
-        wraplength=820,
-        justify="left"
-    )
-    stats_label.pack(anchor="w", padx=25, pady=(0, 8))
-
-    index_status_label = ctk.CTkLabel(
-        knowledge_window,
-        text="",
-        font=FONT_SMALL,
-        text_color="gray",
-        wraplength=820,
-        justify="left"
-    )
-    index_status_label.pack(anchor="w", padx=25, pady=(0, 8))
-
-    list_box = ctk.CTkOptionMenu(knowledge_window, values=["No knowledge files available"], width=680)
-    list_box.pack(fill="x", padx=25, pady=(0, 12))
-
-    detail_box = ctk.CTkTextbox(knowledge_window, height=250, wrap="word")
-    detail_box.pack(fill="both", expand=True, padx=25, pady=(0, 10))
-    detail_box.configure(state="disabled")
-
-    preview_search_frame = ctk.CTkFrame(knowledge_window, fg_color="transparent")
-    preview_search_frame.pack(fill="x", padx=25, pady=(0, 10))
-    preview_search_entry = ctk.CTkEntry(preview_search_frame, placeholder_text=t("search_in_preview"))
-    preview_search_entry.pack(side="left", fill="x", expand=True, padx=(0, 6))
-    preview_search_label = ctk.CTkLabel(
-        preview_search_frame,
-        text="Matches: 0",
-        font=FONT_SMALL,
-        text_color="gray"
-    )
-    preview_search_label.pack(side="left", padx=(0, 6))
-
-    knowledge_records = []
-    visible_records = []
-    backup_records = []
-    selected_record = {"record": None}
-    selected_backup = {"record": None}
-    current_keyword = {"value": ""}
-    preview_state = {"content": "", "matches": [], "current": -1, "keyword": ""}
-
-    def format_size(size):
-        try:
-            value = int(size)
-        except (TypeError, ValueError):
-            value = 0
-        if value >= 1024 * 1024:
-            return f"{value / 1024 / 1024:.1f} MB"
-        if value >= 1024:
-            return f"{value / 1024:.1f} KB"
-        return f"{value} B"
-
-    def knowledge_label(record):
-        status = {
-            "OK": "OK",
-            "Missing File": "Missing File",
-            "Invalid Knowledge File": "Invalid Knowledge File",
-            "Read Error": "Read Error"
-        }.get(record.get("status", "OK"), "Read Error")
-        enabled_text = status if status != "OK" else ("Enabled" if record.get("enabled", True) else "Disabled")
-        embedding_state = knowledge_store.embedding_state(record)
-        embedding_text = embedding_state.get("status", record.get("embedding_status", "Not Indexed"))
-        vector_text = "Ready" if embedding_state.get("has_embedding") and not embedding_state.get("stale") else embedding_text
-        return (
-            f"{record.get('file_name', 'Unknown')}\n"
-            f"{record.get('file_type', '').upper()} | "
-            f"{format_size(record.get('file_size', 0))} | "
-            f"{enabled_text} | "
-            f"Embedding: {embedding_text} | "
-            f"Vector: {vector_text} | "
-            f"{record.get('added_time', '')} | "
-            f"Updated: {record.get('updated_time', '')}"
-        )
-
-    def backup_label(record):
-        return (
-            f"{record.get('name', 'Unknown')}\n"
-            f"Created: {record.get('created_time', '') or 'Unknown'} | "
-            f"Version: {record.get('app_version', record.get('backup_version', 'Unknown'))} | "
-            f"Size: {format_size(record.get('file_size', 0))} | "
-            f"Status: {record.get('status', 'OK')}"
-        )
-
-    def set_detail(text):
-        detail_box.configure(state="normal")
-        detail_box.delete("1.0", "end")
-        detail_box.insert("end", text)
-        detail_box.configure(state="disabled")
-
-    def show_detail(record):
-        if record:
-            selected_record["record"] = record
-            enabled_text = "Yes" if record.get("enabled", True) else "No"
-            embedding_state = knowledge_store.embedding_state(record)
-            vector_text = "Ready" if embedding_state.get("has_embedding") and not embedding_state.get("stale") else embedding_state.get("status", "Not Indexed")
-            set_detail(
-                f"File: {record.get('file_name', '')}\n"
-                f"Type: {record.get('file_type', '')}\n"
-                f"Size: {format_size(record.get('file_size', 0))}\n"
-                f"Added: {record.get('added_time', '')}\n"
-                f"Updated: {record.get('updated_time', '')}\n"
-                f"Characters: {record.get('character_count', len(str(record.get('content', ''))))}\n"
-                f"Retrievable: {'Yes' if knowledge_store.valid_for_retrieval(record) else 'No'}\n"
-                f"Enabled: {enabled_text}\n"
-                f"Status: {record.get('status', 'OK')}\n"
-                f"Embedding Status: {embedding_state.get('status', record.get('embedding_status', 'Not Indexed'))}\n"
-                f"Embedding Model: {record.get('embedding_model', '') or 'None'}\n"
-                f"Embedding Updated: {record.get('embedding_updated_time', '') or 'Never'}\n"
-                f"Embedding Dimensions: {record.get('embedding_dimensions', 0)}\n"
-                f"Vector Index Status: {vector_text}\n"
-                f"Needs Reindex: {'Yes' if embedding_state.get('needs_reindex') else 'No'}\n"
-                f"Index Reason: {embedding_state.get('reason', '') or 'OK'}\n"
-                f"Source Path: {record.get('source_path', '') or 'Unknown'}\n"
-                f"Stored Path: {record.get('stored_path', '')}\n\n"
-                "Click Preview to load a limited content preview."
-            )
-        else:
-            selected_record["record"] = None
-            set_detail("No knowledge file selected.")
-
-    def update_stats(records):
-        stats = knowledge_store.health()
-        index_health = stats.get("vector_index", {})
-        stats_label.configure(
-            text=(
-                f"{t('knowledge_status')}: {TEXT['enabled'] if settings.get('knowledge.enabled', True) else TEXT['disabled']}\n"
-                f"Documents: {stats['total']} | TXT: {stats['txt']} | Markdown: {stats['md']} | PDF: {stats['pdf']}\n"
-                f"Enabled: {stats['enabled']} | Disabled: {stats['disabled']} | Retrievable: {stats['retrievable']}\n"
-                f"{t('indexed')}: {stats.get('embedding_indexed', 0)} | "
-                f"Stale: {stats.get('embedding_stale', 0)} | "
-                f"Needs Reindex: {stats.get('embedding_needs_reindex', 0)}"
-            )
-        )
-        index_status_label.configure(
-            text=(
-                f"{t('vector_status')}: {'Present' if index_health.get('exists') else 'Missing'}\n"
-                f"Entries: {index_health.get('entries', 0)} | Indexed: {index_health.get('indexed', 0)} | "
-                f"Missing: {index_health.get('missing', 0)} | Invalid: {index_health.get('invalid', 0)} | "
-                f"Orphaned: {index_health.get('orphaned', 0)} | "
-                f"Updated: {index_health.get('updated_time', '') or 'Never'}"
-            )
-        )
-
-    def filter_records(records, keyword):
-        keyword = keyword.strip().casefold()
-        selected_filter = enabled_filter.get()
-        filtered = []
-        for item in records:
-            enabled = bool(item.get("enabled", True))
-            status = str(item.get("status", "OK"))
-            if selected_filter == "Enabled" and (not enabled or status != "OK"):
-                continue
-            if selected_filter == "Disabled" and enabled:
-                continue
-            if selected_filter == "Error" and status == "OK":
-                continue
-            if keyword and not (
-                keyword in str(item.get("file_name", "")).casefold()
-                or keyword in str(item.get("file_type", "")).casefold()
-                or keyword in str(item.get("content", "")).casefold()
-            ):
-                continue
-            filtered.append(item)
-        return filtered
-
-    def sort_records(records):
-        field = sort_field.get()
-        reverse = sort_direction.get() == "Descending"
-
-        def sort_key(item):
-            if field == "File Name":
-                return str(item.get("file_name", "")).casefold()
-            if field == "File Type":
-                return str(item.get("file_type", "")).casefold()
-            if field == "File Size":
-                return int(item.get("file_size", 0) or 0)
-            if field == "Added Time":
-                return str(item.get("added_time", ""))
-            if field == "Characters":
-                return int(item.get("character_count", 0) or 0)
-            if field == "Enabled":
-                return 1 if item.get("enabled", True) else 0
-            return str(item.get("updated_time", ""))
-
-        return sorted(records, key=sort_key, reverse=reverse)
-
-    def refresh_knowledge_list():
-        set_detail("Loading knowledge files...")
-
-        def load_records():
-            try:
-                loaded_records = knowledge_store.list_items()
-                filtered_records = filter_records(loaded_records, current_keyword["value"])
-                error_message = None
-            except Exception as error:
-                loaded_records = []
-                filtered_records = []
-                error_message = str(error)
-
-            def update_records():
-                nonlocal knowledge_records, visible_records
-                if knowledge_window is None or not knowledge_window.winfo_exists():
-                    return
-                if error_message:
-                    set_detail(f"Knowledge load failed: {error_message}")
-                    logger.error(f"Knowledge load failed: {error_message}")
-                    return
-                knowledge_records = loaded_records
-                visible_records = sort_records(filtered_records)
-                labels = [knowledge_label(item) for item in visible_records]
-                list_box.configure(values=labels or ["No knowledge files available"])
-                list_box.set(labels[0] if labels else "No knowledge files available")
-                update_stats(knowledge_records)
-                search_text = current_keyword["value"] or "None"
-                search_result_label.configure(
-                    text=(
-                        f"Search: {search_text} | Filter: {enabled_filter.get()} | "
-                        f"Results: {len(visible_records)} / {len(knowledge_records)}"
-                    )
-                )
-                show_detail(visible_records[0] if visible_records else None)
-                logger.info(f"Knowledge loaded: {len(knowledge_records)}")
-
-            try:
-                knowledge_window.after(0, update_records)
-            except Exception:
-                return
-
-        threading.Thread(target=load_records, daemon=True).start()
-
-    def select_knowledge(value):
-        record = next((item for item in visible_records if knowledge_label(item) == value), None)
-        show_detail(record)
-
-    list_box.configure(command=select_knowledge)
-
-    def search_knowledge_list():
-        current_keyword["value"] = search_entry.get().strip()
-        settings.set("knowledge.enabled_filter", enabled_filter.get())
-        refresh_knowledge_list()
-        logger.info("Knowledge searched")
-
-    def clear_search():
-        search_entry.delete(0, "end")
-        current_keyword["value"] = ""
-        enabled_filter.set("All")
-        settings.set("knowledge.enabled_filter", "All")
-        refresh_knowledge_list()
-        logger.info("Knowledge search cleared")
-
-    ui_button(search_frame, text="Search", width=90, command=search_knowledge_list, kind="primary").pack(side="left", padx=(0, 6))
-    ui_button(search_frame, text="Clear Search", width=110, command=clear_search).pack(side="left")
-
-    sort_frame = ctk.CTkFrame(knowledge_window, fg_color="transparent")
-    sort_frame.pack(fill="x", padx=25, pady=(0, 8))
-    sort_field = ctk.CTkOptionMenu(
-        sort_frame,
-        values=["Updated Time", "File Name", "File Type", "File Size", "Added Time", "Characters", "Enabled"],
-        width=160
-    )
-    sort_field.set(settings.get("knowledge.sort_field", "Updated Time"))
-    sort_field.pack(side="left", padx=(0, 6))
-    sort_direction = ctk.CTkOptionMenu(sort_frame, values=["Descending", "Ascending"], width=130)
-    sort_direction.set(settings.get("knowledge.sort_direction", "Descending"))
-    sort_direction.pack(side="left", padx=(0, 6))
-    search_result_label = ctk.CTkLabel(sort_frame, text="", font=("Microsoft YaHei", 12), text_color="gray")
-    search_result_label.pack(side="left", padx=(8, 0))
-
-    def change_enabled_filter(_value):
-        settings.set("knowledge.enabled_filter", enabled_filter.get())
-        refresh_knowledge_list()
-
-    enabled_filter.configure(command=change_enabled_filter)
-
-    def sort_knowledge_list(_value=None):
-        settings.set("knowledge.sort_field", sort_field.get())
-        settings.set("knowledge.sort_direction", sort_direction.get())
-        refresh_knowledge_list()
-        logger.info("Knowledge list sorted")
-
-    sort_field.configure(command=sort_knowledge_list)
-    sort_direction.configure(command=sort_knowledge_list)
-
-    def add_knowledge():
-        file_path = filedialog.askopenfilename(
-            parent=knowledge_window,
-            title="Add Knowledge",
-            filetypes=[
-                ("Knowledge files", "*.txt *.md *.pdf"),
-                ("Text files", "*.txt"),
-                ("Markdown files", "*.md"),
-                ("PDF files", "*.pdf")
-            ]
-        )
-        if not file_path:
-            return
-        set_detail("Adding knowledge file...")
-
-        def run_add():
-            try:
-                knowledge_store.add_file(file_path)
-                error_message = None
-            except (OSError, ValueError) as error:
-                error_message = str(error)
-
-            def finish_add():
-                if knowledge_window is None or not knowledge_window.winfo_exists():
-                    return
-                if error_message:
-                    logger.error(f"Knowledge add failed: {error_message}")
-                    messagebox.showerror("Knowledge Base", error_message, parent=knowledge_window)
-                    return
-                refresh_knowledge_list()
-                logger.info("Knowledge added")
-
-            try:
-                knowledge_window.after(0, finish_add)
-            except Exception:
-                return
-
-        threading.Thread(target=run_add, daemon=True).start()
-
-    def delete_knowledge():
-        selected = list_box.get()
-        record = next((item for item in knowledge_records if knowledge_label(item) == selected), None)
-        if record is None:
-            return
-        if not messagebox.askyesno("Delete Knowledge", "Delete selected knowledge file?", parent=knowledge_window):
-            return
-        try:
-            knowledge_store.delete(record["id"])
-            refresh_knowledge_list()
-            logger.info("Knowledge deleted")
-        except (OSError, KeyError) as error:
-            logger.error(f"Knowledge delete failed: {error}")
-            messagebox.showerror("Knowledge Base", str(error), parent=knowledge_window)
-
-    def toggle_knowledge_enabled():
-        record = selected_record["record"]
-        if record is None:
-            set_detail("No knowledge file selected.")
-            return
-        new_value = not bool(record.get("enabled", True))
-        try:
-            updated = knowledge_store.set_enabled(record["id"], new_value)
-            selected_record["record"] = updated
-            refresh_knowledge_list()
-            logger.info("Knowledge enabled" if new_value else "Knowledge disabled")
-        except (OSError, KeyError) as error:
-            logger.error(f"Knowledge enabled change failed: {error}")
-            messagebox.showerror("Knowledge Base", str(error), parent=knowledge_window)
-
-    def backup_directory():
-        configured = Path(str(settings.get("knowledge.backup_path", "data/knowledge/backups")))
-        if configured.is_absolute():
-            return configured
-        return Path(__file__).resolve().parent / configured
-
-    def refresh_backup_history():
-        nonlocal backup_records
-        backup_records = knowledge_store.list_backups(backup_directory())
-        labels = [backup_label(item) for item in backup_records]
-        backup_selector.configure(values=labels or ["No backups available"])
-        backup_selector.set(labels[0] if labels else "No backups available")
-        selected_backup["record"] = backup_records[0] if backup_records else None
-
-    def select_backup(value):
-        selected_backup["record"] = next(
-            (item for item in backup_records if backup_label(item) == value),
-            None
-        )
-
-    def knowledge_config_snapshot():
-        return {
-            "enabled": settings.get("knowledge.enabled", True),
-            "max_results": settings.get("knowledge.max_results", 3),
-            "preview_limit": settings.get("knowledge.preview_limit", 5000),
-            "sort_field": settings.get("knowledge.sort_field", "Updated Time"),
-            "sort_direction": settings.get("knowledge.sort_direction", "Descending"),
-            "backup_path": settings.get("knowledge.backup_path", "data/knowledge/backups"),
-            "max_backup_count": settings.get("knowledge.max_backup_count", 10)
-        }
-
-    def restore_knowledge_config(config):
-        for key in (
-            "enabled",
-            "max_results",
-            "preview_limit",
-            "sort_field",
-            "sort_direction",
-            "backup_path",
-            "max_backup_count"
-        ):
-            if key in config:
-                settings.set(f"knowledge.{key}", config[key])
-
-    def create_knowledge_backup():
-        set_detail("Creating Knowledge backup...")
-
-        def run_create_backup():
-            try:
-                result = knowledge_store.create_backup(
-                    backup_directory(),
-                    config=knowledge_config_snapshot(),
-                    app_version=VERSION,
-                    max_backup_count=settings.get("knowledge.max_backup_count", 10)
-                )
-                error_message = None
-            except Exception as error:
-                result = {}
-                error_message = str(error)
-
-            def finish_create_backup():
-                if knowledge_window is None or not knowledge_window.winfo_exists():
-                    return
-                if error_message:
-                    set_detail(f"Knowledge backup create failed: {error_message}")
-                    logger.error(f"Knowledge backup create failed: {error_message}")
-                    return
-                refresh_backup_history()
-                cleanup_note = (
-                    "\nBackup count exceeds max_backup_count. Consider deleting old backups."
-                    if result.get("cleanup_required") else ""
-                )
-                set_detail(
-                    "Knowledge backup created\n\n"
-                    f"File: {result.get('path', '')}\n"
-                    f"Backup Count: {result.get('backup_count', 0)} / {result.get('max_backup_count', 10)}"
-                    f"{cleanup_note}"
-                )
-                logger.info("Knowledge backup created")
-
-            try:
-                knowledge_window.after(0, finish_create_backup)
-            except Exception:
-                return
-
-        threading.Thread(target=run_create_backup, daemon=True).start()
-
-    def delete_knowledge_backup():
-        record = selected_backup["record"]
-        if record is None:
-            set_detail("No backup selected.")
-            return
-        if not messagebox.askyesno("Delete Backup", "Delete selected Knowledge backup?", parent=knowledge_window):
-            return
-        set_detail("Deleting Knowledge backup...")
-
-        def run_delete_backup():
-            try:
-                deleted = knowledge_store.delete_backup(record["path"])
-                error_message = None
-            except Exception as error:
-                deleted = ""
-                error_message = str(error)
-
-            def finish_delete_backup():
-                if knowledge_window is None or not knowledge_window.winfo_exists():
-                    return
-                if error_message:
-                    set_detail(f"Knowledge backup delete failed: {error_message}")
-                    logger.error(f"Knowledge backup delete failed: {error_message}")
-                    return
-                refresh_backup_history()
-                set_detail(f"Knowledge backup deleted:\n{deleted}")
-                logger.info("Knowledge backup deleted")
-
-            try:
-                knowledge_window.after(0, finish_delete_backup)
-            except Exception:
-                return
-
-        threading.Thread(target=run_delete_backup, daemon=True).start()
-
-    def restore_knowledge_backup():
-        record = selected_backup["record"]
-        if record is None:
-            set_detail("No backup selected.")
-            return
-        if record.get("status") != "OK":
-            set_detail(record.get("status", "Invalid backup format."))
-            logger.error("Knowledge backup restore failed")
-            return
-        if not messagebox.askyesno("Restore Backup", "Restore selected Knowledge backup?", parent=knowledge_window):
-            return
-        set_detail("Restoring Knowledge backup...")
-
-        def run_restore_backup():
-            try:
-                result = knowledge_store.import_backup(record["path"], current_version=VERSION)
-                restore_knowledge_config(result.get("config", {}))
-                error_message = None
-            except ValueError as error:
-                result = {}
-                error_message = str(error)
-            except Exception as error:
-                result = {}
-                error_message = f"Invalid backup format. {error}"
-
-            def finish_restore_backup():
-                if knowledge_window is None or not knowledge_window.winfo_exists():
-                    return
-                if error_message:
-                    set_detail(error_message)
-                    logger.error("Knowledge backup restore failed")
-                    return
-                refresh_knowledge_list()
-                refresh_backup_history()
-                migration_note = ""
-                if result.get("migration_required"):
-                    migration_note = "\nBackup migration may be required."
-                    logger.info("Knowledge backup migration required")
-                set_detail(
-                    "Knowledge backup restored\n\n"
-                    f"Imported: {result.get('imported', 0)} file(s)\n"
-                    f"Current Version: {result.get('current_version', VERSION)}\n"
-                    f"Backup Version: {result.get('app_version', 'Unknown')}"
-                    f"{migration_note}"
-                )
-                logger.info("Knowledge backup restored")
-
-            try:
-                knowledge_window.after(0, finish_restore_backup)
-            except Exception:
-                return
-
-        threading.Thread(target=run_restore_backup, daemon=True).start()
-
-    def export_knowledge():
-        default_dir = backup_directory()
-        default_dir.mkdir(parents=True, exist_ok=True)
-        target = filedialog.asksaveasfilename(
-            parent=knowledge_window,
-            title="Export Knowledge",
-            initialdir=str(default_dir),
-            initialfile="Aurora_Knowledge_Backup.json",
-            defaultextension=".json",
-            filetypes=[("JSON", "*.json")]
-        )
-        if not target:
-            return
-        set_detail("Exporting Knowledge...")
-
-        def run_export():
-            try:
-                output = knowledge_store.export_backup(
-                    target,
-                    config=knowledge_config_snapshot(),
-                    app_version=VERSION
-                )
-                error_message = None
-            except Exception as error:
-                output = None
-                error_message = str(error)
-
-            def finish_export():
-                if knowledge_window is None or not knowledge_window.winfo_exists():
-                    return
-                if error_message:
-                    set_detail(f"Knowledge export failed: {error_message}")
-                    logger.error(f"Knowledge export failed: {error_message}")
-                    return
-                refresh_backup_history()
-                set_detail(f"Knowledge exported:\n{output}")
-                logger.info("Knowledge exported")
-
-            try:
-                knowledge_window.after(0, finish_export)
-            except Exception:
-                return
-
-        threading.Thread(target=run_export, daemon=True).start()
-
-    def import_knowledge():
-        source = filedialog.askopenfilename(
-            parent=knowledge_window,
-            title="Import Knowledge",
-            filetypes=[("JSON", "*.json")]
-        )
-        if not source:
-            return
-        set_detail("Importing Knowledge...")
-
-        def run_import():
-            try:
-                result = knowledge_store.import_backup(source, current_version=VERSION)
-                restore_knowledge_config(result.get("config", {}))
-                error_message = None
-            except ValueError as error:
-                result = None
-                error_message = str(error)
-            except Exception as error:
-                result = None
-                error_message = f"Invalid knowledge backup file. {error}"
-
-            def finish_import():
-                if knowledge_window is None or not knowledge_window.winfo_exists():
-                    return
-                if error_message:
-                    set_detail(error_message)
-                    logger.error(f"Knowledge import failed: {error_message}")
-                    return
-                refresh_knowledge_list()
-                refresh_backup_history()
-                migration_note = "\nBackup migration may be required." if result.get("migration_required") else ""
-                if result.get("migration_required"):
-                    logger.info("Knowledge backup migration required")
-                set_detail(f"Knowledge imported: {result.get('imported', 0)} file(s){migration_note}")
-                logger.info("Knowledge imported")
-
-            try:
-                knowledge_window.after(0, finish_import)
-            except Exception:
-                return
-
-        threading.Thread(target=run_import, daemon=True).start()
-
-    def health_check_knowledge():
-        set_detail("Checking Knowledge Health...")
-
-        def run_health():
-            try:
-                health = knowledge_store.health_with_backups(backup_directory())
-                error_message = None
-            except Exception as error:
-                health = {}
-                error_message = str(error)
-
-            def finish_health():
-                if knowledge_window is None or not knowledge_window.winfo_exists():
-                    return
-                if error_message:
-                    set_detail(f"Knowledge health check failed: {error_message}")
-                    logger.error(f"Knowledge health check failed: {error_message}")
-                    return
-                set_detail(
-                    "Knowledge Health\n\n"
-                    f"Total Files: {health.get('total', 0)}\n"
-                    f"Enabled Files: {health.get('enabled', 0)}\n"
-                    f"Disabled Files: {health.get('disabled', 0)}\n"
-                    f"TXT Files: {health.get('txt', 0)}\n"
-                    f"Markdown Files: {health.get('md', 0)}\n"
-                    f"PDF Files: {health.get('pdf', 0)}\n"
-                    f"Retrievable Files: {health.get('retrievable', 0)}\n"
-                    f"Total Characters: {health.get('characters', 0)}\n"
-                    f"Missing Files: {health.get('missing', 0)}\n"
-                    f"Metadata Errors: {health.get('metadata_errors', 0)}\n"
-                    f"Embedding Indexed: {health.get('embedding_indexed', 0)}\n"
-                    f"Embedding Not Indexed: {health.get('embedding_not_indexed', 0)}\n"
-                    f"Embedding Stale: {health.get('embedding_stale', 0)}\n"
-                    f"Embedding Invalid: {health.get('embedding_invalid', 0)}\n"
-                    f"Embedding Needs Reindex: {health.get('embedding_needs_reindex', 0)}\n"
-                    f"Vector Index Entries: {health.get('vector_index', {}).get('entries', 0)}\n"
-                    f"Vector Index Missing: {health.get('vector_index', {}).get('missing', 0)}\n"
-                    f"Vector Index Stale: {health.get('vector_index', {}).get('stale', 0)}\n"
-                    f"Vector Index Invalid: {health.get('vector_index', {}).get('invalid', 0)}\n"
-                    f"Vector Index Orphaned: {health.get('vector_index', {}).get('orphaned', 0)}\n"
-                    f"Backups: {health.get('backup_count', 0)}\n"
-                    f"Last Backup: {health.get('last_backup_time', 'None')}\n"
-                    f"Latest Backup Version: {health.get('latest_backup_version', 'None')}"
-                )
-                logger.info("Knowledge health checked")
-
-            try:
-                knowledge_window.after(0, finish_health)
-            except Exception:
-                return
-
-        threading.Thread(target=run_health, daemon=True).start()
-
-    def show_index_status():
-        set_detail("Checking Vector Index...")
-
-        def run_index_health():
-            try:
-                records = knowledge_store.list_items()
-                health = knowledge_store.vector_index_health(records)
-                error_message = None
-            except Exception as error:
-                records = []
-                health = {}
-                error_message = str(error)
-
-            def finish_index_health():
-                if knowledge_window is None or not knowledge_window.winfo_exists():
-                    return
-                if error_message:
-                    set_detail(f"Vector index check failed: {error_message}")
-                    logger.error(f"Knowledge vector index check failed: {error_message}")
-                    return
-                set_detail(
-                    "Vector Index Status\n\n"
-                    f"Knowledge Enabled: {'Yes' if settings.get('knowledge.enabled', True) else 'No'}\n"
-                    f"Documents: {len(records)}\n"
-                    f"Index File: {health.get('path', '')}\n"
-                    f"Exists: {'Yes' if health.get('exists') else 'No'}\n"
-                    f"Format: {health.get('format', '')}\n"
-                    f"Version: {health.get('version', '')}\n"
-                    f"Updated: {health.get('updated_time', '') or 'Never'}\n"
-                    f"Entries: {health.get('entries', 0)}\n"
-                    f"Indexed: {health.get('indexed', 0)}\n"
-                    f"Missing: {health.get('missing', 0)}\n"
-                    f"Stale: {health.get('stale', 0)}\n"
-                    f"Invalid: {health.get('invalid', 0)}\n"
-                    f"Orphaned: {health.get('orphaned', 0)}\n"
-                    f"Needs Reindex: {health.get('needs_reindex', 0)}"
-                )
-                logger.info("Knowledge vector index checked")
-
-            try:
-                knowledge_window.after(0, finish_index_health)
-            except Exception:
-                return
-
-        threading.Thread(target=run_index_health, daemon=True).start()
-
-    def rebuild_vector_index():
-        if not messagebox.askyesno("Rebuild Vector Index", "Rebuild Knowledge vector index now?", parent=knowledge_window):
-            return
-        set_detail("Rebuilding Vector Index...")
-
-        def run_rebuild():
-            try:
-                result = knowledge_store.build_vector_index()
-                health = knowledge_store.vector_index_health()
-                error_message = None
-            except Exception as error:
-                result = {}
-                health = {}
-                error_message = str(error)
-
-            def finish_rebuild():
-                if knowledge_window is None or not knowledge_window.winfo_exists():
-                    return
-                if error_message:
-                    set_detail(f"Vector index rebuild failed: {error_message}")
-                    logger.error(f"Knowledge vector index rebuild failed: {error_message}")
-                    return
-                refresh_knowledge_list()
-                set_detail(
-                    "Vector Index Rebuilt\n\n"
-                    f"Indexed: {result.get('indexed', 0)}\n"
-                    f"Errors: {len(result.get('errors', []))}\n"
-                    f"Index File: {result.get('index_file', '')}\n"
-                    f"Entries: {health.get('entries', 0)}\n"
-                    f"Needs Reindex: {health.get('needs_reindex', 0)}"
-                )
-                logger.info("Knowledge vector index rebuilt")
-
-            try:
-                knowledge_window.after(0, finish_rebuild)
-            except Exception:
-                return
-
-        threading.Thread(target=run_rebuild, daemon=True).start()
-
-    def repair_knowledge_metadata():
-        set_detail("Repairing Knowledge Metadata...")
-
-        def run_repair():
-            try:
-                result = knowledge_store.repair_metadata()
-                error_message = None
-            except Exception as error:
-                result = {}
-                error_message = str(error)
-
-            def finish_repair():
-                if knowledge_window is None or not knowledge_window.winfo_exists():
-                    return
-                if error_message:
-                    set_detail(f"Knowledge repair failed: {error_message}")
-                    logger.error("Knowledge repair failed")
-                    return
-                refresh_knowledge_list()
-                set_detail(
-                    "Knowledge metadata repaired\n\n"
-                    f"Records repaired: {result.get('repaired', 0)}\n"
-                    f"Errors: {len(result.get('errors', []))}"
-                )
-                logger.info("Knowledge metadata repaired")
-                logger.info("Knowledge repair completed")
-
-            try:
-                knowledge_window.after(0, finish_repair)
-            except Exception:
-                return
-
-        threading.Thread(target=run_repair, daemon=True).start()
-
-    def preview_knowledge():
-        record = selected_record["record"]
-        if record is None:
-            set_detail("No knowledge file selected.")
-            return
-        set_detail("Loading preview...")
-
-        def run_preview():
-            try:
-                preview = knowledge_store.preview_details(
-                    record["id"],
-                    limit=settings.get("knowledge.preview_limit", 5000)
-                )
-            except (OSError, KeyError) as error:
-                preview = {
-                    "file_name": record.get("file_name", ""),
-                    "file_type": record.get("file_type", ""),
-                    "character_count": 0,
-                    "preview_count": 0,
-                    "truncated": False,
-                    "content": f"Preview failed: {error}"
-                }
-
-            def update_preview():
-                if knowledge_window is None or not knowledge_window.winfo_exists():
-                    return
-                preview_state["content"] = preview.get("content", "")
-                preview_state["matches"] = []
-                preview_state["current"] = -1
-                preview_state["keyword"] = ""
-                preview_search_label.configure(text="Matches: 0")
-                truncated_note = "\nContent preview truncated." if preview.get("truncated") else ""
-                set_detail(
-                    f"Preview: {preview.get('file_name', '')}\n"
-                    f"Type: {preview.get('file_type', '')}\n"
-                    f"Characters: {preview.get('character_count', 0)}\n"
-                    f"Preview Characters: {preview.get('preview_count', 0)}\n"
-                    f"Truncated: {'Yes' if preview.get('truncated') else 'No'}"
-                    f"{truncated_note}\n\n"
-                    f"{preview.get('content', '')}"
-                )
-                logger.info("Knowledge preview opened")
-
-            try:
-                knowledge_window.after(0, update_preview)
-            except Exception:
-                return
-
-        threading.Thread(target=run_preview, daemon=True).start()
-
-    def show_preview_match():
-        matches = preview_state["matches"]
-        current = preview_state["current"]
-        if not matches or current < 0:
-            preview_search_label.configure(text="Matches: 0")
-            return
-        position = matches[current]
-        preview_search_label.configure(
-            text=f"Matches: {len(matches)} | Current: {current + 1} / {len(matches)} | Position: {position}"
-        )
-
-    def search_preview_content():
-        keyword = preview_search_entry.get().strip()
-        preview_state["keyword"] = keyword
-        preview_state["matches"] = knowledge_store.search_preview(preview_state["content"], keyword)
-        preview_state["current"] = 0 if preview_state["matches"] else -1
-        show_preview_match()
-        logger.info("Knowledge preview searched")
-
-    def next_preview_match():
-        if not preview_state["matches"]:
-            show_preview_match()
-            return
-        preview_state["current"] = (preview_state["current"] + 1) % len(preview_state["matches"])
-        show_preview_match()
-        logger.info("Knowledge preview next match")
-
-    def clear_preview_search():
-        preview_search_entry.delete(0, "end")
-        preview_state["matches"] = []
-        preview_state["current"] = -1
-        preview_state["keyword"] = ""
-        preview_search_label.configure(text="Matches: 0")
-        logger.info("Knowledge preview search cleared")
-
-    ui_button(preview_search_frame, text="Search", width=85, command=search_preview_content, kind="primary").pack(side="left", padx=(0, 6))
-    ui_button(preview_search_frame, text="Next Match", width=105, command=next_preview_match).pack(side="left", padx=(0, 6))
-    ui_button(preview_search_frame, text="Clear", width=75, command=clear_preview_search).pack(side="left")
-
-    retrieval_frame = ctk.CTkFrame(knowledge_window, fg_color="transparent")
-    retrieval_frame.pack(fill="x", padx=25, pady=(0, 10))
-    retrieval_entry = ctk.CTkEntry(retrieval_frame, placeholder_text="Test retrieval prompt")
-    retrieval_entry.pack(side="left", fill="x", expand=True, padx=(0, 6))
-
-    def test_retrieval():
-        prompt = retrieval_entry.get().strip()
-        if not prompt:
-            set_detail("Please enter a test prompt.")
-            return
-        set_detail("Testing retrieval...")
-
-        def run_test():
-            try:
-                max_results = max(0, int(settings.get("knowledge.max_results", 3)))
-            except (TypeError, ValueError):
-                max_results = 3
-            items = knowledge_store.list_items()
-            summary = retrieval_summary(
-                prompt,
-                items,
-                max_results=max_results,
-                knowledge_enabled=settings.get("knowledge.enabled", True)
-            )
-
-            def update_result():
-                if knowledge_window is None or not knowledge_window.winfo_exists():
-                    return
-                results = summary.get("results", [])
-                lines = [
-                    "Summary",
-                    f"Prompt: {summary.get('prompt', '')}",
-                    f"Knowledge Enabled: {'Yes' if summary.get('knowledge_enabled') else 'No'}",
-                    f"Maximum Knowledge Results: {summary.get('max_results', 0)}",
-                    f"Matched Count: {summary.get('matched_count', 0)}",
-                    f"Injected Count: {summary.get('injected_count', 0)}",
-                    ""
-                ]
-                if not summary.get("knowledge_enabled"):
-                    lines.append("Knowledge Retrieval is disabled in Settings.")
-                elif not summary.get("enabled_available"):
-                    lines.append("No enabled knowledge files available.")
-                elif not results:
-                    lines.append("No knowledge matched this prompt.")
-                else:
-                    lines.append("Matched:")
-                    for item in results:
-                        lines.append(f"\n{item.get('file_name', 'Unknown')}")
-                        lines.append(f"Enabled: {'Yes' if item.get('enabled') else 'No'}")
-                        lines.append(f"Status: {item.get('status', 'OK')}")
-                        lines.append(f"Score: {item.get('score', 0)}")
-                        lines.append(f"Matched Keywords: {', '.join(item.get('keywords', [])) or 'None'}")
-                        if item.get("line"):
-                            lines.append(f"Line: {item.get('line')}")
-                        lines.append(f"Character Range: {item.get('start', 0)} - {item.get('end', 0)}")
-                        lines.append(f"Snippet:\n{item.get('snippet', '') or 'No text snippet available.'}")
-                        lines.append(f"Injected: {'Yes' if item.get('injected') else 'No'}")
-                        if not item.get("enabled"):
-                            lines.append("Status: skipped disabled file")
-                            logger.info("Knowledge skipped disabled file")
-                        elif item.get("status") == "Missing File":
-                            lines.append("Status: skipped missing file")
-                            logger.info("Knowledge skipped missing file")
-                        elif item.get("status") != "OK":
-                            lines.append("Status: skipped invalid file")
-                            logger.info("Knowledge skipped invalid file")
-                set_detail("\n".join(lines))
-                logger.info("Knowledge retrieval tested")
-                logger.info("Knowledge retrieval explained")
-
-            try:
-                knowledge_window.after(0, update_result)
-            except Exception:
-                return
-
-        threading.Thread(target=run_test, daemon=True).start()
-
-    ui_button(retrieval_frame, text="Test Retrieval", width=120, command=test_retrieval, kind="primary").pack(side="left")
-
-    maintenance_frame = ctk.CTkFrame(knowledge_window, fg_color="transparent")
-    maintenance_frame.pack(fill="x", padx=25, pady=(0, 10))
-    for column in range(3):
-        maintenance_frame.grid_columnconfigure(column, weight=1)
-    maintenance_actions = [
-        ("Create Backup", create_knowledge_backup, "secondary"),
-        ("Export", export_knowledge, "secondary"),
-        ("Import", import_knowledge, "secondary"),
-        ("Health Check", health_check_knowledge, "primary"),
-        ("Repair Metadata", repair_knowledge_metadata, "secondary")
-    ]
-    for index, (label_text, command, kind) in enumerate(maintenance_actions):
-        ui_button(maintenance_frame, text=label_text, command=command, kind=kind).grid(
-            row=index // 3,
-            column=index % 3,
-            sticky="ew",
-            padx=4,
-            pady=4
-        )
-
-    index_frame = ctk.CTkFrame(knowledge_window, fg_color="transparent")
-    index_frame.pack(fill="x", padx=25, pady=(0, 10))
-    ui_button(index_frame, text="Index Status", command=show_index_status).pack(side="left", expand=True, fill="x", padx=(0, 6))
-    ui_button(index_frame, text="Rebuild Index", command=rebuild_vector_index, kind="primary").pack(side="left", expand=True, fill="x", padx=6)
-
-    backup_frame = ctk.CTkFrame(knowledge_window, fg_color="transparent")
-    backup_frame.pack(fill="x", padx=25, pady=(0, 10))
-    backup_selector = ctk.CTkOptionMenu(
-        backup_frame,
-        values=["No backups available"],
-        width=500,
-        command=select_backup
-    )
-    backup_selector.pack(side="left", fill="x", expand=True, padx=(0, 6))
-    ui_button(backup_frame, text="Restore Backup", width=130, command=restore_knowledge_backup).pack(side="left", padx=(0, 6))
-    ui_button(backup_frame, text="Delete Backup", width=120, command=delete_knowledge_backup, kind="danger").pack(side="left")
-
-    buttons = ctk.CTkFrame(knowledge_window, fg_color="transparent")
-    buttons.pack(fill="x", padx=25, pady=(0, 20))
-    for column in range(3):
-        buttons.grid_columnconfigure(column, weight=1)
-    knowledge_actions = [
-        ("Add Knowledge", add_knowledge, "primary"),
-        ("Delete Knowledge", delete_knowledge, "danger"),
-        ("Toggle Enabled", toggle_knowledge_enabled, "secondary"),
-        ("Preview", preview_knowledge, "secondary"),
-        ("Refresh", refresh_knowledge_list, "secondary")
-    ]
-    for index, (label_text, command, kind) in enumerate(knowledge_actions):
-        ui_button(buttons, text=label_text, command=command, kind=kind).grid(
-            row=index // 3,
-            column=index % 3,
-            sticky="ew",
-            padx=4,
-            pady=4
-        )
-
-    def close_knowledge():
+    def clear_knowledge_window():
         global knowledge_window
-        knowledge_window.destroy()
         knowledge_window = None
 
-    ui_button(buttons, text=TEXT["close"], command=close_knowledge).grid(row=1, column=2, sticky="ew", padx=4, pady=4)
-    knowledge_window.protocol("WM_DELETE_WINDOW", close_knowledge)
-    refresh_knowledge_list()
-    refresh_backup_history()
+    knowledge_window = KnowledgeWindow(
+        app,
+        knowledge_store=knowledge_store,
+        settings=settings,
+        text=TEXT,
+        translate=t,
+        logger=logger,
+        version=VERSION,
+        retrieval_summary=retrieval_summary,
+        on_close=clear_knowledge_window
+    )
+
+def build_persona_final_prompt_preview(prompt, persona_data):
+    try:
+        max_injection = max(1, int(settings.get("memory.max_injection", 5)))
+        min_importance = max(0, float(settings.get("memory.min_importance", 0)))
+    except (TypeError, ValueError):
+        max_injection, min_importance = 5, 0
+    memories = retrieve_memories(
+        prompt,
+        memory_store.list_memories(),
+        max_results=max_injection,
+        min_importance=min_importance
+    ) if prompt else []
+    knowledge_items = []
+    if prompt and settings.get("knowledge.enabled", True):
+        try:
+            max_knowledge = max(0, int(settings.get("knowledge.max_results", 3)))
+        except (TypeError, ValueError):
+            max_knowledge = 3
+        knowledge_items = knowledge_store.retrieve(prompt, max_results=max_knowledge)
+    active_persona = persona_data if settings.get("persona.enabled", True) else None
+    text, warning, _total_tokens = build_prompt_preview_text(
+        prompt,
+        memories,
+        knowledge_items,
+        active_persona,
+        []
+    )
+    return text, warning
 
 
 def show_persona():
@@ -3445,331 +2075,23 @@ def show_persona():
         persona_window.lift()
         return
 
-    persona = persona_store.load()
     logger.info("Persona loaded")
     logger.info("Persona loaded timestamp updated")
-    persona_state = {
-        "last_loaded_time": persona.get("last_loaded_time", "Never loaded."),
-        "last_updated_time": persona.get("last_updated_time", "Never loaded.")
-    }
-    persona_window = ctk.CTkToplevel(app)
-    persona_window.title(TEXT["persona"])
-    persona_window.geometry("860x720")
-    persona_window.minsize(720, 560)
-    persona_window.transient(app)
 
-    ctk.CTkLabel(
-        persona_window,
-        text=TEXT["persona"],
-        font=("Microsoft YaHei", 22, "bold")
-    ).pack(anchor="w", padx=25, pady=(20, 12))
-
-    persona_status_label = ctk.CTkLabel(
-        persona_window,
-        text="",
-        font=("Microsoft YaHei", 12),
-        text_color="gray"
-    )
-    persona_status_label.pack(anchor="w", padx=25, pady=(0, 8))
-
-    content = ctk.CTkScrollableFrame(persona_window)
-    content.pack(fill="both", expand=True, padx=25, pady=(0, 12))
-
-    def add_label(text):
-        ctk.CTkLabel(
-            content,
-            text=text,
-            font=("Microsoft YaHei", 13, "bold")
-        ).pack(anchor="w", padx=10, pady=(10, 4))
-
-    add_label(TEXT["persona_name"])
-    name_entry = ctk.CTkEntry(content)
-    name_entry.pack(fill="x", padx=10, pady=(0, 6))
-    name_entry.insert(0, persona.get("name", "Aurora"))
-
-    add_label(TEXT["persona_description"])
-    description_box = ctk.CTkTextbox(content, height=80, wrap="word")
-    description_box.pack(fill="x", padx=10, pady=(0, 6))
-    description_box.insert("1.0", persona.get("description", ""))
-
-    add_label(TEXT["persona_style"])
-    style_box = ctk.CTkTextbox(content, height=80, wrap="word")
-    style_box.pack(fill="x", padx=10, pady=(0, 6))
-    style_box.insert("1.0", persona.get("style", ""))
-
-    add_label(TEXT["persona_rules"])
-    rules_box = ctk.CTkTextbox(content, height=160, wrap="word")
-    rules_box.pack(fill="both", expand=True, padx=10, pady=(0, 6))
-    rules_box.insert("1.0", "\n".join(persona.get("rules", [])))
-
-    character_label = ctk.CTkLabel(content, text="", font=("Microsoft YaHei", 12), text_color="gray")
-    character_label.pack(anchor="w", padx=10, pady=(0, 6))
-
-    add_label(t("test_persona"))
-    test_prompt_entry = ctk.CTkEntry(content, placeholder_text=t("knowledge_test_prompt"))
-    test_prompt_entry.pack(fill="x", padx=10, pady=(0, 6))
-
-    preview_box = ctk.CTkTextbox(content, height=180, wrap="word")
-    preview_box.pack(fill="both", expand=True, padx=10, pady=(0, 6))
-    preview_box.insert("1.0", "")
-    preview_box.configure(state="disabled")
-
-    status_label = ctk.CTkLabel(
-        persona_window,
-        text="",
-        font=("Microsoft YaHei", 12),
-        text_color="gray"
-    )
-    status_label.pack(anchor="w", padx=25, pady=(0, 8))
-
-    def load_persona_into_fields(data):
-        persona_state["last_loaded_time"] = data.get("last_loaded_time", persona_state["last_loaded_time"])
-        persona_state["last_updated_time"] = data.get("last_updated_time", persona_state["last_updated_time"])
-        name_entry.delete(0, "end")
-        name_entry.insert(0, data.get("name", "Aurora"))
-        description_box.delete("1.0", "end")
-        description_box.insert("1.0", data.get("description", ""))
-        style_box.delete("1.0", "end")
-        style_box.insert("1.0", data.get("style", ""))
-        rules_box.delete("1.0", "end")
-        rules_box.insert("1.0", "\n".join(data.get("rules", [])))
-        update_persona_status()
-
-    def current_persona_from_fields():
-        return {
-            "name": name_entry.get().strip(),
-            "description": description_box.get("1.0", "end").strip(),
-            "style": style_box.get("1.0", "end").strip(),
-            "rules": [
-                line.strip()
-                for line in rules_box.get("1.0", "end").splitlines()
-                if line.strip()
-            ],
-            "last_loaded_time": persona_state.get("last_loaded_time", "Never loaded."),
-            "last_updated_time": persona_state.get("last_updated_time", "Never loaded.")
-        }
-
-    def set_preview(text):
-        preview_box.configure(state="normal")
-        preview_box.delete("1.0", "end")
-        preview_box.insert("1.0", text)
-        preview_box.configure(state="disabled")
-
-    def update_persona_status():
-        data = current_persona_from_fields()
-        status = persona_store.status(settings.get("persona.enabled", True), data)
-        persona_status_label.configure(
-            text=(
-                f"Current Status: Persona: {'Enabled' if status['enabled'] else 'Disabled'} | "
-                f"Name: {status['name']} | Rules Count: {status['rules_count']} | "
-                f"Last Loaded: {status['last_loaded_time']} | Last Updated: {status['last_updated_time']}"
-            )
-        )
-        character_label.configure(
-            text=(
-                f"Characters: name {len(data.get('name', ''))}, "
-                f"description {len(data.get('description', ''))}, "
-                f"style {len(data.get('style', ''))}, "
-                f"rules {sum(len(rule) for rule in data.get('rules', []))}"
-            )
-        )
-
-    def validate_current_persona():
-        data = current_persona_from_fields()
-        persona_store.validate(data)
-        return data
-
-    def save_persona():
-        try:
-            data = validate_current_persona()
-            data = persona_store.save(data)
-            persona_state["last_loaded_time"] = data.get("last_loaded_time", persona_state["last_loaded_time"])
-            persona_state["last_updated_time"] = data.get("last_updated_time", persona_state["last_updated_time"])
-            update_persona_status()
-            status_label.configure(text="\u4eba\u683c\u5df2\u4fdd\u5b58", text_color="#32CD32")
-            logger.info("Persona updated")
-        except ValueError as error:
-            status_label.configure(text=str(error), text_color="red")
-            logger.info("Persona validation failed")
-        except Exception as error:
-            status_label.configure(text="Invalid Persona format.", text_color="red")
-            logger.error(f"Persona update failed: {error}")
-
-    def reset_persona():
-        if not messagebox.askyesno(TEXT["persona"], "\u662f\u5426\u6062\u590d\u9ed8\u8ba4 Persona\uff1f", parent=persona_window):
-            return
-        data = persona_store.reset()
-        persona_state["last_loaded_time"] = data.get("last_loaded_time", persona_state["last_loaded_time"])
-        persona_state["last_updated_time"] = data.get("last_updated_time", persona_state["last_updated_time"])
-        load_persona_into_fields(data)
-        status_label.configure(text="\u5df2\u6062\u590d\u9ed8\u8ba4 Persona", text_color="#32CD32")
-        logger.info("Persona reset")
-
-    def edit_persona():
-        status_label.configure(text="\u53ef\u7f16\u8f91 Persona", text_color="gray")
-        update_persona_status()
-
-    def add_rule():
-        rules_box.insert("end", "\n")
-        update_persona_status()
-        logger.info("Persona rules updated")
-
-    def delete_rule():
-        lines = [
-            line for line in rules_box.get("1.0", "end").splitlines()
-            if line.strip()
-        ]
-        if lines:
-            lines.pop()
-        rules_box.delete("1.0", "end")
-        rules_box.insert("1.0", "\n".join(lines))
-        update_persona_status()
-        logger.info("Persona rules updated")
-
-    def preview_persona_prompt():
-        set_preview("Loading Persona preview...")
-
-        def run_preview():
-            try:
-                data = validate_current_persona()
-                text = persona_store.preview_prompt(data)
-                error_message = None
-            except Exception as error:
-                text = ""
-                error_message = str(error)
-
-            def finish_preview():
-                if persona_window is None or not persona_window.winfo_exists():
-                    return
-                if error_message:
-                    set_preview(error_message)
-                    logger.info("Persona validation failed")
-                    return
-                set_preview(text)
-                logger.info("Persona preview opened")
-
-            try:
-                persona_window.after(0, finish_preview)
-            except Exception:
-                return
-
-        threading.Thread(target=run_preview, daemon=True).start()
-
-    def test_persona_prompt():
-        set_preview("Testing Persona...")
-
-        def run_test():
-            try:
-                data = validate_current_persona()
-                text = persona_store.test_prompt(test_prompt_entry.get().strip(), data)
-                error_message = None
-            except Exception as error:
-                text = ""
-                error_message = str(error)
-
-            def finish_test():
-                if persona_window is None or not persona_window.winfo_exists():
-                    return
-                if error_message:
-                    set_preview(error_message)
-                    logger.info("Persona validation failed")
-                    return
-                set_preview(text)
-                logger.info("Persona tested")
-
-            try:
-                persona_window.after(0, finish_test)
-            except Exception:
-                return
-
-        threading.Thread(target=run_test, daemon=True).start()
-
-    def preview_final_prompt():
-        set_preview("Building Final Chat Context Preview...")
-        logger.info("Context preview opened")
-
-        def run_final_preview():
-            try:
-                data = validate_current_persona()
-                prompt = test_prompt_entry.get().strip()
-                try:
-                    max_injection = max(1, int(settings.get("memory.max_injection", 5)))
-                    min_importance = max(0, float(settings.get("memory.min_importance", 0)))
-                except (TypeError, ValueError):
-                    max_injection, min_importance = 5, 0
-                memories = retrieve_memories(
-                    prompt,
-                    memory_store.list_memories(),
-                    max_results=max_injection,
-                    min_importance=min_importance
-                ) if prompt else []
-                knowledge_items = []
-                if prompt and settings.get("knowledge.enabled", True):
-                    try:
-                        max_knowledge = max(0, int(settings.get("knowledge.max_results", 3)))
-                    except (TypeError, ValueError):
-                        max_knowledge = 3
-                    knowledge_items = knowledge_store.retrieve(
-                        prompt,
-                        max_results=max_knowledge
-                    )
-                active_persona = data if settings.get("persona.enabled", True) else None
-                text, warning, _total_tokens = build_prompt_preview_text(
-                    prompt,
-                    memories,
-                    knowledge_items,
-                    active_persona,
-                    []
-                )
-                error_message = None
-            except Exception as error:
-                text = ""
-                warning = False
-                error_message = str(error)
-
-            def finish_final_preview():
-                if persona_window is None or not persona_window.winfo_exists():
-                    return
-                if error_message:
-                    set_preview(error_message)
-                    logger.info("Persona validation failed")
-                    return
-                set_preview(text)
-                logger.info("Final prompt preview generated")
-                logger.info("Knowledge retrieval explained")
-                if warning:
-                    logger.info("Context size warning")
-
-            try:
-                persona_window.after(0, finish_final_preview)
-            except Exception:
-                return
-
-        threading.Thread(target=run_final_preview, daemon=True).start()
-
-    buttons = ctk.CTkFrame(persona_window, fg_color="transparent")
-    buttons.pack(fill="x", padx=25, pady=(0, 20))
-    ctk.CTkButton(buttons, text=TEXT["edit_persona"], command=edit_persona).pack(side="left", expand=True, fill="x", padx=(0, 6))
-    ctk.CTkButton(buttons, text=TEXT["save_persona"], command=save_persona).pack(side="left", expand=True, fill="x", padx=6)
-    ctk.CTkButton(buttons, text=TEXT["reset_persona"], command=reset_persona).pack(side="left", expand=True, fill="x", padx=6)
-    ctk.CTkButton(buttons, text="Add Rule", command=add_rule).pack(side="left", expand=True, fill="x", padx=6)
-    ctk.CTkButton(buttons, text="Delete Rule", command=delete_rule).pack(side="left", expand=True, fill="x", padx=6)
-
-    preview_buttons = ctk.CTkFrame(persona_window, fg_color="transparent")
-    preview_buttons.pack(fill="x", padx=25, pady=(0, 12))
-    ctk.CTkButton(preview_buttons, text="Preview Persona Prompt", command=preview_persona_prompt).pack(side="left", expand=True, fill="x", padx=(0, 6))
-    ctk.CTkButton(preview_buttons, text="Test Persona", command=test_persona_prompt).pack(side="left", expand=True, fill="x", padx=6)
-    ctk.CTkButton(preview_buttons, text="Preview Final Prompt", command=preview_final_prompt).pack(side="left", expand=True, fill="x", padx=6)
-
-    def close_persona():
+    def clear_persona_window():
         global persona_window
-        persona_window.destroy()
         persona_window = None
 
-    ctk.CTkButton(buttons, text=TEXT["close"], command=close_persona).pack(side="left", expand=True, fill="x", padx=(6, 0))
-    persona_window.protocol("WM_DELETE_WINDOW", close_persona)
-    update_persona_status()
-
+    persona_window = PersonaWindow(
+        app,
+        persona_store=persona_store,
+        settings=settings,
+        text=TEXT,
+        translate=t,
+        logger=logger,
+        final_prompt_preview_callback=build_persona_final_prompt_preview,
+        on_close=clear_persona_window
+    )
 
 def show_remote_access():
     global remote_window
@@ -3777,871 +2099,6 @@ def show_remote_access():
         remote_window.focus()
         remote_window.lift()
         return
-
-    logger.info("Remote configuration loaded")
-    authentication_manager.load()
-    logger.info("Authentication configuration loaded")
-    logger.info("Authentication framework initialized")
-    logger.info("Credential diagnostics opened")
-    remote_manager.update(
-        enabled=settings.get("remote.enabled", False),
-        mode=settings.get("remote.mode", "local"),
-        auth_required=settings.get("remote.auth_required", True),
-        auth_enabled=settings.get("remote.auth_enabled", False),
-        authentication_type=settings.get("remote.authentication_type", "none"),
-        token_configured=settings.get("remote.token_configured", False),
-        credential_storage=settings.get("remote.credential_storage", "windows_credential_manager"),
-        secure_storage_configured=settings.get("remote.secure_storage_configured", False),
-        secure_storage_available=settings.get("remote.secure_storage_available", False),
-        credential_test_passed=settings.get("remote.credential_test_passed", False),
-        credential_last_check=settings.get("remote.credential_last_check", None),
-        credential_last_result=settings.get("remote.credential_last_result", None),
-        credential_command_status=settings.get("remote.credential_command_status", "Unavailable"),
-        credential_last_operation=settings.get("remote.credential_last_operation", None),
-        credential_operation_result=settings.get("remote.credential_operation_result", None),
-        credential_duration_ms=settings.get("remote.credential_duration_ms", 0),
-        credential_error_suggestion=settings.get("remote.credential_error_suggestion", None),
-        last_storage_error=settings.get("remote.last_storage_error", None),
-        credential_history=settings.get("remote.credential_history", []),
-        credential_steps=settings.get("remote.credential_steps", []),
-        network_history=settings.get("remote.network_history", []),
-        security_history=settings.get("remote.security_history", []),
-        authentication_history=settings.get("remote.authentication_history", []),
-        remote_history=settings.get("remote.remote_history", []),
-        lan_status_page_enabled=settings.get("remote.lan_status_page_enabled", False),
-        lan_status_port=settings.get("remote.lan_status_port", DEFAULT_LAN_STATUS_PORT),
-        lan_status_user_confirmed=settings.get("remote.lan_status_user_confirmed", False),
-        lan_chat_enabled=settings.get("remote.lan_chat_enabled", False),
-        lan_chat_port=settings.get("remote.lan_chat_port", DEFAULT_LAN_STATUS_PORT),
-        mobile_access_confirmed=settings.get("remote.mobile_access_confirmed", False),
-        mobile_chat_timeout=settings.get("mobile_chat_timeout", 60),
-        mobile_debug_mode=settings.get("mobile_debug_mode", False),
-        mobile_response_limit=settings.get("mobile_response_limit", 12000),
-        selected_lan_ip=settings.get("remote.selected_lan_ip", ""),
-        selected_adapter=settings.get("remote.selected_adapter", ""),
-        last_mobile_error=settings.get("remote.last_mobile_error", ""),
-        last_mobile_stage=settings.get("remote.last_mobile_stage", ""),
-        last_mobile_status=settings.get("remote.last_mobile_status", ""),
-        last_mobile_duration_ms=settings.get("remote.last_mobile_duration_ms", 0),
-        last_mobile_model=settings.get("remote.last_mobile_model", ""),
-        last_mobile_capability=settings.get("remote.last_mobile_capability", ""),
-        last_mobile_ollama_url=settings.get("remote.last_mobile_ollama_url", ""),
-        last_mobile_client=settings.get("remote.last_mobile_client", ""),
-        last_mobile_time=settings.get("remote.last_mobile_time", ""),
-        authentication_configured=settings.get("remote.authentication_configured", False),
-        lan_ready=settings.get("remote.lan_ready", False),
-        ios_access_ready=settings.get("remote.ios_access_ready", False),
-        tailscale_ready=settings.get("remote.tailscale_ready", False),
-        user_confirmed=settings.get("remote.user_confirmed", False),
-        security_confirmed=settings.get("remote.security_confirmed", False)
-    )
-    remote_window = ctk.CTkToplevel(app)
-    remote_window.title(TEXT["remote_access"])
-    remote_window.geometry("760x680")
-    remote_window.minsize(620, 520)
-    remote_window.transient(app)
-
-    ctk.CTkLabel(
-        remote_window,
-        text=TEXT["remote_access"],
-        font=("Microsoft YaHei", 22, "bold")
-    ).pack(anchor="w", padx=25, pady=(20, 12))
-
-    status_label = ctk.CTkLabel(
-        remote_window,
-        text=TEXT["checking"],
-        font=("Microsoft YaHei", 12),
-        text_color="gray"
-    )
-    status_label.pack(anchor="w", padx=25, pady=(0, 10))
-
-    content = ctk.CTkScrollableFrame(remote_window)
-    content.pack(fill="both", expand=True, padx=25, pady=(0, 12))
-    rows = {}
-
-    def add_status_row(key, label):
-        row = ctk.CTkFrame(content, fg_color="transparent")
-        row.pack(fill="x", padx=15, pady=8)
-        ctk.CTkLabel(
-            row,
-            text=label,
-            font=("Microsoft YaHei", 13, "bold"),
-            anchor="w"
-        ).pack(side="left")
-        value = ctk.CTkLabel(
-            row,
-            text="--",
-            font=("Microsoft YaHei", 13),
-            anchor="e"
-        )
-        value.pack(side="right")
-        rows[key] = value
-
-    add_status_row("local_address", TEXT["local_address"])
-    add_status_row("lan_address", TEXT["lan_address"])
-    add_status_row("selected_adapter", TEXT["selected_network_adapter"])
-    add_status_row("selected_lan_ip", TEXT["selected_lan_ip"])
-    add_status_row("rejected_interfaces", TEXT["rejected_interfaces"])
-    add_status_row("network_available", TEXT["network_available"])
-    add_status_row("remote_status", TEXT["remote_status"])
-    add_status_row("security_status", TEXT["security_status"])
-    add_status_row("mode", TEXT["remote_mode"])
-
-    def add_section_title(text):
-        ctk.CTkLabel(
-            content,
-            text=text,
-            font=("Microsoft YaHei", 15, "bold"),
-            anchor="w"
-        ).pack(anchor="w", padx=15, pady=(16, 6))
-
-    safety_frame = ctk.CTkFrame(content, fg_color="#3A1F1F")
-    safety_frame.pack(fill="x", padx=15, pady=(10, 8))
-    ctk.CTkLabel(
-        safety_frame,
-        text=TEXT["do_not_expose_warning"],
-        font=("Microsoft YaHei", 13, "bold"),
-        text_color="#FFB3B3",
-        anchor="w",
-        justify="left"
-    ).pack(fill="x", padx=12, pady=10)
-
-    add_section_title(TEXT["safety_gate"])
-    safety_warning_box = ctk.CTkTextbox(content, height=90, wrap="word")
-    safety_warning_box.pack(fill="x", padx=15, pady=(4, 8))
-    safety_warning_box.insert("1.0", f"{TEXT['remote_safety_check']}\n\n{TEXT['remote_access_warning']}")
-    safety_warning_box.configure(state="disabled")
-    for key, label in (
-        ("gate_network", TEXT["network"]),
-        ("gate_lan", TEXT["lan"]),
-        ("gate_auth_required", TEXT["required"]),
-        ("gate_auth_configured", TEXT["configured"]),
-        ("gate_security_confirmed", TEXT["security_confirmation"]),
-        ("gate_overall", TEXT["overall"]),
-    ):
-        add_status_row(key, label)
-
-    add_section_title(TEXT["lan_ios_readiness"])
-    for key, label in (
-        ("ios_same_wifi_status", TEXT["ios_same_wifi_status"]),
-        ("tailscale_readiness", TEXT["tailscale_readiness"]),
-        ("remote_safety_status", TEXT["remote_safety_status"]),
-        ("local_preview", TEXT["local_preview"]),
-        ("lan_preview", TEXT["lan_preview"]),
-    ):
-        add_status_row(key, label)
-
-    ios_note_box = ctk.CTkTextbox(content, height=90, wrap="word")
-    ios_note_box.pack(fill="x", padx=15, pady=(4, 8))
-    ios_note_box.insert("1.0", f"{TEXT['iphone_same_wifi_access']}:\n{TEXT['iphone_same_wifi_note']}")
-    ios_note_box.configure(state="disabled")
-
-    add_section_title(TEXT["ios_compatibility"])
-    for key, label in (
-        ("ios_safari_supported", TEXT["safari_supported"]),
-        ("ios_android_required", TEXT["android_required"]),
-        ("ios_same_wifi_access", TEXT["same_wifi_access"]),
-        ("ios_cellular_access", TEXT["cellular_access"]),
-    ):
-        add_status_row(key, label)
-
-    add_section_title(TEXT["tailscale_readiness"])
-    add_status_row("tailscale_status", TEXT["tailscale_readiness"])
-
-    tailscale_note_box = ctk.CTkTextbox(content, height=70, wrap="word")
-    tailscale_note_box.pack(fill="x", padx=15, pady=(4, 8))
-    tailscale_note_box.insert("1.0", TEXT["tailscale_note"])
-    tailscale_note_box.configure(state="disabled")
-
-    add_section_title(TEXT["lan_access_preparation"])
-    checklist_box = ctk.CTkTextbox(content, height=130, wrap="word")
-    checklist_box.pack(fill="x", padx=15, pady=(4, 8))
-    checklist_box.configure(state="disabled")
-
-    add_section_title(TEXT["lan_status_page"])
-    for key, label in (
-        ("lan_status_state", TEXT["status"]),
-        ("lan_status_local_url", TEXT["local_url"]),
-        ("lan_status_lan_url", TEXT["lan_url"]),
-    ):
-        add_status_row(key, label)
-
-    add_section_title(TEXT["lan_chat"])
-    for key, label in (
-        ("lan_chat_state", TEXT["status"]),
-        ("lan_chat_url", TEXT["mobile_url"]),
-        ("lan_chat_confirmation", TEXT["mobile_access_confirmation"]),
-    ):
-        add_status_row(key, label)
-
-    add_section_title(TEXT["ai_configuration"])
-    for key, label in (
-        ("ai_chat_model", TEXT["chat_model"]),
-        ("ai_embedding_model", TEXT["embedding_model"]),
-        ("ai_model_capability", TEXT["model_capability"]),
-        ("ai_mobile_chat_ready", TEXT["mobile_chat"]),
-    ):
-        add_status_row(key, label)
-
-    add_section_title(TEXT["mobile_debug_panel"])
-    for key, label in (
-        ("mobile_debug_client", TEXT["client"]),
-        ("mobile_debug_stage", TEXT["stage"]),
-        ("mobile_debug_status", TEXT["status"]),
-        ("mobile_debug_duration", TEXT["duration"]),
-        ("mobile_debug_model", TEXT["model_name"]),
-        ("mobile_debug_capability", TEXT["model_capability"]),
-        ("mobile_debug_ollama_url", TEXT["ollama_url"]),
-        ("mobile_debug_error", TEXT["error"]),
-    ):
-        add_status_row(key, label)
-
-    firewall_notice_box = ctk.CTkTextbox(content, height=70, wrap="word")
-    firewall_notice_box.pack(fill="x", padx=15, pady=(4, 8))
-    firewall_notice_box.insert("1.0", TEXT["firewall_notice"])
-    firewall_notice_box.configure(state="disabled")
-    logger.info("Firewall notice displayed")
-
-    add_section_title(TEXT["iphone_same_wifi_test"])
-    iphone_guide_box = ctk.CTkTextbox(content, height=110, wrap="word")
-    iphone_guide_box.pack(fill="x", padx=15, pady=(4, 8))
-    iphone_guide_box.insert("1.0", TEXT["iphone_same_wifi_steps"])
-    iphone_guide_box.configure(state="disabled")
-
-    add_section_title(TEXT["security_checklist"])
-    for key, label in (
-        ("security_remote_access", TEXT["remote_access_label"]),
-        ("security_current_mode", TEXT["current_mode"]),
-        ("security_authentication", TEXT["authentication"]),
-        ("security_public_exposure", TEXT["public_exposure"]),
-        ("security_firewall", TEXT["firewall"]),
-    ):
-        add_status_row(key, label)
-
-    add_section_title(TEXT["remote_health"])
-    for key, label in (
-        ("health_network", TEXT["network"]),
-        ("health_local_access", TEXT["local_access"]),
-        ("health_lan_access", TEXT["lan_access"]),
-        ("health_lan_readiness", TEXT["lan_readiness"]),
-        ("health_ios_access", TEXT["ios_access"]),
-        ("health_cellular_access", TEXT["cellular_access"]),
-        ("health_security", TEXT["security"]),
-    ):
-        add_status_row(key, label)
-
-    add_section_title(TEXT["authentication_status"])
-    add_status_row("auth_required", TEXT["required"])
-    add_status_row("auth_configured", TEXT["configured"])
-
-    add_section_title(TEXT["authentication"])
-    for key, label in (
-        ("auth_required_detail", TEXT["authentication_required"]),
-        ("auth_status_detail", TEXT["authentication_status"]),
-        ("auth_type_detail", TEXT["authentication_type"]),
-        ("token_status_detail", TEXT["token_status"]),
-        ("token_configured_detail", TEXT["configured"]),
-        ("token_last_updated_detail", TEXT["token_last_updated"]),
-    ):
-        add_status_row(key, label)
-
-    auth_note_box = ctk.CTkTextbox(content, height=85, wrap="word")
-    auth_note_box.pack(fill="x", padx=15, pady=(4, 8))
-    auth_note_box.insert(
-        "1.0",
-        (
-            f"{TEXT['authentication_type']}:\n"
-            f"{TEXT['none']}\n"
-            f"{TEXT['token_auth_future']}\n"
-            f"{TEXT['password_auth_future']}\n\n"
-            f"{TEXT['auth_secrets_plaintext_warning']}"
-        )
-    )
-    auth_note_box.configure(state="disabled")
-
-    add_section_title(TEXT["token_authentication"])
-    for key, label in (
-        ("token_auth_status", TEXT["token_status"]),
-        ("token_auth_configured", TEXT["configured"]),
-        ("token_auth_last_updated", TEXT["token_last_updated"]),
-        ("auth_readiness_required", TEXT["required"]),
-        ("auth_readiness_token", TEXT["token"]),
-        ("auth_readiness_storage", TEXT["storage"]),
-        ("auth_readiness_security", TEXT["security"]),
-        ("auth_readiness_overall", TEXT["overall"]),
-    ):
-        add_status_row(key, label)
-
-    token_note_box = ctk.CTkTextbox(content, height=95, wrap="word")
-    token_note_box.pack(fill="x", padx=15, pady=(4, 8))
-    token_note_box.insert(
-        "1.0",
-        (
-            f"{TEXT['token_setup_note']}\n\n"
-            f"{TEXT['never_share_token']}\n"
-            f"{TEXT['store_credentials_securely']}"
-        )
-    )
-    token_note_box.configure(state="disabled")
-
-    add_section_title(TEXT["credential_storage"])
-    for key, label in (
-        ("credential_storage_status", TEXT["storage_status"]),
-        ("credential_secure_configured", TEXT["secure_storage_configured"]),
-        ("credential_storage_type", TEXT["storage_type"]),
-    ):
-        add_status_row(key, label)
-
-    credential_note_box = ctk.CTkTextbox(content, height=125, wrap="word")
-    credential_note_box.pack(fill="x", padx=15, pady=(4, 8))
-    credential_note_box.insert(
-        "1.0",
-        (
-            f"{TEXT['recommended']}:\n"
-            f"{TEXT['windows_credential_manager']}\n\n"
-            f"{TEXT['future_option']}:\n"
-            f"{TEXT['encrypted_local_storage']}\n\n"
-            f"{TEXT['not_recommended']}:\n"
-            f"{TEXT['plain_text_file']}\n\n"
-            f"{TEXT['auth_secrets_plaintext_warning']}"
-        )
-    )
-    credential_note_box.configure(state="disabled")
-
-    add_section_title(TEXT["credential_storage_provider"])
-    for key, label in (
-        ("credential_provider", TEXT["provider"]),
-        ("credential_provider_status", TEXT["status"]),
-        ("credential_test_status", TEXT["test_status"]),
-        ("credential_last_check", TEXT["last_check_time"]),
-    ):
-        add_status_row(key, label)
-
-    provider_note_box = ctk.CTkTextbox(content, height=70, wrap="word")
-    provider_note_box.pack(fill="x", padx=15, pady=(4, 8))
-    provider_note_box.insert("1.0", TEXT["windows_credential_manager_note"])
-    provider_note_box.configure(state="disabled")
-
-    add_section_title(TEXT["credential_storage_diagnostics"])
-    for key, label in (
-        ("diagnostic_provider", TEXT["provider"]),
-        ("diagnostic_storage_status", TEXT["storage_status"]),
-        ("diagnostic_availability", TEXT["availability"]),
-        ("diagnostic_command_status", TEXT["command_status"]),
-        ("diagnostic_last_check", TEXT["last_check_time"]),
-        ("diagnostic_last_result", TEXT["last_result"]),
-        ("diagnostic_last_error", TEXT["last_error"]),
-        ("diagnostic_last_operation", TEXT["last_operation"]),
-        ("diagnostic_operation_result", TEXT["operation_result"]),
-        ("diagnostic_duration", TEXT["duration"]),
-        ("diagnostic_suggestion", TEXT["suggestion"]),
-    ):
-        add_status_row(key, label)
-
-    credential_steps_box = ctk.CTkTextbox(content, height=105, wrap="word")
-    credential_steps_box.pack(fill="x", padx=15, pady=(4, 8))
-    credential_steps_box.configure(state="disabled")
-
-    add_section_title(TEXT["credential_history"])
-    credential_history_box = ctk.CTkTextbox(content, height=145, wrap="word")
-    credential_history_box.pack(fill="x", padx=15, pady=(4, 8))
-    credential_history_box.configure(state="disabled")
-
-    add_section_title(TEXT["credential_security"])
-    for key, label in (
-        ("credential_no_plain_text", TEXT["no_plain_text_storage"]),
-        ("credential_framework_ready", TEXT["authentication_framework_ready"]),
-        ("credential_secure_missing", TEXT["secure_storage_not_configured"]),
-    ):
-        add_status_row(key, label)
-
-    add_section_title(TEXT["listening_ports"])
-    add_status_row("listening_ports", TEXT["listening_ports"])
-
-    hint_box = ctk.CTkTextbox(remote_window, height=80, wrap="word")
-    hint_box.pack(fill="x", padx=25, pady=(0, 12))
-    hint_box.insert(
-        "1.0",
-        (
-            f"{TEXT['security_status']}:\n"
-            f"{TEXT['local_only']}\n\n"
-            f"{TEXT['auth_required_hint']}\n\n"
-            f"{TEXT['local_only_description']}\n"
-            f"{TEXT['lan_only_description']}\n"
-            f"{TEXT['secure_remote_description']}\n\n"
-            f"{TEXT['authentication_not_configured_hint']}"
-        )
-    )
-    hint_box.configure(state="disabled")
-
-    def update_remote_rows(status):
-        config = status.get("config", {})
-        network = status.get("network", {})
-        security = status.get("security", {})
-        health = status.get("health", {})
-        url_preview = status.get("url_preview", {})
-        ios = status.get("ios_compatibility", {})
-        tailscale = status.get("tailscale", {})
-        lan_checklist = status.get("lan_checklist", [])
-        lan_status = status.get("lan_status", {})
-        lan_chat = status.get("lan_chat", {})
-        mobile_debug = status.get("mobile_debug", {})
-        safety_gate = status.get("safety_gate", {})
-        auth_status = status.get("authentication", {})
-        readiness = safety_gate.get("readiness", {})
-        enabled = bool(config.get("enabled", False))
-        network_available = bool(network.get("network_available", False))
-        auth_required = bool(config.get("auth_required", True))
-        auth_configured = bool(auth_status.get("configured", config.get("authentication_configured", False)))
-        ports = security.get("listening_ports", [])
-        rows["local_address"].configure(text=network.get("local_address", "127.0.0.1"))
-        rows["lan_address"].configure(text=network.get("lan_address", TEXT["unavailable"]))
-        rows["selected_adapter"].configure(text=network.get("selected_adapter", TEXT["unavailable"]))
-        rows["selected_lan_ip"].configure(text=network.get("selected_lan_ip", TEXT["unavailable"]) or TEXT["unavailable"])
-        rejected = network.get("ignored_virtual_adapters", [])
-        rows["rejected_interfaces"].configure(text=", ".join(rejected) if rejected else TEXT["none"])
-        rows["network_available"].configure(text=TEXT["yes"] if network_available else TEXT["no"])
-        rows["remote_status"].configure(text=TEXT["ready"] if enabled and network_available else TEXT["disabled"])
-        rows["security_status"].configure(text=TEXT["auth_required_hint"] if enabled else TEXT["local_only"])
-        rows["mode"].configure(text=TEXT["local_only"])
-        rows["gate_network"].configure(text=TEXT["ready"] if readiness.get("network") == "Ready" else TEXT["not_ready"])
-        rows["gate_lan"].configure(text=TEXT["ready"] if readiness.get("lan") == "Ready" else TEXT["not_ready"])
-        rows["gate_auth_required"].configure(text=TEXT["ready"] if safety_gate.get("checks", {}).get("authentication_required") else TEXT["missing"])
-        rows["gate_auth_configured"].configure(text=TEXT["ready"] if readiness.get("authentication") == "Ready" else TEXT["missing"])
-        rows["gate_security_confirmed"].configure(text=TEXT["confirmed"] if readiness.get("security") == "Confirmed" else TEXT["not_confirmed"])
-        rows["gate_overall"].configure(text=TEXT["ready"] if readiness.get("overall") == "Ready" else TEXT["blocked"])
-        rows["ios_same_wifi_status"].configure(text=TEXT["future_supported"])
-        rows["tailscale_readiness"].configure(text=TEXT["future_supported"])
-        rows["remote_safety_status"].configure(text=TEXT["safe"] if not enabled else TEXT["warning"])
-        rows["local_preview"].configure(text=url_preview.get("local_preview", TEXT["port_not_configured"]))
-        rows["lan_preview"].configure(text=url_preview.get("lan_preview", TEXT["port_not_configured"]))
-        lan_urls = lan_status.get("urls", remote_manager.lan_status_urls())
-        rows["lan_status_state"].configure(text=TEXT["running"] if lan_status_server.is_running() else TEXT["stopped"])
-        rows["lan_status_local_url"].configure(text=lan_urls.get("local_url", f"http://127.0.0.1:{DEFAULT_LAN_STATUS_PORT}"))
-        rows["lan_status_lan_url"].configure(text=lan_urls.get("lan_url", TEXT["no_lan_address"]))
-        lan_chat_urls = lan_chat.get("urls", remote_manager.lan_chat_urls())
-        rows["lan_chat_state"].configure(
-            text=TEXT["running"] if lan_status_server.is_running() and lan_status_server.mobile_chat_enabled else TEXT["disabled"]
-        )
-        rows["lan_chat_url"].configure(text=lan_chat_urls.get("mobile_url", TEXT["no_lan_address"]))
-        rows["lan_chat_confirmation"].configure(text=TEXT["confirmed"] if lan_chat.get("mobile_access_confirmed") else TEXT["not_confirmed"])
-        chat_model = str(settings.get("chat_model", "qwen3:8b") or "").strip()
-        embedding_model = str(settings.get("embedding_model", "nomic-embed-text:latest") or "").strip()
-        chat_capability = infer_model_capability(chat_model)
-        rows["ai_chat_model"].configure(text=chat_model)
-        rows["ai_embedding_model"].configure(text=embedding_model)
-        rows["ai_model_capability"].configure(text=chat_capability)
-        rows["ai_mobile_chat_ready"].configure(text=TEXT["ready"] if chat_capability == "Chat Supported" else TEXT["error"])
-        rows["mobile_debug_client"].configure(text=mobile_debug.get("client") or "iPhone Safari")
-        rows["mobile_debug_stage"].configure(text=mobile_debug.get("stage") or "--")
-        rows["mobile_debug_status"].configure(text=mobile_debug.get("status") or "--")
-        rows["mobile_debug_duration"].configure(text=f"{mobile_debug.get('duration_ms', 0)}ms")
-        rows["mobile_debug_model"].configure(text=mobile_debug.get("model") or "--")
-        rows["mobile_debug_capability"].configure(text=mobile_debug.get("capability") or infer_model_capability(mobile_debug.get("model") or chat_model))
-        rows["mobile_debug_ollama_url"].configure(text=mobile_debug.get("ollama_url") or settings.get("ollama.host", "--"))
-        rows["mobile_debug_error"].configure(text=mobile_debug.get("error") or TEXT["none"])
-        rows["ios_safari_supported"].configure(text=TEXT["yes"] if ios.get("safari_supported") == "Yes" else TEXT["no"])
-        rows["ios_android_required"].configure(text=TEXT["yes"] if ios.get("android_required") == "Yes" else TEXT["no"])
-        rows["ios_same_wifi_access"].configure(text=TEXT["future_supported"])
-        rows["ios_cellular_access"].configure(text=TEXT["requires_secure_tunnel"])
-        rows["tailscale_status"].configure(
-            text=TEXT["ready"] if tailscale.get("status") == "Ready" else TEXT["future_supported"]
-        )
-        rows["security_remote_access"].configure(text=TEXT["enabled"] if enabled else TEXT["disabled"])
-        rows["security_current_mode"].configure(text=TEXT["local_only"])
-        rows["security_authentication"].configure(text=TEXT["required"] if auth_required else TEXT["not_configured"])
-        rows["security_public_exposure"].configure(text=TEXT["no"])
-        rows["security_firewall"].configure(text=TEXT["safe"] if security.get("firewall") == "Safe" else TEXT["unknown"])
-        rows["health_network"].configure(text=TEXT["ok"] if health.get("network") == "OK" else TEXT["offline"])
-        rows["health_local_access"].configure(text=TEXT["available"] if health.get("local_access") == "Available" else TEXT["unavailable"])
-        rows["health_lan_access"].configure(text=TEXT["available"] if health.get("lan_access") == "Available" else TEXT["unavailable"])
-        rows["health_lan_readiness"].configure(text=TEXT["ready"] if health.get("lan_readiness") == "Ready" else TEXT["not_ready"])
-        rows["health_ios_access"].configure(text=TEXT["ready"] if health.get("ios_access") == "Ready" else TEXT["future_supported"])
-        rows["health_cellular_access"].configure(text=TEXT["requires_secure_tunnel"])
-        rows["health_security"].configure(text=TEXT["safe"] if health.get("security") == "Safe" else TEXT["warning"])
-        rows["auth_required"].configure(text=TEXT["yes"] if auth_required else TEXT["no"])
-        rows["auth_configured"].configure(text=TEXT["yes"] if auth_configured else TEXT["no"])
-        rows["auth_required_detail"].configure(text=TEXT["yes"] if auth_status.get("required", True) else TEXT["no"])
-        rows["auth_status_detail"].configure(text=TEXT["configured"] if auth_status.get("configured") else TEXT["not_configured"])
-        rows["auth_type_detail"].configure(text=TEXT["token_authentication"] if auth_status.get("authentication_type") == "token" else TEXT["none"])
-        rows["token_status_detail"].configure(text=TEXT["configured"] if auth_status.get("token_configured") else TEXT["not_configured"])
-        rows["token_configured_detail"].configure(text=TEXT["yes"] if auth_status.get("token_configured") else TEXT["no"])
-        rows["token_last_updated_detail"].configure(text=auth_status.get("last_token_update") or TEXT["never_configured"])
-        rows["token_auth_status"].configure(text=TEXT["configured"] if auth_status.get("token_configured") else TEXT["not_configured"])
-        rows["token_auth_configured"].configure(text=TEXT["yes"] if auth_status.get("token_configured") else TEXT["no"])
-        rows["token_auth_last_updated"].configure(text=auth_status.get("last_token_update") or TEXT["never_configured"])
-        readiness_auth = auth_status.get("readiness", {})
-        rows["auth_readiness_required"].configure(text=TEXT["yes"])
-        rows["auth_readiness_token"].configure(text=TEXT["configured"] if readiness_auth.get("token") == "Configured" else TEXT["missing"])
-        rows["auth_readiness_storage"].configure(text=TEXT["available_status"] if readiness_auth.get("storage") == "Available" else TEXT["storage_missing"])
-        rows["auth_readiness_security"].configure(text=TEXT["ready"] if readiness_auth.get("security") == "Ready" else TEXT["warning"])
-        rows["auth_readiness_overall"].configure(text=TEXT["ready"] if readiness_auth.get("overall") == "Ready" else TEXT["blocked"])
-        credential_type = auth_status.get("credential_storage", "none")
-        credential_type_text = {
-            "none": TEXT["none"],
-            "windows_credential_manager": TEXT["windows_credential_manager"],
-            "encrypted_local_storage": TEXT["encrypted_local_storage"],
-            "plain_text_file": TEXT["plain_text_file"]
-        }.get(credential_type, TEXT["unknown"])
-        credential_security = auth_status.get("credential_security", {})
-        rows["credential_storage_status"].configure(text=TEXT["available_status"] if auth_status.get("storage_status") == "Available" else TEXT["unavailable_status"])
-        rows["credential_secure_configured"].configure(text=TEXT["yes"] if auth_status.get("secure_storage_configured") else TEXT["no"])
-        rows["credential_storage_type"].configure(text=credential_type_text)
-        rows["credential_provider"].configure(text=TEXT["windows_credential_manager"])
-        rows["credential_provider_status"].configure(text=TEXT["available_status"] if auth_status.get("secure_storage_available") else TEXT["unavailable_status"])
-        rows["credential_test_status"].configure(text=TEXT["passed"] if auth_status.get("credential_test_passed") else TEXT["failed"])
-        rows["credential_last_check"].configure(text=auth_status.get("credential_last_check") or "--")
-        rows["diagnostic_provider"].configure(text=TEXT["windows_credential_manager"])
-        rows["diagnostic_storage_status"].configure(text=TEXT["available_status"] if auth_status.get("storage_status") == "Available" else TEXT["unavailable_status"])
-        rows["diagnostic_availability"].configure(text=TEXT["available_status"] if auth_status.get("secure_storage_available") else TEXT["unavailable_status"])
-        rows["diagnostic_command_status"].configure(text=TEXT["available_status"] if auth_status.get("credential_command_status") == "Available" else TEXT["unavailable_status"])
-        rows["diagnostic_last_check"].configure(text=auth_status.get("credential_last_check") or "--")
-        rows["diagnostic_last_result"].configure(text=TEXT["passed"] if auth_status.get("credential_last_result") == "Passed" else TEXT["failed"])
-        rows["diagnostic_last_error"].configure(text=auth_status.get("last_storage_error") or TEXT["none"])
-        rows["diagnostic_last_operation"].configure(text=auth_status.get("credential_last_operation") or "--")
-        rows["diagnostic_operation_result"].configure(text=auth_status.get("credential_operation_result") or "--")
-        rows["diagnostic_duration"].configure(text=f"{auth_status.get('credential_duration_ms', 0)}ms")
-        rows["diagnostic_suggestion"].configure(text=auth_status.get("credential_error_suggestion") or TEXT["none"])
-        rows["credential_no_plain_text"].configure(text=TEXT["yes"] if credential_security.get("no_plain_text_storage") else TEXT["no"])
-        rows["credential_framework_ready"].configure(text=TEXT["yes"] if credential_security.get("authentication_framework_ready") else TEXT["no"])
-        rows["credential_secure_missing"].configure(text=TEXT["no"] if credential_security.get("secure_storage_configured") else TEXT["secure_storage_not_configured"])
-        if ports:
-            rows["listening_ports"].configure(
-                text=", ".join(f"{item.get('port')} ({TEXT['unknown']})" for item in ports)
-            )
-        else:
-            rows["listening_ports"].configure(text=TEXT["none"])
-        checklist_box.configure(state="normal")
-        checklist_box.delete("1.0", "end")
-        checklist_lines = []
-        for item in lan_checklist:
-            marker = "\u2713" if item.get("ok") else "\u2717"
-            checklist_lines.append(f"{marker} {item.get('label', '')}")
-        checklist_box.insert("1.0", "\n".join(checklist_lines))
-        checklist_box.configure(state="disabled")
-        credential_steps_box.configure(state="normal")
-        credential_steps_box.delete("1.0", "end")
-        steps = auth_status.get("credential_steps", [])
-        if steps:
-            credential_steps_box.insert(
-                "1.0",
-                "\n".join(f"{item.get('step', '')}: {item.get('result', '')}" for item in steps)
-            )
-        else:
-            credential_steps_box.insert("1.0", "--")
-        credential_steps_box.configure(state="disabled")
-        credential_history_box.configure(state="normal")
-        credential_history_box.delete("1.0", "end")
-        history = auth_status.get("credential_history", [])
-        if history:
-            history_lines = [
-                f"{item.get('time') or '--'}   {item.get('status') or '--'}   {item.get('result') or '--'}"
-                for item in reversed(history[-10:])
-            ]
-            credential_history_box.insert("1.0", "\n".join(history_lines))
-            logger.info("Credential storage history loaded")
-        else:
-            credential_history_box.insert("1.0", TEXT["no_history"])
-        credential_history_box.configure(state="disabled")
-        status_label.configure(text=TEXT["ready"], text_color="#32CD32")
-        if enabled:
-            logger.info("Remote configuration updated")
-        else:
-            logger.info("Remote access disabled")
-        logger.info("Remote status checked")
-        logger.info("Chat model loaded")
-        logger.info("Embedding model loaded")
-        logger.info("Model capability checked")
-        if network.get("selected_lan_ip"):
-            logger.info("LAN IP selected")
-        if network.get("ignored_virtual_adapters"):
-            logger.info("Virtual adapter ignored")
-        logger.info("Remote security checked")
-        logger.info("Remote health checked")
-        logger.info("Remote mode displayed")
-        logger.info("Remote authentication status checked")
-        logger.info("Authentication status checked")
-        logger.info("Token status checked")
-        logger.info("Token readiness checked")
-        logger.info("Credential storage status checked")
-        logger.info("Credential security checked")
-        logger.info("Credential storage provider checked")
-        logger.info("Credential storage diagnostics completed")
-        if not auth_status.get("configured"):
-            logger.info("Authentication missing")
-        if not auth_status.get("token_configured"):
-            logger.info("Token configuration missing")
-        if auth_status.get("secure_storage_configured"):
-            logger.info("Secure storage configured")
-        else:
-            logger.info("Secure storage missing")
-        if auth_status.get("last_storage_error"):
-            logger.info("Credential storage error detected")
-            logger.info("Error suggestion generated")
-        logger.info("LAN readiness checked")
-        logger.info("iOS access readiness checked")
-        logger.info("LAN preview generated")
-        logger.info("Tailscale readiness displayed")
-        logger.info("Remote safety warning displayed")
-        logger.info("Mobile debug updated")
-        if safety_gate.get("ready"):
-            logger.info("Remote safety check passed")
-        else:
-            logger.info("Remote safety check blocked")
-
-    def refresh_remote_status():
-        status_label.configure(text=TEXT["checking"], text_color="gray")
-        logger.info("Remote safety check started")
-
-        def run_check():
-            try:
-                provider_status = credential_storage_provider.check_available()
-                logger.info("Credential storage command checked")
-                remote_config = remote_manager.update_credential_diagnostics(provider_status)
-                settings.set("remote.credential_storage", "windows_credential_manager")
-                settings.set("remote.secure_storage_available", provider_status.get("available", False))
-                settings.set("remote.credential_last_check", provider_status.get("last_check"))
-                settings.set("remote.credential_last_result", provider_status.get("last_result"))
-                settings.set("remote.credential_command_status", provider_status.get("command_status", "Unavailable"))
-                settings.set("remote.credential_last_operation", provider_status.get("last_operation"))
-                settings.set("remote.credential_operation_result", provider_status.get("operation_result"))
-                settings.set("remote.credential_duration_ms", provider_status.get("duration_ms", 0))
-                settings.set("remote.credential_error_suggestion", provider_status.get("suggestion"))
-                settings.set("remote.last_storage_error", provider_status.get("last_error"))
-                settings.set("remote.credential_history", remote_config.get("credential_history", []))
-                settings.set("remote.credential_steps", provider_status.get("steps", []))
-                remote_config = remote_manager.record_diagnostic_history()
-                settings.set("remote.network_history", remote_config.get("network_history", []))
-                settings.set("remote.security_history", remote_config.get("security_history", []))
-                settings.set("remote.authentication_history", remote_config.get("authentication_history", []))
-                settings.set("remote.remote_history", remote_config.get("remote_history", []))
-                assessment = remote_manager.assessment()
-                status = assessment["status"]
-                network_info = status.get("network", {})
-                settings.set("remote.selected_lan_ip", network_info.get("selected_lan_ip", ""))
-                settings.set("remote.selected_adapter", network_info.get("selected_adapter", ""))
-                status["security"] = assessment["security"]
-                status["health"] = assessment["health"]
-                status["url_preview"] = assessment["url_preview"]
-                status["ios_compatibility"] = assessment["ios_compatibility"]
-                status["tailscale"] = assessment["tailscale"]
-                status["lan_checklist"] = assessment["lan_checklist"]
-                status["lan_status"] = assessment["lan_status"]
-                status["lan_chat"] = assessment["lan_chat"]
-                status["mobile_debug"] = assessment.get("mobile_debug", {})
-                status["safety_gate"] = assessment["safety_gate"]
-                status["authentication"] = assessment["authentication"]
-                error_message = None
-            except Exception as error:
-                status = {}
-                error_message = str(error)
-
-            def finish_check():
-                if remote_window is None or not remote_window.winfo_exists():
-                    return
-                if error_message:
-                    status_label.configure(text=error_message, text_color="red")
-                    logger.error(f"Remote status check failed: {error_message}")
-                    return
-                update_remote_rows(status)
-
-            try:
-                remote_window.after(0, finish_check)
-            except Exception:
-                return
-
-        threading.Thread(target=run_check, daemon=True).start()
-
-    def close_remote_window():
-        global remote_window
-        remote_window.destroy()
-        remote_window = None
-
-    buttons = ctk.CTkScrollableFrame(remote_window, height=118, fg_color="transparent")
-    buttons.pack(fill="x", padx=25, pady=(0, 20))
-    for column in range(3):
-        buttons.grid_columnconfigure(column, weight=1)
-
-    def confirm_remote_security():
-        logger.info("Remote safety check started")
-
-        def run_confirm():
-            try:
-                remote_manager.confirm_security()
-                settings.set("remote.security_confirmed", True)
-                settings.set("remote.user_confirmed", True)
-                error_message = None
-            except Exception as error:
-                error_message = str(error)
-
-            def finish_confirm():
-                if remote_window is None or not remote_window.winfo_exists():
-                    return
-                if error_message:
-                    status_label.configure(text=error_message, text_color="red")
-                    logger.error(f"Remote security confirmation failed: {error_message}")
-                    return
-                status_label.configure(text=TEXT["confirmed"], text_color="#32CD32")
-                logger.info("Remote security confirmation updated")
-                refresh_remote_status()
-
-            try:
-                remote_window.after(0, finish_confirm)
-            except Exception:
-                return
-
-        threading.Thread(target=run_confirm, daemon=True).start()
-
-    def setup_token_placeholder():
-        logger.info("Token setup opened")
-
-        def run_setup():
-            try:
-                authentication_manager.setup_token_placeholder(datetime.now().strftime("%Y-%m-%d %H:%M:%S"))
-                error_message = None
-            except Exception as error:
-                error_message = str(error)
-
-            def finish_setup():
-                if remote_window is None or not remote_window.winfo_exists():
-                    return
-                if error_message:
-                    status_label.configure(text=error_message, text_color="red")
-                    logger.error(f"Token setup failed: {error_message}")
-                    return
-                status_label.configure(text=TEXT["token_setup_note"], text_color="#32CD32")
-                logger.info("Token status checked")
-                logger.info("Token readiness checked")
-                refresh_remote_status()
-
-            try:
-                remote_window.after(0, finish_setup)
-            except Exception:
-                return
-
-        threading.Thread(target=run_setup, daemon=True).start()
-
-    def test_secure_storage():
-        logger.info("Credential storage provider checked")
-
-        def run_test():
-            try:
-                result = credential_storage_provider.run_test()
-                remote_config = remote_manager.update_credential_diagnostics(result)
-                settings.set("remote.credential_storage", "windows_credential_manager")
-                settings.set("remote.secure_storage_available", result.get("available", False))
-                settings.set("remote.credential_test_passed", result.get("test_passed", False))
-                settings.set("remote.credential_last_check", result.get("last_check"))
-                settings.set("remote.credential_last_result", result.get("last_result"))
-                settings.set("remote.credential_command_status", result.get("command_status", "Unavailable"))
-                settings.set("remote.credential_last_operation", result.get("last_operation"))
-                settings.set("remote.credential_operation_result", result.get("operation_result"))
-                settings.set("remote.credential_duration_ms", result.get("duration_ms", 0))
-                settings.set("remote.credential_error_suggestion", result.get("suggestion"))
-                settings.set("remote.last_storage_error", result.get("last_error"))
-                settings.set("remote.credential_history", remote_config.get("credential_history", []))
-                settings.set("remote.credential_steps", result.get("steps", []))
-                remote_config = remote_manager.record_diagnostic_history()
-                settings.set("remote.network_history", remote_config.get("network_history", []))
-                settings.set("remote.security_history", remote_config.get("security_history", []))
-                settings.set("remote.authentication_history", remote_config.get("authentication_history", []))
-                settings.set("remote.remote_history", remote_config.get("remote_history", []))
-                error_message = None
-            except Exception as error:
-                result = {
-                    "available": False,
-                    "test_passed": False,
-                    "message": str(error),
-                    "last_check": datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-                }
-                error_message = str(error)
-
-            def finish_test():
-                if remote_window is None or not remote_window.winfo_exists():
-                    return
-                if result.get("test_passed"):
-                    status_label.configure(text=TEXT["passed"], text_color="#32CD32")
-                    logger.info("Test credential created")
-                    logger.info("Test credential removed")
-                    logger.info("Credential storage test passed")
-                else:
-                    status_label.configure(text=result.get("message", TEXT["failed"]), text_color="red")
-                    logger.info("Credential storage test failed")
-                    if error_message:
-                        logger.error(f"Credential storage test failed: {error_message}")
-                refresh_remote_status()
-
-            try:
-                remote_window.after(0, finish_test)
-            except Exception:
-                return
-
-        threading.Thread(target=run_test, daemon=True).start()
-
-    def remove_test_credential():
-        logger.info("Credential storage provider checked")
-
-        def run_remove():
-            try:
-                result = credential_storage_provider.delete_test_credential()
-                diagnostic_result = {
-                    "available": True,
-                    "test_passed": False,
-                    "last_result": result.get("status"),
-                    "last_error": result.get("last_error"),
-                    "command_status": "Available",
-                    "last_check": result.get("last_check"),
-                    "steps": [{
-                        "step": "Delete Test Credential",
-                        "ok": result.get("removed", False),
-                        "result": result.get("status"),
-                        "message": result.get("message", "")
-                    }]
-                }
-                remote_config = remote_manager.update_credential_diagnostics(diagnostic_result)
-                settings.set("remote.credential_test_passed", False)
-                settings.set("remote.credential_last_check", result.get("last_check"))
-                settings.set("remote.credential_last_result", result.get("status"))
-                settings.set("remote.credential_command_status", "Available")
-                settings.set("remote.credential_last_operation", "Delete Test Credential")
-                settings.set("remote.credential_operation_result", "Success" if result.get("removed") else "Failed")
-                settings.set("remote.credential_duration_ms", result.get("duration_ms", 0))
-                settings.set("remote.credential_error_suggestion", result.get("suggestion"))
-                settings.set("remote.last_storage_error", result.get("last_error"))
-                settings.set("remote.credential_history", remote_config.get("credential_history", []))
-                settings.set("remote.credential_steps", diagnostic_result.get("steps", []))
-                remote_config = remote_manager.record_diagnostic_history()
-                settings.set("remote.network_history", remote_config.get("network_history", []))
-                settings.set("remote.security_history", remote_config.get("security_history", []))
-                settings.set("remote.authentication_history", remote_config.get("authentication_history", []))
-                settings.set("remote.remote_history", remote_config.get("remote_history", []))
-                error_message = None
-            except Exception as error:
-                result = {
-                    "removed": False,
-                    "message": str(error),
-                    "last_check": datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-                }
-                error_message = str(error)
-
-            def finish_remove():
-                if remote_window is None or not remote_window.winfo_exists():
-                    return
-                if result.get("removed"):
-                    status_label.configure(text=TEXT["remove_test_credential"], text_color="#32CD32")
-                    logger.info("Test credential removed")
-                else:
-                    status_label.configure(text=result.get("message", TEXT["failed"]), text_color="red")
-                    if error_message:
-                        logger.error(f"Test credential removal failed: {error_message}")
-                refresh_remote_status()
-
-            try:
-                remote_window.after(0, finish_remove)
-            except Exception:
-                return
-
-        threading.Thread(target=run_remove, daemon=True).start()
 
     def lan_status_snapshot():
         try:
@@ -4659,235 +2116,24 @@ def show_remote_access():
             "remote_security": "Protected"
         }
 
-    def start_lan_status_page():
-        start_check = remote_manager.lan_status_start_check()
-        if not start_check.get("user_confirmed"):
-            confirmed = messagebox.askyesno(TEXT["lan_status_page"], TEXT["lan_status_warning"])
-            if not confirmed:
-                status_label.configure(text=TEXT["blocked"], text_color="red")
-                logger.info("LAN status page start blocked")
-                return
-            remote_manager.update(lan_status_user_confirmed=True)
-            settings.set("remote.lan_status_user_confirmed", True)
-            start_check = remote_manager.lan_status_start_check()
+    def clear_remote_window():
+        global remote_window
+        remote_window = None
 
-        if not start_check.get("network_available") or not start_check.get("lan_address_available"):
-            status_label.configure(text=start_check.get("reason", TEXT["not_ready"]), text_color="red")
-            logger.info("LAN status page start blocked")
-            return
-
-        status_label.configure(text=TEXT["checking"], text_color="gray")
-
-        def run_start():
-            port = settings.get("remote.lan_status_port", DEFAULT_LAN_STATUS_PORT)
-            result = lan_status_server.start("0.0.0.0", port, lan_status_snapshot)
-
-            def finish_start():
-                if remote_window is None or not remote_window.winfo_exists():
-                    return
-                if result.get("ok"):
-                    if result.get("duplicate"):
-                        logger.info("LAN server duplicate start blocked")
-                    remote_manager.update(
-                        lan_status_page_enabled=True,
-                        lan_status_port=result.get("port", port),
-                        lan_status_user_confirmed=True
-                    )
-                    settings.set("remote.lan_status_page_enabled", True)
-                    settings.set("remote.lan_status_port", result.get("port", port))
-                    settings.set("remote.lan_status_user_confirmed", True)
-                    status_label.configure(text=TEXT["running"], text_color="#32CD32")
-                    logger.info("LAN status page started")
-                else:
-                    remote_manager.update(lan_status_page_enabled=False)
-                    settings.set("remote.lan_status_page_enabled", False)
-                    status_label.configure(text=result.get("message", TEXT["failed"]), text_color="red")
-                    logger.info("LAN status page start blocked")
-                refresh_remote_status()
-
-            try:
-                remote_window.after(0, finish_start)
-            except Exception:
-                return
-
-        threading.Thread(target=run_start, daemon=True).start()
-
-    def stop_lan_status_page():
-        status_label.configure(text=TEXT["checking"], text_color="gray")
-
-        def run_stop():
-            result = lan_status_server.stop()
-
-            def finish_stop():
-                if remote_window is None or not remote_window.winfo_exists():
-                    return
-                remote_manager.update(enabled=False, lan_status_page_enabled=False, lan_chat_enabled=False)
-                settings.set("remote.enabled", False)
-                settings.set("remote.lan_status_page_enabled", False)
-                settings.set("remote.lan_chat_enabled", False)
-                status_label.configure(
-                    text=TEXT["stopped"] if result.get("ok") else result.get("message", TEXT["failed"]),
-                    text_color="#32CD32" if result.get("ok") else "red"
-                )
-                if result.get("released"):
-                    logger.info("LAN server port released")
-                logger.info("LAN status page stopped")
-                refresh_remote_status()
-
-            try:
-                remote_window.after(0, finish_stop)
-            except Exception:
-                return
-
-        threading.Thread(target=run_stop, daemon=True).start()
-
-    def copy_lan_url():
-        urls = remote_manager.lan_status_urls()
-        lan_url = urls.get("lan_url", TEXT["no_lan_address"])
-        app.clipboard_clear()
-        app.clipboard_append(lan_url)
-        status_label.configure(text=TEXT["lan_url"], text_color="#32CD32")
-        logger.info("LAN URL copied")
-
-    def mobile_chat_event(event):
-        logger.info(event)
-
-    def start_lan_chat():
-        start_check = remote_manager.lan_chat_start_check()
-        if not start_check.get("mobile_access_confirmed"):
-            confirmed = messagebox.askyesno(TEXT["lan_chat"], TEXT["lan_chat_warning"])
-            if not confirmed:
-                status_label.configure(text=TEXT["blocked"], text_color="red")
-                logger.info("Mobile request blocked")
-                return
-            remote_manager.update(mobile_access_confirmed=True)
-            settings.set("remote.mobile_access_confirmed", True)
-            start_check = remote_manager.lan_chat_start_check()
-
-        if not start_check.get("security_confirmed"):
-            status_label.configure(text=TEXT["security_confirmation_required"], text_color="red")
-            logger.info("Mobile request blocked")
-            return
-        if not start_check.get("network_available") or not start_check.get("lan_address_available"):
-            status_label.configure(text=start_check.get("reason", TEXT["not_ready"]), text_color="red")
-            logger.info("Mobile request blocked")
-            return
-
-        status_label.configure(text=TEXT["checking"], text_color="gray")
-
-        def run_start():
-            port = settings.get("remote.lan_chat_port", settings.get("remote.lan_status_port", DEFAULT_LAN_STATUS_PORT))
-            result = lan_status_server.start(
-                "0.0.0.0",
-                port,
-                lan_status_snapshot,
-                mobile_chat_service=mobile_chat_service,
-                event_callback=mobile_chat_event
-            )
-
-            def finish_start():
-                if remote_window is None or not remote_window.winfo_exists():
-                    return
-                if result.get("ok"):
-                    remote_manager.update(
-                        enabled=True,
-                        lan_status_page_enabled=True,
-                        lan_status_port=result.get("port", port),
-                        lan_chat_enabled=True,
-                        lan_chat_port=result.get("port", port),
-                        mobile_access_confirmed=True
-                    )
-                    settings.set("remote.lan_status_page_enabled", True)
-                    settings.set("remote.enabled", True)
-                    settings.set("remote.lan_status_port", result.get("port", port))
-                    settings.set("remote.lan_chat_enabled", True)
-                    settings.set("remote.lan_chat_port", result.get("port", port))
-                    settings.set("remote.mobile_access_confirmed", True)
-                    status_label.configure(text=TEXT["mobile_chat_started"], text_color="#32CD32")
-                    logger.info("Mobile chat started")
-                else:
-                    remote_manager.update(lan_chat_enabled=False)
-                    settings.set("remote.lan_chat_enabled", False)
-                    message = result.get("message", TEXT["failed"])
-                    status_label.configure(text=message, text_color="red")
-                    if "Port" in str(message):
-                        logger.info("Mobile error handled")
-                    logger.info("Mobile request blocked")
-                refresh_remote_status()
-
-            try:
-                remote_window.after(0, finish_start)
-            except Exception:
-                return
-
-        threading.Thread(target=run_start, daemon=True).start()
-
-    def stop_lan_chat():
-        status_label.configure(text=TEXT["checking"], text_color="gray")
-
-        def run_stop():
-            result = lan_status_server.stop()
-
-            def finish_stop():
-                if remote_window is None or not remote_window.winfo_exists():
-                    return
-                remote_manager.update(enabled=False, lan_status_page_enabled=False, lan_chat_enabled=False)
-                settings.set("remote.enabled", False)
-                settings.set("remote.lan_status_page_enabled", False)
-                settings.set("remote.lan_chat_enabled", False)
-                status_label.configure(
-                    text=TEXT["mobile_chat_stopped"] if result.get("ok") else result.get("message", TEXT["failed"]),
-                    text_color="#32CD32" if result.get("ok") else "red"
-                )
-                if result.get("released"):
-                    logger.info("LAN server port released")
-                logger.info("Mobile chat stopped")
-                refresh_remote_status()
-
-            try:
-                remote_window.after(0, finish_stop)
-            except Exception:
-                return
-
-        threading.Thread(target=run_stop, daemon=True).start()
-
-    def copy_mobile_url():
-        urls = remote_manager.lan_chat_urls()
-        mobile_url = urls.get("mobile_url", TEXT["no_lan_address"])
-        try:
-            app.clipboard_clear()
-            app.clipboard_append(mobile_url)
-            status_label.configure(text=TEXT["mobile_url"], text_color="#32CD32")
-            logger.info("LAN URL copied")
-        except Exception as error:
-            status_label.configure(text=TEXT["copy_failed"], text_color="red")
-            logger.error(f"Mobile URL copy failed: {error}")
-            logger.info("Mobile error handled")
-
-    remote_button_specs = [
-        (TEXT["understand_risk"], confirm_remote_security),
-        (TEXT["setup_token"], setup_token_placeholder),
-        (TEXT["test_secure_storage"], test_secure_storage),
-        (TEXT["remove_test_credential"], remove_test_credential),
-        (TEXT["start_lan_status_page"], start_lan_status_page),
-        (TEXT["stop_lan_status_page"], stop_lan_status_page),
-        (TEXT["copy_lan_url"], copy_lan_url),
-        (TEXT["start_lan_chat"], start_lan_chat),
-        (TEXT["stop_lan_chat"], stop_lan_chat),
-        (TEXT["copy_mobile_url"], copy_mobile_url),
-        (TEXT["refresh"], refresh_remote_status),
-        (TEXT["close"], close_remote_window),
-    ]
-    for index, (text, command) in enumerate(remote_button_specs):
-        ctk.CTkButton(buttons, text=text, command=command).grid(
-            row=index // 3,
-            column=index % 3,
-            sticky="ew",
-            padx=6,
-            pady=5
-        )
-    remote_window.protocol("WM_DELETE_WINDOW", close_remote_window)
-    refresh_remote_status()
+    remote_window = RemoteWindow(
+        app,
+        remote_manager=remote_manager,
+        authentication_manager=authentication_manager,
+        credential_storage_provider=credential_storage_provider,
+        settings=settings,
+        lan_status_server=lan_status_server,
+        lan_status_snapshot=lan_status_snapshot,
+        mobile_chat_service=mobile_chat_service,
+        text=TEXT,
+        logger=logger,
+        default_lan_status_port=DEFAULT_LAN_STATUS_PORT,
+        on_close=clear_remote_window
+    )
 
 
 def show_remote_diagnostics():
@@ -4898,324 +2144,71 @@ def show_remote_diagnostics():
         return
 
     logger.info("Remote diagnostics opened")
-    remote_diagnostics_window = ctk.CTkToplevel(app)
-    remote_diagnostics_window.title(TEXT["remote_diagnostics"])
-    remote_diagnostics_window.geometry("760x680")
-    remote_diagnostics_window.minsize(620, 520)
-    remote_diagnostics_window.transient(app)
 
-    ctk.CTkLabel(
-        remote_diagnostics_window,
-        text=TEXT["remote_diagnostics"],
-        font=("Microsoft YaHei", 22, "bold")
-    ).pack(anchor="w", padx=25, pady=(20, 10))
-
-    diagnostic_status = ctk.CTkLabel(
-        remote_diagnostics_window,
-        text=TEXT["checking"],
-        font=("Microsoft YaHei", 12),
-        text_color="gray"
-    )
-    diagnostic_status.pack(anchor="w", padx=25, pady=(0, 10))
-
-    content = ctk.CTkScrollableFrame(remote_diagnostics_window)
-    content.pack(fill="both", expand=True, padx=25, pady=(0, 12))
-    rows = {}
-
-    def add_title(text):
-        ctk.CTkLabel(
-            content,
-            text=text,
-            font=("Microsoft YaHei", 15, "bold"),
-            anchor="w"
-        ).pack(anchor="w", padx=15, pady=(16, 6))
-
-    def add_row(key, label):
-        row = ctk.CTkFrame(content, fg_color="transparent")
-        row.pack(fill="x", padx=15, pady=6)
-        ctk.CTkLabel(row, text=label, font=("Microsoft YaHei", 13, "bold")).pack(side="left")
-        value = ctk.CTkLabel(row, text="--", font=("Microsoft YaHei", 13), anchor="e")
-        value.pack(side="right")
-        rows[key] = value
-
-    add_title(TEXT["remote_readiness_summary"])
-    for key, label in (
-        ("summary_network", TEXT["network"]),
-        ("summary_lan", TEXT["lan"]),
-        ("summary_authentication", TEXT["authentication"]),
-        ("summary_credential", TEXT["credential_storage"]),
-        ("summary_remote", TEXT["remote_access"]),
-    ):
-        add_row(key, label)
-
-    add_title(TEXT["remote_diagnostics"])
-    for key, label in (
-        ("network_status", TEXT["network"]),
-        ("lan_readiness", TEXT["lan_readiness"]),
-        ("security_gate", TEXT["safety_gate"]),
-        ("authentication_status_row", TEXT["authentication"]),
-        ("credential_status_row", TEXT["credential_storage"]),
-    ):
-        add_row(key, label)
-
-    add_title(TEXT["credential_storage_details"])
-    for key, label in (
-        ("credential_operation", TEXT["last_operation"]),
-        ("credential_operation_result", TEXT["operation_result"]),
-        ("credential_duration", TEXT["duration"]),
-        ("credential_error", TEXT["error_reason"]),
-        ("credential_suggestion", TEXT["suggestion"]),
-    ):
-        add_row(key, label)
-
-    history_box = ctk.CTkTextbox(content, height=170, wrap="word")
-    history_box.pack(fill="x", padx=15, pady=(12, 8))
-    history_box.configure(state="disabled")
-
-    release_box = ctk.CTkTextbox(content, height=150, wrap="word")
-    release_box.pack(fill="x", padx=15, pady=(8, 12))
-    release_box.configure(state="disabled")
-
-    def set_box(box, text):
-        box.configure(state="normal")
-        box.delete("1.0", "end")
-        box.insert("1.0", text)
-        box.configure(state="disabled")
-
-    def update_diagnostics_view(data):
-        summary = data.get("summary", {})
-        health = data.get("health", {})
-        safety = data.get("safety_gate", {})
-        auth = data.get("authentication", {})
-        config = data.get("config", {})
-        rows["summary_network"].configure(text=TEXT["ready"] if summary.get("network") == "Ready" else TEXT["not_ready"])
-        rows["summary_lan"].configure(text=TEXT["ready"] if summary.get("lan") == "Ready" else TEXT["not_ready"])
-        rows["summary_authentication"].configure(text=TEXT["ready"] if summary.get("authentication") == "Ready" else TEXT["missing"])
-        rows["summary_credential"].configure(text=TEXT["available_status"] if summary.get("credential_storage") == "Available" else TEXT["storage_missing"])
-        rows["summary_remote"].configure(text=TEXT["enabled"] if summary.get("remote_access") == "Enabled" else TEXT["disabled"])
-        rows["network_status"].configure(text=TEXT["ok"] if health.get("network") == "OK" else TEXT["offline"])
-        rows["lan_readiness"].configure(text=TEXT["ready"] if health.get("lan_readiness") == "Ready" else TEXT["not_ready"])
-        rows["security_gate"].configure(text=TEXT["ready"] if safety.get("ready") else TEXT["blocked"])
-        rows["authentication_status_row"].configure(text=TEXT["ready"] if auth.get("configured") else TEXT["missing"])
-        rows["credential_status_row"].configure(text=TEXT["available_status"] if auth.get("secure_storage_available") else TEXT["storage_missing"])
-        rows["credential_operation"].configure(text=auth.get("credential_last_operation") or "--")
-        rows["credential_operation_result"].configure(text=auth.get("credential_operation_result") or "--")
-        rows["credential_duration"].configure(text=f"{auth.get('credential_duration_ms', 0)}ms")
-        rows["credential_error"].configure(text=auth.get("last_storage_error") or TEXT["none"])
-        rows["credential_suggestion"].configure(text=auth.get("credential_error_suggestion") or TEXT["none"])
-
-        history_lines = []
-        for title, key in (
-            ("Network History", "network_history"),
-            ("Security History", "security_history"),
-            ("Authentication History", "authentication_history"),
-            ("Credential History", "credential_history"),
-            ("Remote History", "remote_history")
-        ):
-            history_lines.append(title)
-            history = config.get(key, [])
-            if history:
-                for item in reversed(history[-10:]):
-                    history_lines.append(f"{item.get('time') or '--'}   {item.get('status') or '--'}   {item.get('result') or '--'}")
-            else:
-                history_lines.append(TEXT["no_history"])
-            history_lines.append("")
-        set_box(history_box, "\n".join(history_lines))
-        diagnostic_status.configure(text=TEXT["ready"], text_color="#32CD32")
-
-    def refresh_remote_diagnostics():
-        diagnostic_status.configure(text=TEXT["checking"], text_color="gray")
-
-        def run_refresh():
-            try:
-                provider_status = credential_storage_provider.check_available()
-                remote_manager.update_credential_diagnostics(provider_status)
-                remote_manager.record_diagnostic_history()
-                data = remote_manager.diagnostics()
-                error_message = None
-            except Exception as error:
-                data = {}
-                error_message = str(error)
-
-            def finish_refresh():
-                if remote_diagnostics_window is None or not remote_diagnostics_window.winfo_exists():
-                    return
-                if error_message:
-                    diagnostic_status.configure(text=error_message, text_color="red")
-                    return
-                update_diagnostics_view(data)
-
-            remote_diagnostics_window.after(0, finish_refresh)
-
-        threading.Thread(target=run_refresh, daemon=True).start()
-
-    def run_release_check():
-        logger.info("Release check started")
-        set_box(release_box, TEXT["checking"])
-
-        def run_check():
-            try:
-                result = remote_manager.release_check(Path(__file__).resolve().parent)
-                error_message = None
-            except Exception as error:
-                result = {"checks": [], "passed": False}
-                error_message = str(error)
-
-            def finish_check():
-                if remote_diagnostics_window is None or not remote_diagnostics_window.winfo_exists():
-                    return
-                if error_message:
-                    set_box(release_box, error_message)
-                    return
-                lines = [
-                    f"{'\u2713' if item.get('ok') else '\u2717'} {item.get('label')}"
-                    for item in result.get("checks", [])
-                ]
-                lines.append("")
-                lines.append(f"{TEXT['overall']}: {TEXT['passed'] if result.get('passed') else TEXT['blocked']}")
-                set_box(release_box, "\n".join(lines))
-                logger.info("Release check completed")
-                logger.info("v2.0 release check completed")
-
-            remote_diagnostics_window.after(0, finish_check)
-
-        threading.Thread(target=run_check, daemon=True).start()
-
-    def close_remote_diagnostics():
+    def clear_remote_diagnostics_window():
         global remote_diagnostics_window
-        remote_diagnostics_window.destroy()
         remote_diagnostics_window = None
 
-    buttons = ctk.CTkFrame(remote_diagnostics_window, fg_color="transparent")
-    buttons.pack(fill="x", padx=25, pady=(0, 20))
-    ctk.CTkButton(buttons, text=TEXT["refresh"], command=refresh_remote_diagnostics).pack(side="left", expand=True, fill="x", padx=(0, 6))
-    ctk.CTkButton(buttons, text=TEXT["release_check"], command=run_release_check).pack(side="left", expand=True, fill="x", padx=6)
-    ctk.CTkButton(buttons, text=TEXT["close"], command=close_remote_diagnostics).pack(side="left", expand=True, fill="x", padx=(6, 0))
-    remote_diagnostics_window.protocol("WM_DELETE_WINDOW", close_remote_diagnostics)
-    refresh_remote_diagnostics()
+    remote_diagnostics_window = RemoteDiagnosticsWindow(
+        app,
+        remote_manager=remote_manager,
+        credential_storage_provider=credential_storage_provider,
+        text=TEXT,
+        logger=logger,
+        project_root=Path(__file__).resolve().parent,
+        on_close=clear_remote_diagnostics_window
+    )
 
+def test_settings_service_connection(target_window, service_name, url, callback):
+    def run_check():
+        started_at = time.perf_counter()
+        connected = False
+        reason = ""
 
-actions_frame = ctk.CTkScrollableFrame(app, height=250)
-actions_frame.pack(fill="x", padx=20, pady=(0, 8))
+        try:
+            parsed = urllib.parse.urlparse(url)
+            if parsed.scheme not in ("http", "https") or not parsed.netloc:
+                reason = "Invalid URL"
+            else:
+                with urllib.request.urlopen(url, timeout=3):
+                    connected = True
+        except urllib.error.HTTPError:
+            connected = True
+        except (socket.timeout, TimeoutError):
+            reason = t("timeout")
+        except ConnectionRefusedError:
+            reason = t("connection_refused")
+        except urllib.error.URLError as error:
+            if isinstance(error.reason, socket.timeout):
+                reason = t("timeout")
+            elif isinstance(error.reason, ConnectionRefusedError):
+                reason = t("connection_refused")
+            else:
+                reason = t("connection_error")
+        except (OSError, ValueError):
+            reason = t("connection_error")
 
+        elapsed_ms = int((time.perf_counter() - started_at) * 1000)
+        if connected:
+            logger.info(f"{service_name} connected ({elapsed_ms}ms)")
+        else:
+            logger.info(f"{service_name} connection failed: {reason}")
 
-action_title = ctk.CTkLabel(
-    actions_frame,
-    text=TEXT["quick_actions"],
-    font=FONT_HEADER
-)
-action_title.pack(anchor="w", padx=15, pady=(5, 10))
+        def update_result():
+            try:
+                if target_window is None or not target_window.winfo_exists():
+                    return
+                callback(connected, elapsed_ms, reason)
+            except Exception:
+                return
 
+        try:
+            target_window.after(0, update_result)
+        except Exception:
+            return
 
-btn1 = ui_button(
-    actions_frame,
-    text=TEXT["open_webui"],
-    command=launch_open_webui,
-    kind="primary"
-)
-btn1.pack(fill="x", padx=40, pady=8)
-
-btn_diagnostic = ui_button(
-    actions_frame,
-    text=t("runtime_environment_diagnostics"),
-    command=run_diagnostic
-)
-btn_diagnostic.pack(fill="x", padx=40, pady=8)
-
-btn_start_ollama = ui_button(
-    actions_frame,
-    text=t("start_ollama"),
-    command=start_ollama_manual,
-    kind="primary"
-)
-btn_start_ollama.pack(fill="x", padx=40, pady=8)
-
-btn_restart_webui = ui_button(
-    actions_frame,
-    text=t("restart_openwebui"),
-    command=restart_openwebui_manual
-)
-btn_restart_webui.pack(fill="x", padx=40, pady=8)
-
-btn_restart_container = ui_button(
-    actions_frame,
-    text=t("restart_container"),
-    command=restart_container_manual
-)
-btn_restart_container.pack(fill="x", padx=40, pady=8)
-
-btn_close_webui = ui_button(
-    actions_frame,
-    text=t("close_openwebui"),
-    command=close_open_webui,
-    kind="danger"
-)
-btn_close_webui.pack(fill="x", padx=40, pady=8)
-
-
-btn2 = ui_button(
-    actions_frame,
-    text=TEXT["models"],
-    command=show_models
-)
-btn2.pack(fill="x", padx=40, pady=8)
-
-
-btn_chat = ui_button(
-    actions_frame,
-    text=TEXT["chat"],
-    command=show_chat,
-    kind="primary"
-)
-btn_chat.pack(fill="x", padx=40, pady=8)
-
-
-btn_conversation_browser = ui_button(
-    actions_frame,
-    text=t("conversation_browser"),
-    command=show_conversation_browser
-)
-btn_conversation_browser.pack(fill="x", padx=40, pady=8)
-
-
-btn_memory = ui_button(
-    actions_frame,
-    text=TEXT["memory"],
-    command=show_memory
-)
-btn_memory.pack(fill="x", padx=40, pady=8)
-
-
-btn_persona = ui_button(
-    actions_frame,
-    text=TEXT["persona"],
-    command=show_persona
-)
-btn_persona.pack(fill="x", padx=40, pady=8)
-
-
-btn_knowledge = ui_button(
-    actions_frame,
-    text=t("knowledge_base"),
-    command=show_knowledge
-)
-btn_knowledge.pack(fill="x", padx=40, pady=8)
-
-
-btn_remote = ui_button(
-    actions_frame,
-    text=TEXT["remote_access"],
-    command=show_remote_access
-)
-btn_remote.pack(fill="x", padx=40, pady=8)
-
-
-btn_remote_diagnostics = ui_button(
-    actions_frame,
-    text=TEXT["remote_diagnostics"],
-    command=show_remote_diagnostics
-)
-btn_remote_diagnostics.pack(fill="x", padx=40, pady=8)
+    logger.info(f"Testing {service_name} connection...")
+    threading.Thread(target=run_check, daemon=True).start()
 
 
 def show_settings():
@@ -5228,713 +2221,35 @@ def show_settings():
 
     logger.info("Open Settings")
 
-    settings_window = ctk.CTkToplevel(app)
-    settings_window.title(TEXT["settings"])
-    settings_window.geometry("680x680")
-    settings_window.minsize(560, 560)
-    settings_window.transient(app)
-
-    settings_title = ctk.CTkLabel(
-        settings_window,
-        text=TEXT["settings"],
-        font=FONT_TITLE
-    )
-    settings_title.pack(anchor="w", padx=25, pady=(20, 15))
-
-    content = ctk.CTkScrollableFrame(settings_window)
-    content.pack(fill="both", expand=True, padx=25, pady=(0, 12))
-
-    appearance_value = settings.get("appearance", "System")
-    if appearance_value not in ["System", "Light", "Dark"]:
-        appearance_value = "System"
-    appearance_display = {
-        "System": t("appearance_system"),
-        "Light": t("appearance_light"),
-        "Dark": t("appearance_dark")
-    }
-
-    theme_value = settings.get("theme", "blue")
-    theme_options = ["blue", "green", "dark-blue"]
-    if theme_value not in theme_options:
-        theme_value = "blue"
-
-    def add_section_title(text):
-        ctk.CTkLabel(
-            content,
-            text=text,
-            font=FONT_SECTION
-        ).pack(anchor="w", padx=10, pady=(12, 6))
-
-    def add_option_row(label_text, values, current_value):
-        row = ctk.CTkFrame(content, fg_color="transparent")
-        row.pack(fill="x", padx=10, pady=6)
-        row.grid_columnconfigure(0, weight=1)
-
-        ctk.CTkLabel(
-            row,
-            text=label_text,
-            anchor="w",
-            font=FONT_NORMAL,
-            wraplength=320,
-            justify="left"
-        ).grid(row=0, column=0, sticky="w", padx=(0, 12))
-
-        option = ctk.CTkOptionMenu(row, values=values, width=180)
-        option.set(current_value)
-        option.grid(row=0, column=1, sticky="e")
-        return option
-
-    def add_entry_row(label_text, current_value):
-        row = ctk.CTkFrame(content, fg_color="transparent")
-        row.pack(fill="x", padx=10, pady=6)
-        row.grid_columnconfigure(0, weight=1)
-
-        ctk.CTkLabel(
-            row,
-            text=label_text,
-            anchor="w",
-            font=FONT_NORMAL,
-            wraplength=300,
-            justify="left"
-        ).grid(row=0, column=0, sticky="w", padx=(0, 12))
-
-        entry = ctk.CTkEntry(row, width=250)
-        entry.insert(0, str(current_value))
-        entry.grid(row=0, column=1, sticky="e")
-        return entry
-
-    def add_status_row(label_text, value_text, color="gray"):
-        row = ctk.CTkFrame(content, fg_color="transparent")
-        row.pack(fill="x", padx=10, pady=4)
-        row.grid_columnconfigure(0, weight=1)
-        ctk.CTkLabel(
-            row,
-            text=label_text,
-            anchor="w",
-            font=FONT_NORMAL,
-            wraplength=300,
-            justify="left"
-        ).grid(row=0, column=0, sticky="w", padx=(0, 12))
-        ctk.CTkLabel(
-            row,
-            text=str(value_text),
-            font=FONT_SMALL,
-            text_color=color,
-            anchor="e",
-            wraplength=240,
-            justify="right"
-        ).grid(row=0, column=1, sticky="e")
-
-    add_section_title(t("general"))
-    appearance_option = add_option_row(
-        TEXT["appearance"],
-        list(appearance_display.values()),
-        appearance_display[appearance_value]
-    )
-    theme_option = add_option_row(TEXT["theme"], theme_options, theme_value)
-    language_option = add_option_row(
-        t("language"),
-        ["\u7b80\u4f53\u4e2d\u6587", "English"],
-        settings.get("language", "\u7b80\u4f53\u4e2d\u6587")
-    )
-
-    add_section_title(t("ai"))
-    ollama_host_entry = add_entry_row(
-        TEXT["ollama_host"],
-        settings.get("ollama.host", "http://127.0.0.1:11434")
-    )
-    auto_start_ollama_var = ctk.BooleanVar(
-        value=bool(settings.get("ollama.auto_start", False))
-    )
-    ctk.CTkSwitch(
-        content,
-        text=t("ollama_auto_start"),
-        variable=auto_start_ollama_var
-    ).pack(anchor="w", padx=10, pady=6)
-    ollama_command_entry = add_entry_row(
-        t("ollama_command"),
-        settings.get("services.ollama.command", "ollama serve")
-    )
-    chat_model_entry = add_entry_row(
-        TEXT["chat_model"],
-        settings.get("chat_model", "qwen3:8b")
-    )
-    embedding_model_entry = add_entry_row(
-        TEXT["embedding_model"],
-        settings.get("embedding_model", "nomic-embed-text:latest")
-    )
-    openwebui_url_entry = add_entry_row(
-        TEXT["openwebui_url"],
-        settings.get("openwebui.host", "http://localhost:8080")
-    )
-    openwebui_type_option = add_option_row(
-        t("openwebui_type"),
-        ["docker"],
-        settings.get("openwebui.type", "docker")
-    )
-    openwebui_container_entry = add_entry_row(
-        t("container_name"),
-        settings.get("openwebui.container_name", "open-webui")
-    )
-    auto_start_openwebui_var = ctk.BooleanVar(
-        value=bool(settings.get("openwebui.auto_start", False))
-    )
-    ctk.CTkSwitch(
-        content,
-        text=t("auto_start_openwebui"),
-        variable=auto_start_openwebui_var
-    ).pack(anchor="w", padx=10, pady=6)
-    docker_auto_start_var = ctk.BooleanVar(
-        value=bool(settings.get("services.docker.auto_start", True))
-    )
-    ctk.CTkSwitch(
-        content,
-        text=t("docker_desktop_auto_start"),
-        variable=docker_auto_start_var
-    ).pack(anchor="w", padx=10, pady=6)
-    docker_path_entry = add_entry_row(
-        t("docker_desktop_path"),
-        settings.get("services.docker.path", r"C:\Program Files\Docker\Docker\Docker Desktop.exe")
-    )
-    docker_timeout_entry = add_entry_row(
-        t("docker_startup_timeout"),
-        settings.get("services.docker.startup_timeout", 60)
-    )
-
-    add_section_title(t("developer"))
-    refresh_interval_entry = add_entry_row(
-        TEXT["refresh_interval"],
-        settings.get("status.refresh_interval", 3)
-    )
-    add_status_row(t("debug_mode"), t("enabled") if settings.get("mobile_debug_mode", False) else TEXT["disabled"])
-    add_status_row(t("log_level"), settings.get("log.level", "INFO"))
-
-    add_section_title(t("remote"))
-    remote_enabled_var = ctk.BooleanVar(
-        value=bool(settings.get("remote.enabled", False))
-    )
-    ctk.CTkSwitch(
-        content,
-        text=TEXT["remote_access_enable"],
-        variable=remote_enabled_var
-    ).pack(anchor="w", padx=10, pady=6)
-    remote_mode_option = add_option_row(
-        TEXT["remote_mode"],
-        ["local"],
-        settings.get("remote.mode", "local")
-    )
-    add_status_row(t("public_access"), t("not_available_this_version"), "orange")
-    preferred_interface_entry = add_entry_row(
-        TEXT["preferred_interface"],
-        settings.get("network.preferred_interface", "")
-    )
-    ignore_virtual_adapter_var = ctk.BooleanVar(
-        value=bool(settings.get("network.ignore_virtual_adapter", True))
-    )
-    ctk.CTkSwitch(
-        content,
-        text=TEXT["ignore_virtual_adapter"],
-        variable=ignore_virtual_adapter_var
-    ).pack(anchor="w", padx=10, pady=6)
-    lan_chat_enabled_var = ctk.BooleanVar(
-        value=bool(settings.get("remote.lan_chat_enabled", False))
-    )
-    ctk.CTkSwitch(
-        content,
-        text=TEXT["lan_chat_enable"],
-        variable=lan_chat_enabled_var
-    ).pack(anchor="w", padx=10, pady=6)
-    mobile_access_confirmed_var = ctk.BooleanVar(
-        value=bool(settings.get("remote.mobile_access_confirmed", False))
-    )
-    ctk.CTkSwitch(
-        content,
-        text=TEXT["mobile_access_confirm"],
-        variable=mobile_access_confirmed_var
-    ).pack(anchor="w", padx=10, pady=6)
-    mobile_chat_timeout_entry = add_entry_row(
-        TEXT["mobile_chat_timeout"],
-        settings.get("mobile_chat_timeout", 60)
-    )
-    mobile_debug_mode_var = ctk.BooleanVar(
-        value=bool(settings.get("mobile_debug_mode", False))
-    )
-    ctk.CTkSwitch(
-        content,
-        text=TEXT["mobile_debug_mode"],
-        variable=mobile_debug_mode_var
-    ).pack(anchor="w", padx=10, pady=6)
-    mobile_response_limit_entry = add_entry_row(
-        TEXT["mobile_response_limit"],
-        settings.get("mobile_response_limit", 12000)
-    )
-    add_section_title(t("persona"))
-    try:
-        current_persona = persona_store.status(settings.get("persona.enabled", True), persona_store.load(update_timestamp=False))
-        add_status_row("Current Persona", current_persona.get("name", "Aurora"), "#32CD32")
-    except Exception as error:
-        add_status_row("Current Persona", error, "red")
-    persona_enabled_var = ctk.BooleanVar(
-        value=bool(settings.get("persona.enabled", True))
-    )
-    ctk.CTkSwitch(
-        content,
-        text=TEXT["persona_enable"],
-        variable=persona_enabled_var
-    ).pack(anchor="w", padx=10, pady=6)
-
-    add_section_title(t("memory"))
-    add_status_row(t("memory_available"), TEXT["yes"])
-    max_injection_entry = add_entry_row(
-        t("maximum_memory_injection"),
-        settings.get("memory.max_injection", 5)
-    )
-    min_importance_entry = add_entry_row(
-        t("minimum_memory_importance"),
-        settings.get("memory.min_importance", 0)
-    )
-
-    add_section_title(t("knowledge"))
-    knowledge_enabled_var = ctk.BooleanVar(
-        value=bool(settings.get("knowledge.enabled", True))
-    )
-    ctk.CTkSwitch(
-        content,
-        text=t("knowledge_enable"),
-        variable=knowledge_enabled_var
-    ).pack(anchor="w", padx=10, pady=6)
-    max_knowledge_entry = add_entry_row(
-        t("maximum_knowledge_results"),
-        settings.get("knowledge.max_results", 3)
-    )
-
-    add_section_title(t("status_overview"))
-    try:
-        health_report = system_self_check(timeout=2)
-        health_items = {
-            item.get("name"): item
-            for item in health_report.get("items", [])
-            if isinstance(item, dict)
-        }
-    except Exception as error:
-        health_report = {"status": "Error"}
-        health_items = {}
-        add_status_row(t("health_check"), error, "red")
-
-    def status_value(name):
-        item = health_items.get(name, {})
-        status = item.get("status", "Unknown")
-        color = health_status_color(status) if status in {"Healthy", "Warning", "Error"} else "gray"
-        return status, color, item.get("details", {})
-
-    for status_name in [
-        "Ollama",
-        "Chat Model",
-        "Embedding Model",
-        "Persona",
-        "Memory",
-        "Knowledge",
-        "Vector Index",
-        "Conversation Store",
-        "Remote"
-    ]:
-        value, color, _details = status_value(status_name)
-        add_status_row("Conversation" if status_name == "Conversation Store" else status_name, value, color)
-
-    _memory_status, _memory_color, memory_details = status_value("Memory")
-    _knowledge_status, _knowledge_color, knowledge_details = status_value("Knowledge")
-    _conversation_status, _conversation_color, conversation_details = status_value("Conversation Store")
-    add_status_row(t("memory_count"), memory_details.get("records", 0))
-    add_status_row(t("knowledge_documents"), knowledge_details.get("total", 0))
-    add_status_row(t("conversation_count"), conversation_details.get("records", 0))
-    add_status_row(t("remote_enabled"), TEXT["yes"] if settings.get("remote.enabled", False) else TEXT["no"])
-    add_status_row(t("log_level"), settings.get("log.level", "INFO"))
-
-    result_label = ctk.CTkLabel(
-        settings_window,
-        text="",
-        font=FONT_SMALL,
-        text_color="#32CD32"
-    )
-    result_label.pack(pady=(0, 8))
-
-    def check_service_connection(service_name, url, callback):
-        def run_check():
-            started_at = time.perf_counter()
-            connected = False
-            reason = ""
-
-            try:
-                parsed = urllib.parse.urlparse(url)
-                if parsed.scheme not in ("http", "https") or not parsed.netloc:
-                    reason = "Invalid URL"
-                else:
-                    with urllib.request.urlopen(url, timeout=3):
-                        connected = True
-            except urllib.error.HTTPError:
-                connected = True
-            except (socket.timeout, TimeoutError):
-                reason = t("timeout")
-            except ConnectionRefusedError:
-                reason = t("connection_refused")
-            except urllib.error.URLError as error:
-                if isinstance(error.reason, socket.timeout):
-                    reason = t("timeout")
-                elif isinstance(error.reason, ConnectionRefusedError):
-                    reason = t("connection_refused")
-                else:
-                    reason = t("connection_error")
-            except (OSError, ValueError):
-                reason = t("connection_error")
-
-            elapsed_ms = int((time.perf_counter() - started_at) * 1000)
-
-            if connected:
-                logger.info(
-                    f"{service_name} connected ({elapsed_ms}ms)"
-                )
-            else:
-                logger.info(
-                    f"{service_name} connection failed: {reason}"
-                )
-
-            def update_result():
-                try:
-                    if settings_window is None or not settings_window.winfo_exists():
-                        return
-                    callback(connected, elapsed_ms, reason)
-                except Exception:
-                    return
-
-            try:
-                settings_window.after(0, update_result)
-            except Exception:
-                return
-
-        logger.info(f"Testing {service_name} connection...")
-        threading.Thread(target=run_check, daemon=True).start()
-
-    def update_connection_result(label, button, connected, elapsed_ms, reason):
-        button.configure(state="normal")
-
-        if connected:
-            label.configure(
-                text=f"\u2705 Connected ({elapsed_ms}ms)",
-                text_color="#32CD32"
-            )
-        else:
-            label.configure(
-                text=f"\u274c Cannot connect - {reason}",
-                text_color="red"
-            )
-
-    ollama_result_label = ctk.CTkLabel(
-        content,
-        text="",
-        font=("Microsoft YaHei", 12),
-        text_color="gray"
-    )
-    ollama_result_label.pack(anchor="e", padx=10, pady=(0, 2))
-
-    openwebui_result_label = ctk.CTkLabel(
-        content,
-        text="",
-        font=("Microsoft YaHei", 12),
-        text_color="gray"
-    )
-    openwebui_result_label.pack(anchor="e", padx=10, pady=(0, 8))
-
-    def test_ollama_url():
-        url = ollama_host_entry.get().strip()
-        ollama_test_button.configure(state="disabled")
-        ollama_result_label.configure(
-            text=t("testing"),
-            text_color="gray"
-        )
-        check_service_connection(
-            "Ollama",
-            url,
-            lambda connected, elapsed_ms, reason: update_connection_result(
-                ollama_result_label,
-                ollama_test_button,
-                connected,
-                elapsed_ms,
-                reason
-            )
-        )
-
-    def test_openwebui_url():
-        url = openwebui_url_entry.get().strip()
-        openwebui_test_button.configure(state="disabled")
-        openwebui_result_label.configure(
-            text=t("testing"),
-            text_color="gray"
-        )
-        check_service_connection(
-            "Open WebUI",
-            url,
-            lambda connected, elapsed_ms, reason: update_connection_result(
-                openwebui_result_label,
-                openwebui_test_button,
-                connected,
-                elapsed_ms,
-                reason
-            )
-        )
-
-    ollama_test_button = ui_button(
-        ollama_host_entry.master,
-        text=TEXT["test"],
-        width=70,
-        command=test_ollama_url,
-        kind="primary"
-    )
-    ollama_test_button.pack(side="right", padx=(0, 8))
-
-    openwebui_test_button = ui_button(
-        openwebui_url_entry.master,
-        text=TEXT["test"],
-        width=70,
-        command=test_openwebui_url,
-        kind="primary"
-    )
-    openwebui_test_button.pack(side="right", padx=(0, 8))
-
-    def save_settings():
-        try:
-            refresh_interval = float(refresh_interval_entry.get().strip())
-            if refresh_interval <= 0:
-                raise ValueError
-            max_injection = int(max_injection_entry.get().strip())
-            min_importance = float(min_importance_entry.get().strip())
-            max_knowledge = int(max_knowledge_entry.get().strip())
-            docker_timeout = int(docker_timeout_entry.get().strip())
-            mobile_chat_timeout = int(mobile_chat_timeout_entry.get().strip())
-            mobile_response_limit = int(mobile_response_limit_entry.get().strip())
-            chat_model_value = chat_model_entry.get().strip()
-            embedding_model_value = embedding_model_entry.get().strip()
-            if (
-                max_injection < 1
-                or min_importance < 0
-                or max_knowledge < 0
-                or docker_timeout < 1
-                or mobile_chat_timeout < 1
-                or mobile_response_limit < 1000
-                or not chat_model_value
-                or not embedding_model_value
-            ):
-                raise ValueError
-        except ValueError:
-            result_label.configure(
-                text=t("invalid_settings"),
-                text_color="red"
-            )
-            return
-
-        def persist_settings():
-            selected_appearance = {
-                t("appearance_system"): "System",
-                t("appearance_light"): "Light",
-                t("appearance_dark"): "Dark"
-            }.get(appearance_option.get(), "System")
-            settings.set("appearance", selected_appearance)
-            settings.set("theme", theme_option.get())
-            settings.set("ollama.host", ollama_host_entry.get().strip())
-            settings.set("ollama.auto_start", auto_start_ollama_var.get())
-            settings.set("services.ollama.command", ollama_command_entry.get().strip())
-            settings.set("openwebui.host", openwebui_url_entry.get().strip())
-            settings.set("openwebui.type", openwebui_type_option.get())
-            settings.set("openwebui.container_name", openwebui_container_entry.get().strip())
-            settings.set("openwebui.auto_start", auto_start_openwebui_var.get())
-            settings.set("services.docker.auto_start", docker_auto_start_var.get())
-            settings.set("services.docker.path", docker_path_entry.get().strip())
-            settings.set("services.docker.startup_timeout", max(1, int(docker_timeout_entry.get().strip())))
-            settings.set("status.refresh_interval", refresh_interval)
-            settings.set("network.preferred_interface", preferred_interface_entry.get().strip())
-            settings.set("network.ignore_virtual_adapter", ignore_virtual_adapter_var.get())
-            settings.set("chat_model", chat_model_value)
-            settings.set("embedding_model", embedding_model_value)
-            logger.info("Chat model loaded")
-            logger.info("Embedding model loaded")
-            logger.info("Model capability checked")
-            if infer_model_capability(chat_model_value) != "Chat Supported":
-                logger.info("Embedding model blocked from chat")
-            requested_remote_enabled = bool(remote_enabled_var.get())
-            remote_manager.update(
-                enabled=False,
-                mode=remote_mode_option.get(),
-                auth_required=True,
-                auth_enabled=settings.get("remote.auth_enabled", False),
-                authentication_type=settings.get("remote.authentication_type", "none"),
-                token_configured=settings.get("remote.token_configured", False),
-                credential_storage=settings.get("remote.credential_storage", "windows_credential_manager"),
-                secure_storage_configured=settings.get("remote.secure_storage_configured", False),
-                secure_storage_available=settings.get("remote.secure_storage_available", False),
-                credential_test_passed=settings.get("remote.credential_test_passed", False),
-                credential_last_check=settings.get("remote.credential_last_check", None),
-                credential_last_result=settings.get("remote.credential_last_result", None),
-                credential_command_status=settings.get("remote.credential_command_status", "Unavailable"),
-                last_storage_error=settings.get("remote.last_storage_error", None),
-                credential_history=settings.get("remote.credential_history", []),
-                credential_steps=settings.get("remote.credential_steps", []),
-                authentication_configured=authentication_manager.is_configured(),
-                lan_ready=settings.get("remote.lan_ready", False),
-                ios_access_ready=settings.get("remote.ios_access_ready", False),
-                tailscale_ready=settings.get("remote.tailscale_ready", False),
-                user_confirmed=settings.get("remote.user_confirmed", False),
-                security_confirmed=settings.get("remote.security_confirmed", False),
-                lan_chat_enabled=lan_chat_enabled_var.get(),
-                lan_chat_port=settings.get("remote.lan_chat_port", DEFAULT_LAN_STATUS_PORT),
-                mobile_access_confirmed=mobile_access_confirmed_var.get(),
-                mobile_chat_timeout=mobile_chat_timeout,
-                mobile_debug_mode=mobile_debug_mode_var.get(),
-                mobile_response_limit=mobile_response_limit
-            )
-            remote_enable_allowed = False
-            if requested_remote_enabled:
-                logger.info("Remote safety check started")
-                enable_result = remote_manager.request_enable()
-                remote_enable_allowed = bool(enable_result.get("allowed"))
-                if remote_enable_allowed:
-                    logger.info("Remote safety check passed")
-                else:
-                    logger.info("Remote safety check blocked")
-                    if "Authentication is required" in enable_result.get("message", ""):
-                        logger.info("Remote enable blocked authentication missing")
-                    if "Token authentication" in enable_result.get("message", ""):
-                        logger.info("Token configuration missing")
-                    if "Secure credential storage" in enable_result.get("message", ""):
-                        logger.info("Secure storage missing")
-                    remote_enabled_var.set(False)
-                    result_label.configure(
-                        text=TEXT["remote_blocked_storage_unavailable"] if "Secure credential storage unavailable" in enable_result.get("message", "") else TEXT["secure_credential_storage_required"] if "Secure credential storage" in enable_result.get("message", "") else TEXT["authentication_required_before_remote"],
-                        text_color="red"
-                    )
-            settings.set("remote.enabled", remote_enable_allowed if requested_remote_enabled else False)
-            settings.set("remote.mode", remote_mode_option.get())
-            settings.set("remote.auth_required", True)
-            settings.set("remote.authentication_required", True)
-            settings.set("remote.auth_enabled", settings.get("remote.auth_enabled", False))
-            settings.set("remote.authentication_type", settings.get("remote.authentication_type", "none"))
-            settings.set("remote.token_configured", settings.get("remote.token_configured", False))
-            settings.set("remote.last_token_update", settings.get("remote.last_token_update", None))
-            settings.set("remote.credential_storage", settings.get("remote.credential_storage", "windows_credential_manager"))
-            settings.set("remote.secure_storage_configured", settings.get("remote.secure_storage_configured", False))
-            settings.set("remote.secure_storage_available", settings.get("remote.secure_storage_available", False))
-            settings.set("remote.credential_test_passed", settings.get("remote.credential_test_passed", False))
-            settings.set("remote.credential_last_check", settings.get("remote.credential_last_check", None))
-            settings.set("remote.credential_last_result", settings.get("remote.credential_last_result", None))
-            settings.set("remote.credential_command_status", settings.get("remote.credential_command_status", "Unavailable"))
-            settings.set("remote.credential_last_operation", settings.get("remote.credential_last_operation", None))
-            settings.set("remote.credential_operation_result", settings.get("remote.credential_operation_result", None))
-            settings.set("remote.credential_duration_ms", settings.get("remote.credential_duration_ms", 0))
-            settings.set("remote.credential_error_suggestion", settings.get("remote.credential_error_suggestion", None))
-            settings.set("remote.last_storage_error", settings.get("remote.last_storage_error", None))
-            settings.set("remote.credential_history", settings.get("remote.credential_history", []))
-            settings.set("remote.credential_steps", settings.get("remote.credential_steps", []))
-            settings.set("remote.network_history", settings.get("remote.network_history", []))
-            settings.set("remote.security_history", settings.get("remote.security_history", []))
-            settings.set("remote.authentication_history", settings.get("remote.authentication_history", []))
-            settings.set("remote.remote_history", settings.get("remote.remote_history", []))
-            settings.set("remote.authentication_configured", authentication_manager.is_configured())
-            settings.set("remote.lan_ready", settings.get("remote.lan_ready", False))
-            settings.set("remote.ios_access_ready", settings.get("remote.ios_access_ready", False))
-            settings.set("remote.tailscale_ready", settings.get("remote.tailscale_ready", False))
-            settings.set("remote.user_confirmed", settings.get("remote.user_confirmed", False))
-            settings.set("remote.security_confirmed", settings.get("remote.security_confirmed", False))
-            settings.set("remote.lan_chat_enabled", lan_chat_enabled_var.get())
-            settings.set("remote.lan_chat_port", settings.get("remote.lan_chat_port", DEFAULT_LAN_STATUS_PORT))
-            settings.set("remote.mobile_access_confirmed", mobile_access_confirmed_var.get())
-            settings.set("remote.mobile_chat_timeout", mobile_chat_timeout)
-            settings.set("remote.mobile_debug_mode", mobile_debug_mode_var.get())
-            settings.set("remote.mobile_response_limit", mobile_response_limit)
-            settings.set("mobile_chat_timeout", mobile_chat_timeout)
-            settings.set("mobile_debug_mode", mobile_debug_mode_var.get())
-            settings.set("mobile_response_limit", mobile_response_limit)
-            logger.info("Remote configuration updated")
-            if not remote_enable_allowed:
-                logger.info("Remote access disabled")
-            settings.set("memory.max_injection", max_injection)
-            settings.set("memory.min_importance", min_importance)
-            settings.set("persona.enabled", persona_enabled_var.get())
-            logger.info("Persona enabled" if persona_enabled_var.get() else "Persona disabled")
-            settings.set("knowledge.enabled", knowledge_enabled_var.get())
-            settings.set("knowledge.max_results", max_knowledge)
-            settings.set("language", language_option.get())
-            apply_language(language_option.get())
-
-            if selected_appearance.lower() == "system":
-                ctk.set_appearance_mode("System")
-            elif selected_appearance.lower() == "light":
-                ctk.set_appearance_mode("Light")
-            else:
-                ctk.set_appearance_mode("Dark")
-
-            save_button.configure(state="normal")
-            ollama_test_button.configure(state="normal")
-            openwebui_test_button.configure(state="normal")
-            logger.info("Settings saved")
-            logger.info("Language changed")
-            result_label.configure(
-                text=t("settings_saved"),
-                text_color="#32CD32"
-            )
-
-        def finish_save(connected, elapsed_ms, reason):
-            if not connected:
-                should_save = messagebox.askyesno(
-                    "Connection Warning",
-                    "\u5f53\u524d\u5730\u5740\u65e0\u6cd5\u8fde\u63a5\uff0c\u662f\u5426\u4ecd\u7136\u4fdd\u5b58\uff1f",
-                    parent=settings_window
-                )
-                if not should_save:
-                    save_button.configure(state="normal")
-                    ollama_test_button.configure(state="normal")
-                    openwebui_test_button.configure(state="normal")
-                    result_label.configure(
-                        text=t("save_canceled"),
-                        text_color="gray"
-                    )
-                    return
-
-            persist_settings()
-
-        save_button.configure(state="disabled")
-        ollama_test_button.configure(state="disabled")
-        openwebui_test_button.configure(state="disabled")
-        result_label.configure(
-            text=t("testing_before_save"),
-            text_color="gray"
-        )
-        check_service_connection(
-            "Open WebUI",
-            openwebui_url_entry.get().strip(),
-            finish_save
-        )
-
-    def close_settings_window():
+    def clear_settings_window():
         global settings_window
-        settings_window.destroy()
         settings_window = None
 
-    button_frame = ctk.CTkFrame(settings_window, fg_color="transparent")
-    button_frame.pack(fill="x", padx=25, pady=(0, 20))
-
-    save_button = ui_button(
-        button_frame,
-        text=TEXT["save"],
-        command=save_settings,
-        kind="primary"
+    settings_window = SettingsWindow(
+        app,
+        settings=settings,
+        controller=settings_controller,
+        text=TEXT,
+        translate=t,
+        language_display=language_display,
+        language_code=language_code,
+        apply_language=apply_language,
+        refresh_main_texts=refresh_main_texts,
+        logger=logger,
+        persona_status_provider=lambda: persona_store.status(
+            settings.get("persona.enabled", True),
+            persona_store.load(update_timestamp=False)
+        ),
+        health_report_provider=lambda: system_self_check(timeout=2),
+        service_test_callback=lambda service_name, url, callback: test_settings_service_connection(
+            settings_window,
+            service_name,
+            url,
+            callback
+        ),
+        model_capability_provider=infer_model_capability,
+        on_close=clear_settings_window
     )
-    save_button.pack(side="left", expand=True, fill="x", padx=(0, 6))
-
-    ui_button(
-        button_frame,
-        text=TEXT["close"],
-        command=close_settings_window
-    ).pack(side="left", expand=True, fill="x", padx=(6, 0))
-
-    settings_window.protocol("WM_DELETE_WINDOW", close_settings_window)
 
 
 settings_button = ctk.CTkButton(
@@ -5943,6 +2258,27 @@ settings_button = ctk.CTkButton(
     command=show_settings
 )
 settings_button.pack(fill="x", padx=40, pady=8)
+
+
+def refresh_main_texts():
+    status_title.configure(text=TEXT["system_status"])
+    startup_title.configure(text=TEXT["startup_status"])
+    action_title.configure(text=TEXT["quick_actions"])
+    btn1.configure(text=TEXT["open_webui"])
+    btn_diagnostic.configure(text=t("runtime_environment_diagnostics"))
+    btn_start_ollama.configure(text=t("start_ollama"))
+    btn_restart_webui.configure(text=t("restart_openwebui"))
+    btn_restart_container.configure(text=t("restart_container"))
+    btn_close_webui.configure(text=t("close_openwebui"))
+    btn2.configure(text=TEXT["models"])
+    btn_chat.configure(text=TEXT["chat"])
+    btn_conversation_browser.configure(text=t("conversation_browser"))
+    btn_memory.configure(text=TEXT["memory"])
+    btn_persona.configure(text=TEXT["persona"])
+    btn_knowledge.configure(text=t("knowledge_base"))
+    btn_remote.configure(text=TEXT["remote_access"])
+    btn_remote_diagnostics.configure(text=TEXT["remote_diagnostics"])
+    settings_button.configure(text=TEXT["settings"])
 
 
 def health_check_legacy():
@@ -6288,18 +2624,19 @@ def apply_status(status):
         display_name = f"{name} ({host}:{port})"
 
         if online:
-            label.configure(text=f"馃煝 {name}")
+            label.configure(text=f"[{t('status_ok_short')}] {name}")
             state.configure(
                 text=TEXT["online"],
                 text_color="#32CD32"
             )
         else:
-            label.configure(text=f"馃敶 {name}")
+            label.configure(text=f"[{t('status_off_short')}] {name}")
             state.configure(
                 text=TEXT["offline"],
                 text_color="red"
             )
-        label.configure(text=f"{'馃煝' if online else '馃敶'} {display_name}")
+        status_prefix = t("status_ok_short") if online else t("status_off_short")
+        label.configure(text=f"[{status_prefix}] {display_name}")
 
     online_count = sum(mapping.values())
     if online_count == len(mapping):
