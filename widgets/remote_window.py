@@ -110,7 +110,7 @@ class RemoteWindow(ctk.CTkToplevel):
         value = translate_text(locale_key)
         if value != locale_key:
             return value
-        return self.TEXT[key]
+        return dict.get(self.TEXT, key, key)
 
     def _initialize_remote_state(self):
         self.logger.info("Remote configuration loaded")
@@ -175,7 +175,7 @@ class RemoteWindow(ctk.CTkToplevel):
         ctk.CTkLabel(self, text=self.ui_text("remote_access"), font=FONT_TITLE).pack(
             anchor="w", padx=SPACING_LARGE, pady=(SPACING_LARGE, SPACING_MEDIUM)
         )
-        self.status_label = StatusLabel(self, status="disabled", text=self.TEXT["checking"], anchor="w", justify="left")
+        self.status_label = StatusLabel(self, status="disabled", text=self.ui_text("checking"), anchor="w", justify="left")
         self.status_label.pack(anchor="w", padx=SPACING_LARGE, pady=(0, SPACING_MEDIUM))
 
         self.content = ctk.CTkScrollableFrame(self)
@@ -328,41 +328,41 @@ class RemoteWindow(ctk.CTkToplevel):
         mobile_debug = status.get("mobile_debug", {})
         checklist = status.get("lan_checklist", [])
 
-        self._set_row("remote_status", self.TEXT["enabled"] if config.get("enabled") else self.TEXT["disabled"])
+        self._set_row("remote_status", self.ui_text("enabled") if config.get("enabled") else self.ui_text("disabled"))
         self._set_row("mode", config.get("mode", "local"))
         self._set_row("local_address", network.get("local_address", "127.0.0.1"))
-        self._set_row("lan_address", network.get("lan_address", self.TEXT["unavailable"]))
-        self._set_row("selected_adapter", network.get("selected_adapter", self.TEXT["unavailable"]))
-        self._set_row("selected_lan_ip", network.get("selected_lan_ip") or self.TEXT["unavailable"])
-        self._set_row("network_available", self.TEXT["yes"] if network.get("network_available") else self.TEXT["no"])
+        self._set_row("lan_address", network.get("lan_address", self.ui_text("unavailable")))
+        self._set_row("selected_adapter", network.get("selected_adapter", self.ui_text("unavailable")))
+        self._set_row("selected_lan_ip", network.get("selected_lan_ip") or self.ui_text("unavailable"))
+        self._set_row("network_available", self.ui_text("yes") if network.get("network_available") else self.ui_text("no"))
         ports = security.get("listening_ports", [])
-        self._set_row("listening_ports", ", ".join(str(port.get("port")) for port in ports) if ports else self.TEXT["none"])
+        self._set_row("listening_ports", ", ".join(str(port.get("port")) for port in ports) if ports else self.ui_text("none"))
 
         checks = safety_gate.get("checks", {})
-        self._set_row("gate_network", self.TEXT["ready"] if checks.get("network") else self.TEXT["missing"])
-        self._set_row("gate_lan", self.TEXT["ready"] if checks.get("lan") else self.TEXT["missing"])
-        self._set_row("gate_auth_required", self.TEXT["ready"] if checks.get("authentication_required") else self.TEXT["missing"])
-        self._set_row("gate_auth_configured", self.TEXT["ready"] if checks.get("authentication_configured") else self.TEXT["missing"])
-        self._set_row("gate_security_confirmed", self.TEXT["yes"] if checks.get("security_confirmed") else self.TEXT["no"])
+        self._set_row("gate_network", self.ui_text("ready") if checks.get("network") else self.ui_text("missing"))
+        self._set_row("gate_lan", self.ui_text("ready") if checks.get("lan") else self.ui_text("missing"))
+        self._set_row("gate_auth_required", self.ui_text("ready") if checks.get("authentication_required") else self.ui_text("missing"))
+        self._set_row("gate_auth_configured", self.ui_text("ready") if checks.get("authentication_configured") else self.ui_text("missing"))
+        self._set_row("gate_security_confirmed", self.ui_text("yes") if checks.get("security_confirmed") else self.ui_text("no"))
         self._set_row("gate_overall", readiness.get("overall", "Blocked"))
-        self._set_row("remote_safety_status", safety_gate.get("blocked_reason") or self.TEXT["ready"])
+        self._set_row("remote_safety_status", safety_gate.get("blocked_reason") or self.ui_text("ready"))
 
         lan_urls = lan_status.get("urls", self.remote_manager.lan_status_urls())
         chat_urls = lan_chat.get("urls", self.remote_manager.lan_chat_urls())
-        self._set_row("lan_status_state", self.TEXT["running"] if lan_status.get("enabled") else self.TEXT["stopped"])
+        self._set_row("lan_status_state", self.ui_text("running") if lan_status.get("enabled") else self.ui_text("stopped"))
         self._set_row("lan_status_local_url", lan_urls.get("local_url", "--"))
         self._set_row("lan_status_lan_url", lan_urls.get("lan_url", "--"))
-        self._set_row("lan_chat_state", self.TEXT["running"] if lan_chat.get("enabled") else self.TEXT["stopped"])
+        self._set_row("lan_chat_state", self.ui_text("running") if lan_chat.get("enabled") else self.ui_text("stopped"))
         self._set_row("lan_chat_url", chat_urls.get("mobile_url", "--"))
-        self._set_row("lan_chat_confirmation", self.TEXT["yes"] if lan_chat.get("mobile_access_confirmed") else self.TEXT["no"])
+        self._set_row("lan_chat_confirmation", self.ui_text("yes") if lan_chat.get("mobile_access_confirmed") else self.ui_text("no"))
 
-        self._set_row("auth_required_detail", self.TEXT["yes"] if config.get("auth_required", True) else self.TEXT["no"])
-        self._set_row("auth_status_detail", self.TEXT["ready"] if auth.get("configured") else self.TEXT["missing"])
-        self._set_row("auth_type_detail", self.TEXT["token_authentication"] if auth.get("authentication_type") == "token" else self.TEXT["none"])
-        self._set_row("token_status_detail", self.TEXT["configured"] if auth.get("token_configured") else self.TEXT["not_configured"])
-        self._set_row("credential_storage_status", self.TEXT["available_status"] if auth.get("secure_storage_available") else self.TEXT["unavailable_status"])
-        self._set_row("credential_provider_status", self.TEXT["windows_credential_manager"])
-        self._set_row("credential_test_status", self.TEXT["passed"] if auth.get("credential_test_passed") else self.TEXT["failed"])
+        self._set_row("auth_required_detail", self.ui_text("yes") if config.get("auth_required", True) else self.ui_text("no"))
+        self._set_row("auth_status_detail", self.ui_text("ready") if auth.get("configured") else self.ui_text("missing"))
+        self._set_row("auth_type_detail", self.ui_text("token_authentication") if auth.get("authentication_type") == "token" else self.ui_text("none"))
+        self._set_row("token_status_detail", self.ui_text("configured") if auth.get("token_configured") else self.ui_text("not_configured"))
+        self._set_row("credential_storage_status", self.ui_text("available_status") if auth.get("secure_storage_available") else self.ui_text("unavailable_status"))
+        self._set_row("credential_provider_status", self.ui_text("windows_credential_manager"))
+        self._set_row("credential_test_status", self.ui_text("passed") if auth.get("credential_test_passed") else self.ui_text("failed"))
         self._set_row("credential_last_check", auth.get("credential_last_check") or "--")
 
         for key in ("network", "local_access", "lan_access", "lan_readiness", "ios_access", "cellular_access", "security"):
@@ -375,10 +375,10 @@ class RemoteWindow(ctk.CTkToplevel):
         self._set_row("mobile_debug_model", mobile_debug.get("model") or "--")
         self._set_row("mobile_debug_capability", mobile_debug.get("capability") or "--")
         self._set_row("mobile_debug_ollama_url", mobile_debug.get("ollama_url") or "--")
-        self._set_row("mobile_debug_error", mobile_debug.get("error") or self.TEXT["none"])
+        self._set_row("mobile_debug_error", mobile_debug.get("error") or self.ui_text("none"))
 
         checklist_lines = [
-            f"{item.get('label', '--')}: {self.TEXT.get('status_ok_short', translate_text('status_ok_short')) if item.get('ok') else self.TEXT['missing']}"
+            f"{item.get('label', '--')}: {self.ui_text('status_ok_short') if item.get('ok') else self.ui_text('missing')}"
             for item in checklist
         ]
         self._set_box("checklist", "\n".join(checklist_lines))
@@ -391,7 +391,7 @@ class RemoteWindow(ctk.CTkToplevel):
         self._set_box("credential_history", "\n".join(
             f"{item.get('time', '--')} | {item.get('status', '--')} | {item.get('result', '--')}"
             for item in history
-        ) or self.TEXT["no_history"])
+        ) or self.ui_text("no_history"))
 
         self.logger.info("Remote status checked")
         self.logger.info("Remote security checked")
@@ -400,7 +400,7 @@ class RemoteWindow(ctk.CTkToplevel):
         self.logger.info("Remote authentication status checked")
 
     def refresh_remote_status(self):
-        self.status_label.set_status("disabled", self.TEXT["checking"])
+        self.status_label.set_status("disabled", self.ui_text("checking"))
 
         def run_check():
             try:
@@ -439,7 +439,7 @@ class RemoteWindow(ctk.CTkToplevel):
                     self.logger.error(f"Remote status check failed: {error_message}")
                     return
                 self.update_remote_rows(status)
-                self.status_label.set_status("healthy", self.TEXT["ready"])
+                self.status_label.set_status("healthy", self.ui_text("ready"))
 
             try:
                 self.after(0, finish_check)
@@ -467,7 +467,7 @@ class RemoteWindow(ctk.CTkToplevel):
                     self.status_label.set_status("error", error_message)
                     self.logger.error(f"Remote security confirmation failed: {error_message}")
                     return
-                self.status_label.set_status("healthy", self.TEXT["remote_safety_check"])
+                self.status_label.set_status("healthy", self.ui_text("remote_safety_check"))
                 self.logger.info("Remote security confirmation updated")
                 self.refresh_remote_status()
 
@@ -493,7 +493,7 @@ class RemoteWindow(ctk.CTkToplevel):
                     self.status_label.set_status("error", error_message)
                     self.logger.error(f"Token setup failed: {error_message}")
                     return
-                self.status_label.set_status("healthy", self.TEXT["token_setup_note"])
+                self.status_label.set_status("healthy", self.ui_text("token_setup_note"))
                 self.logger.info("Token status checked")
                 self.logger.info("Token readiness checked")
                 self.refresh_remote_status()
@@ -539,12 +539,12 @@ class RemoteWindow(ctk.CTkToplevel):
                 if not self.winfo_exists():
                     return
                 if result.get("test_passed"):
-                    self.status_label.set_status("healthy", self.TEXT["passed"])
+                    self.status_label.set_status("healthy", self.ui_text("passed"))
                     self.logger.info("Test credential created")
                     self.logger.info("Test credential removed")
                     self.logger.info("Credential storage test passed")
                 else:
-                    self.status_label.set_status("error", result.get("message", self.TEXT["failed"]))
+                    self.status_label.set_status("error", result.get("message", self.ui_text("failed")))
                     self.logger.info("Credential storage test failed")
                     if error_message:
                         self.logger.error(f"Credential storage test failed: {error_message}")
@@ -598,10 +598,10 @@ class RemoteWindow(ctk.CTkToplevel):
                 if not self.winfo_exists():
                     return
                 if result.get("removed"):
-                    self.status_label.set_status("healthy", self.TEXT["remove_test_credential"])
+                    self.status_label.set_status("healthy", self.ui_text("remove_test_credential"))
                     self.logger.info("Test credential removed")
                 else:
-                    self.status_label.set_status("error", result.get("message", self.TEXT["failed"]))
+                    self.status_label.set_status("error", result.get("message", self.ui_text("failed")))
                     if error_message:
                         self.logger.error(f"Test credential removal failed: {error_message}")
                 self.refresh_remote_status()
@@ -617,17 +617,17 @@ class RemoteWindow(ctk.CTkToplevel):
         start_check = self.remote_manager.lan_status_start_check()
         if not start_check.get("user_confirmed"):
             if not messagebox.askyesno(self.ui_text("lan_status_page"), self.ui_text("lan_status_warning")):
-                self.status_label.set_status("error", self.TEXT["blocked"])
+                self.status_label.set_status("error", self.ui_text("blocked"))
                 self.logger.info("LAN status page start blocked")
                 return
             self.remote_manager.update(lan_status_user_confirmed=True)
             self.settings.set("remote.lan_status_user_confirmed", True)
             start_check = self.remote_manager.lan_status_start_check()
         if not start_check.get("network_available") or not start_check.get("lan_address_available"):
-            self.status_label.set_status("error", start_check.get("reason", self.TEXT["not_ready"]))
+            self.status_label.set_status("error", start_check.get("reason", self.ui_text("not_ready")))
             self.logger.info("LAN status page start blocked")
             return
-        self.status_label.set_status("disabled", self.TEXT["checking"])
+        self.status_label.set_status("disabled", self.ui_text("checking"))
 
         def run_start():
             port = self.settings.get("remote.lan_status_port", self.default_lan_status_port)
@@ -645,12 +645,12 @@ class RemoteWindow(ctk.CTkToplevel):
                     self.settings.set("remote.lan_status_page_enabled", True)
                     self.settings.set("remote.lan_status_port", result.get("port", port))
                     self.settings.set("remote.lan_status_user_confirmed", True)
-                    self.status_label.set_status("healthy", self.TEXT["running"])
+                    self.status_label.set_status("healthy", self.ui_text("running"))
                     self.logger.info("LAN status page started")
                 else:
                     self.remote_manager.update(lan_status_page_enabled=False)
                     self.settings.set("remote.lan_status_page_enabled", False)
-                    self.status_label.set_status("error", result.get("message", self.TEXT["failed"]))
+                    self.status_label.set_status("error", result.get("message", self.ui_text("failed")))
                     self.logger.info("LAN status page start blocked")
                 self.refresh_remote_status()
 
@@ -659,7 +659,7 @@ class RemoteWindow(ctk.CTkToplevel):
         threading.Thread(target=run_start, daemon=True).start()
 
     def stop_lan_status_page(self):
-        self.status_label.set_status("disabled", self.TEXT["checking"])
+        self.status_label.set_status("disabled", self.ui_text("checking"))
 
         def run_stop():
             result = self.lan_status_server.stop()
@@ -671,7 +671,7 @@ class RemoteWindow(ctk.CTkToplevel):
                 self.settings.set("remote.enabled", False)
                 self.settings.set("remote.lan_status_page_enabled", False)
                 self.settings.set("remote.lan_chat_enabled", False)
-                self.status_label.set_status("healthy" if result.get("ok") else "error", self.TEXT["stopped"] if result.get("ok") else result.get("message", self.TEXT["failed"]))
+                self.status_label.set_status("healthy" if result.get("ok") else "error", self.ui_text("stopped") if result.get("ok") else result.get("message", self.ui_text("failed")))
                 self.logger.info("LAN status page stopped")
                 self.refresh_remote_status()
 
@@ -680,31 +680,31 @@ class RemoteWindow(ctk.CTkToplevel):
         threading.Thread(target=run_stop, daemon=True).start()
 
     def copy_lan_url(self):
-        lan_url = self.remote_manager.lan_status_urls().get("lan_url", self.TEXT["no_lan_address"])
+        lan_url = self.remote_manager.lan_status_urls().get("lan_url", self.ui_text("no_lan_address"))
         self.parent.clipboard_clear()
         self.parent.clipboard_append(lan_url)
-        self.status_label.set_status("healthy", self.TEXT["lan_url"])
+        self.status_label.set_status("healthy", self.ui_text("lan_url"))
         self.logger.info("LAN URL copied")
 
     def start_lan_chat(self):
         start_check = self.remote_manager.lan_chat_start_check()
         if not start_check.get("mobile_access_confirmed"):
             if not messagebox.askyesno(self.ui_text("lan_chat"), self.ui_text("lan_chat_warning")):
-                self.status_label.set_status("error", self.TEXT["blocked"])
+                self.status_label.set_status("error", self.ui_text("blocked"))
                 self.logger.info("Mobile request blocked")
                 return
             self.remote_manager.update(mobile_access_confirmed=True)
             self.settings.set("remote.mobile_access_confirmed", True)
             start_check = self.remote_manager.lan_chat_start_check()
         if not start_check.get("security_confirmed"):
-            self.status_label.set_status("error", self.TEXT["security_confirmation_required"])
+            self.status_label.set_status("error", self.ui_text("security_confirmation_required"))
             self.logger.info("Mobile request blocked")
             return
         if not start_check.get("network_available") or not start_check.get("lan_address_available"):
-            self.status_label.set_status("error", start_check.get("reason", self.TEXT["not_ready"]))
+            self.status_label.set_status("error", start_check.get("reason", self.ui_text("not_ready")))
             self.logger.info("Mobile request blocked")
             return
-        self.status_label.set_status("disabled", self.TEXT["checking"])
+        self.status_label.set_status("disabled", self.ui_text("checking"))
 
         def mobile_chat_event(event):
             self.logger.info(event)
@@ -737,12 +737,12 @@ class RemoteWindow(ctk.CTkToplevel):
                     self.settings.set("remote.lan_chat_enabled", True)
                     self.settings.set("remote.lan_chat_port", result.get("port", port))
                     self.settings.set("remote.mobile_access_confirmed", True)
-                    self.status_label.set_status("healthy", self.TEXT["mobile_chat_started"])
+                    self.status_label.set_status("healthy", self.ui_text("mobile_chat_started"))
                     self.logger.info("Mobile chat started")
                 else:
                     self.remote_manager.update(lan_chat_enabled=False)
                     self.settings.set("remote.lan_chat_enabled", False)
-                    self.status_label.set_status("error", result.get("message", self.TEXT["failed"]))
+                    self.status_label.set_status("error", result.get("message", self.ui_text("failed")))
                     self.logger.info("Mobile request blocked")
                 self.refresh_remote_status()
 
@@ -751,7 +751,7 @@ class RemoteWindow(ctk.CTkToplevel):
         threading.Thread(target=run_start, daemon=True).start()
 
     def stop_lan_chat(self):
-        self.status_label.set_status("disabled", self.TEXT["checking"])
+        self.status_label.set_status("disabled", self.ui_text("checking"))
 
         def run_stop():
             result = self.lan_status_server.stop()
@@ -763,7 +763,7 @@ class RemoteWindow(ctk.CTkToplevel):
                 self.settings.set("remote.enabled", False)
                 self.settings.set("remote.lan_status_page_enabled", False)
                 self.settings.set("remote.lan_chat_enabled", False)
-                self.status_label.set_status("healthy" if result.get("ok") else "error", self.TEXT["mobile_chat_stopped"] if result.get("ok") else result.get("message", self.TEXT["failed"]))
+                self.status_label.set_status("healthy" if result.get("ok") else "error", self.ui_text("mobile_chat_stopped") if result.get("ok") else result.get("message", self.ui_text("failed")))
                 self.logger.info("Mobile chat stopped")
                 self.refresh_remote_status()
 
@@ -773,13 +773,13 @@ class RemoteWindow(ctk.CTkToplevel):
 
     def copy_mobile_url(self):
         try:
-            mobile_url = self.remote_manager.lan_chat_urls().get("mobile_url", self.TEXT["no_lan_address"])
+            mobile_url = self.remote_manager.lan_chat_urls().get("mobile_url", self.ui_text("no_lan_address"))
             self.parent.clipboard_clear()
             self.parent.clipboard_append(mobile_url)
-            self.status_label.set_status("healthy", self.TEXT["mobile_url"])
+            self.status_label.set_status("healthy", self.ui_text("mobile_url"))
             self.logger.info("LAN URL copied")
         except Exception as error:
-            self.status_label.set_status("error", self.TEXT["copy_failed"])
+            self.status_label.set_status("error", self.ui_text("copy_failed"))
             self.logger.error(f"Mobile URL copy failed: {error}")
             self.logger.info("Mobile error handled")
 
@@ -815,7 +815,7 @@ class RemoteDiagnosticsWindow(ctk.CTkToplevel):
         ctk.CTkLabel(self, text=self.ui_text("remote_diagnostics"), font=FONT_TITLE).pack(
             anchor="w", padx=SPACING_LARGE, pady=(SPACING_LARGE, SPACING_MEDIUM)
         )
-        self.status_label = StatusLabel(self, status="disabled", text=self.TEXT["checking"], anchor="w", justify="left")
+        self.status_label = StatusLabel(self, status="disabled", text=self.ui_text("checking"), anchor="w", justify="left")
         self.status_label.pack(anchor="w", padx=SPACING_LARGE, pady=(0, SPACING_MEDIUM))
         content = ctk.CTkScrollableFrame(self)
         content.pack(fill="both", expand=True, padx=SPACING_LARGE, pady=(0, SPACING_MEDIUM))
@@ -869,7 +869,7 @@ class RemoteDiagnosticsWindow(ctk.CTkToplevel):
         value = translate_text(locale_key)
         if value != locale_key:
             return value
-        return self.TEXT[key]
+        return dict.get(self.TEXT, key, key)
 
     def _set_row(self, key, text, status=None):
         if key in self.rows:
@@ -886,7 +886,7 @@ class RemoteDiagnosticsWindow(ctk.CTkToplevel):
 
     def _history_text(self, values):
         if not values:
-            return self.TEXT["no_history"]
+            return self.ui_text("no_history")
         return "\n".join(
             f"{item.get('time', '--')} | {item.get('status', '--')} | {item.get('result', '--')}"
             for item in values
@@ -896,23 +896,23 @@ class RemoteDiagnosticsWindow(ctk.CTkToplevel):
         summary = data.get("summary", {})
         auth = data.get("authentication", {})
         config = data.get("config", {})
-        self._set_row("summary_network", self.TEXT["ready"] if summary.get("network") == "Ready" else self.TEXT["missing"])
-        self._set_row("summary_security", self.TEXT["ready"] if summary.get("security") == "Ready" else self.TEXT["missing"])
-        self._set_row("summary_authentication", self.TEXT["ready"] if summary.get("authentication") == "Ready" else self.TEXT["missing"])
-        self._set_row("summary_credential", self.TEXT["available_status"] if summary.get("credential_storage") == "Available" else self.TEXT["storage_missing"])
-        self._set_row("authentication_status_row", self.TEXT["ready"] if auth.get("configured") else self.TEXT["missing"])
-        self._set_row("credential_status_row", self.TEXT["available_status"] if auth.get("secure_storage_available") else self.TEXT["storage_missing"])
+        self._set_row("summary_network", self.ui_text("ready") if summary.get("network") == "Ready" else self.ui_text("missing"))
+        self._set_row("summary_security", self.ui_text("ready") if summary.get("security") == "Ready" else self.ui_text("missing"))
+        self._set_row("summary_authentication", self.ui_text("ready") if summary.get("authentication") == "Ready" else self.ui_text("missing"))
+        self._set_row("summary_credential", self.ui_text("available_status") if summary.get("credential_storage") == "Available" else self.ui_text("storage_missing"))
+        self._set_row("authentication_status_row", self.ui_text("ready") if auth.get("configured") else self.ui_text("missing"))
+        self._set_row("credential_status_row", self.ui_text("available_status") if auth.get("secure_storage_available") else self.ui_text("storage_missing"))
         self._set_row("credential_operation", auth.get("credential_last_operation") or "--")
         self._set_row("credential_operation_result", auth.get("credential_operation_result") or "--")
         self._set_row("credential_duration", f"{auth.get('credential_duration_ms', 0)}ms")
-        self._set_row("credential_error", auth.get("last_storage_error") or self.TEXT["none"])
-        self._set_row("credential_suggestion", auth.get("credential_error_suggestion") or self.TEXT["none"])
+        self._set_row("credential_error", auth.get("last_storage_error") or self.ui_text("none"))
+        self._set_row("credential_suggestion", auth.get("credential_error_suggestion") or self.ui_text("none"))
         self._set_box("authentication_history", self._history_text(config.get("authentication_history", [])))
         self._set_box("credential_history", self._history_text(config.get("credential_history", [])))
         self._set_box("remote_history", self._history_text(config.get("remote_history", [])))
 
     def refresh_remote_diagnostics(self):
-        self.status_label.set_status("disabled", self.TEXT["checking"])
+        self.status_label.set_status("disabled", self.ui_text("checking"))
 
         def run_refresh():
             try:
@@ -933,24 +933,24 @@ class RemoteDiagnosticsWindow(ctk.CTkToplevel):
                     self.logger.error(f"Remote diagnostics refresh failed: {error_message}")
                     return
                 self.update_rows(data)
-                self.status_label.set_status("healthy", self.TEXT["ready"])
+                self.status_label.set_status("healthy", self.ui_text("ready"))
 
             self.after(0, finish_refresh)
 
         threading.Thread(target=run_refresh, daemon=True).start()
 
     def run_release_check(self):
-        self.status_label.set_status("disabled", self.TEXT["checking"])
+        self.status_label.set_status("disabled", self.ui_text("checking"))
 
         def run_check():
             try:
                 result = self.remote_manager.release_check(self.project_root)
                 lines = [
-                    f"{item.get('label', '--')}: {self.TEXT['passed'] if item.get('ok') else self.TEXT['failed']}"
+                    f"{item.get('label', '--')}: {self.ui_text('passed') if item.get('ok') else self.ui_text('failed')}"
                     for item in result.get("checks", [])
                 ]
                 lines.append("")
-                lines.append(f"{self.TEXT['passed']}: {result.get('passed')}")
+                lines.append(f"{self.ui_text('passed')}: {result.get('passed')}")
                 error_message = None
             except Exception as error:
                 lines = []
@@ -964,7 +964,7 @@ class RemoteDiagnosticsWindow(ctk.CTkToplevel):
                     self.logger.error(f"Remote release check failed: {error_message}")
                     return
                 self._set_box("release_check", "\n".join(lines))
-                self.status_label.set_status("healthy", self.TEXT["ready"])
+                self.status_label.set_status("healthy", self.ui_text("ready"))
 
             self.after(0, finish_check)
 
