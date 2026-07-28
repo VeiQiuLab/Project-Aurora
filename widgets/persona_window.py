@@ -2,7 +2,14 @@ import threading
 import customtkinter as ctk
 from tkinter import messagebox
 
-from modules.ui_theme import FONT_NORMAL_BOLD, FONT_TITLE, status_color
+from modules.ui_theme import (
+    FONT_NORMAL_BOLD,
+    FONT_TITLE,
+    SPACING_SMALL,
+    SPACING_MEDIUM,
+    SPACING_LARGE,
+    status_color
+)
 from widgets.ui_components import (
     DangerButton,
     FixedFooter,
@@ -41,7 +48,7 @@ class PersonaWindow(ctk.CTkToplevel):
             "last_updated_time": self.persona.get("last_updated_time", "Never loaded.")
         }
 
-        self.title(self.text["persona"])
+        self.title(self.t("persona_page_title"))
         self.geometry("860x720")
         self.minsize(720, 560)
         self.transient(parent)
@@ -50,71 +57,75 @@ class PersonaWindow(ctk.CTkToplevel):
         self.update_persona_status()
 
     def build(self):
-        ctk.CTkLabel(self, text=self.text["persona"], font=FONT_TITLE).pack(anchor="w", padx=25, pady=(20, 12))
+        ctk.CTkLabel(self, text=self.t("persona_page_title"), font=FONT_TITLE).pack(
+            anchor="w",
+            padx=SPACING_LARGE + SPACING_SMALL,
+            pady=(SPACING_LARGE, SPACING_MEDIUM)
+        )
         self.persona_status_label = StatusLabel(self, status="disabled", text="", anchor="w", justify="left")
-        self.persona_status_label.pack(anchor="w", padx=25, pady=(0, 8))
+        self.persona_status_label.pack(anchor="w", padx=SPACING_LARGE + SPACING_SMALL, pady=(0, SPACING_SMALL))
 
         self.content = ctk.CTkScrollableFrame(self)
-        self.content.pack(fill="both", expand=True, padx=25, pady=(0, 12))
+        self.content.pack(fill="both", expand=True, padx=SPACING_LARGE + SPACING_SMALL, pady=(0, SPACING_MEDIUM))
 
-        details = SectionCard(self.content, self.text["persona"])
-        details.pack(fill="x", padx=0, pady=(0, 10))
-        name_row = FormRow(details.body, self.text["persona_name"])
-        name_row.pack(fill="x", pady=6)
+        details = SectionCard(self.content, self.t("persona_page_current_persona"))
+        details.pack(fill="x", padx=0, pady=(0, SPACING_MEDIUM))
+        name_row = FormRow(details.body, self.t("persona_page_name"))
+        name_row.pack(fill="x", pady=SPACING_SMALL)
         self.name_entry = name_row.add_entry(self.persona.get("name", "Aurora"))
 
-        ctk.CTkLabel(details.body, text=self.text["persona_description"], font=FONT_NORMAL_BOLD).pack(anchor="w", pady=(10, 4))
+        ctk.CTkLabel(details.body, text=self.t("persona_page_description"), font=FONT_NORMAL_BOLD).pack(anchor="w", pady=(SPACING_MEDIUM, SPACING_SMALL))
         self.description_box = ctk.CTkTextbox(details.body, height=80, wrap="word")
-        self.description_box.pack(fill="x", pady=(0, 6))
+        self.description_box.pack(fill="x", pady=(0, SPACING_SMALL))
         self.description_box.insert("1.0", self.persona.get("description", ""))
 
-        ctk.CTkLabel(details.body, text=self.text["persona_style"], font=FONT_NORMAL_BOLD).pack(anchor="w", pady=(10, 4))
+        ctk.CTkLabel(details.body, text=self.t("persona_page_style"), font=FONT_NORMAL_BOLD).pack(anchor="w", pady=(SPACING_MEDIUM, SPACING_SMALL))
         self.style_box = ctk.CTkTextbox(details.body, height=80, wrap="word")
-        self.style_box.pack(fill="x", pady=(0, 6))
+        self.style_box.pack(fill="x", pady=(0, SPACING_SMALL))
         self.style_box.insert("1.0", self.persona.get("style", ""))
 
-        ctk.CTkLabel(details.body, text=self.text["persona_rules"], font=FONT_NORMAL_BOLD).pack(anchor="w", pady=(10, 4))
+        ctk.CTkLabel(details.body, text=self.t("persona_page_rules"), font=FONT_NORMAL_BOLD).pack(anchor="w", pady=(SPACING_MEDIUM, SPACING_SMALL))
         self.rules_box = ctk.CTkTextbox(details.body, height=160, wrap="word")
-        self.rules_box.pack(fill="both", expand=True, pady=(0, 6))
+        self.rules_box.pack(fill="both", expand=True, pady=(0, SPACING_SMALL))
         self.rules_box.insert("1.0", "\n".join(self.persona.get("rules", [])))
         self.character_label = StatusLabel(details.body, status="disabled", text="", anchor="w", justify="left")
-        self.character_label.pack(anchor="w", pady=(0, 6))
+        self.character_label.pack(anchor="w", pady=(0, SPACING_SMALL))
 
         preview = SectionCard(self.content, self.t("test_persona"))
-        preview.pack(fill="both", expand=True, padx=0, pady=(0, 10))
+        preview.pack(fill="both", expand=True, padx=0, pady=(0, SPACING_MEDIUM))
         test_row = FormRow(preview.body, self.t("test_persona"))
-        test_row.pack(fill="x", pady=6)
+        test_row.pack(fill="x", pady=SPACING_SMALL)
         self.test_prompt_entry = test_row.add_entry("")
         self.preview_box = ctk.CTkTextbox(preview.body, height=180, wrap="word")
-        self.preview_box.pack(fill="both", expand=True, pady=(0, 6))
+        self.preview_box.pack(fill="both", expand=True, pady=(0, SPACING_SMALL))
         self.preview_box.configure(state="disabled")
 
         self.status_label = StatusLabel(self, status="disabled", text="", anchor="w", justify="left")
-        self.status_label.pack(anchor="w", padx=25, pady=(0, 8))
+        self.status_label.pack(anchor="w", padx=SPACING_LARGE + SPACING_SMALL, pady=(0, SPACING_SMALL))
 
         self.footer = FixedFooter(self)
-        self.footer.pack(fill="x", padx=25, pady=(0, 20))
+        self.footer.pack(fill="x", padx=SPACING_LARGE + SPACING_SMALL, pady=(0, SPACING_LARGE))
         self.build_buttons()
 
     def build_buttons(self):
         actions = [
-            (self.text["edit_persona"], self.edit_persona, SecondaryButton),
-            (self.text["save_persona"], self.save_persona, PrimaryButton),
-            (self.text["reset_persona"], self.reset_persona, DangerButton),
-            ("Add Rule", self.add_rule, SecondaryButton),
-            ("Delete Rule", self.delete_rule, DangerButton),
-            ("Preview Persona Prompt", self.preview_persona_prompt, SecondaryButton),
-            ("Test Persona", self.test_persona_prompt, PrimaryButton),
-            ("Preview Final Prompt", self.preview_final_prompt, SecondaryButton),
-            (self.text["close"], self.close, SecondaryButton)
+            (self.t("persona_window_edit_persona"), self.edit_persona, SecondaryButton),
+            (self.t("persona_window_save_persona"), self.save_persona, PrimaryButton),
+            (self.t("persona_window_reset_persona"), self.reset_persona, DangerButton),
+            (self.t("persona_window_add_rule"), self.add_rule, SecondaryButton),
+            (self.t("persona_window_delete_rule"), self.delete_rule, DangerButton),
+            (self.t("persona_window_preview_persona_prompt"), self.preview_persona_prompt, SecondaryButton),
+            (self.t("test_persona"), self.test_persona_prompt, PrimaryButton),
+            (self.t("persona_window_preview_final_prompt"), self.preview_final_prompt, SecondaryButton),
+            (self.t("close"), self.close, SecondaryButton)
         ]
         for index, (label, command, button_factory) in enumerate(actions):
             button_factory(self.footer.buttons, text=label, command=command).grid(
                 row=index // 3,
                 column=index % 3,
                 sticky="ew",
-                padx=4,
-                pady=4
+                padx=SPACING_SMALL,
+                pady=SPACING_SMALL
             )
         for column in range(3):
             self.footer.buttons.grid_columnconfigure(column, weight=1)
@@ -148,23 +159,29 @@ class PersonaWindow(ctk.CTkToplevel):
         self.preview_box.insert("1.0", text)
         self.preview_box.configure(state="disabled")
 
+    def display_time(self, value):
+        if not value or value == "Never loaded.":
+            return self.t("persona_window_never_loaded")
+        return value
+
     def update_persona_status(self):
         data = self.current_persona_from_fields()
         status = self.persona_store.status(self.settings.get("persona.enabled", True), data)
         self.persona_status_label.configure(
             text=(
-                f"Current Status: Persona: {'Enabled' if status['enabled'] else 'Disabled'} | "
-                f"Name: {status['name']} | Rules Count: {status['rules_count']} | "
-                f"Last Loaded: {status['last_loaded_time']} | Last Updated: {status['last_updated_time']}"
+                f"{self.t('status')}: {self.t('persona_page_title')}: {self.t('enabled') if status['enabled'] else self.t('disabled')} | "
+                f"{self.t('persona_page_name')}: {status['name']} | {self.t('persona_page_rules_count')}: {status['rules_count']} | "
+                f"{self.t('persona_window_last_loaded')}: {self.display_time(status['last_loaded_time'])} | "
+                f"{self.t('persona_window_last_updated')}: {self.display_time(status['last_updated_time'])}"
             ),
             text_color=status_color("enabled" if status["enabled"] else "disabled")
         )
         self.character_label.configure(
             text=(
-                f"Characters: name {len(data.get('name', ''))}, "
-                f"description {len(data.get('description', ''))}, "
-                f"style {len(data.get('style', ''))}, "
-                f"rules {sum(len(rule) for rule in data.get('rules', []))}"
+                f"{self.t('characters')}: {self.t('persona_page_name')} {len(data.get('name', ''))}, "
+                f"{self.t('persona_page_description')} {len(data.get('description', ''))}, "
+                f"{self.t('persona_page_style')} {len(data.get('style', ''))}, "
+                f"{self.t('persona_page_rules')} {sum(len(rule) for rule in data.get('rules', []))}"
             ),
             text_color=status_color("disabled")
         )
@@ -181,27 +198,27 @@ class PersonaWindow(ctk.CTkToplevel):
             self.persona_state["last_loaded_time"] = data.get("last_loaded_time", self.persona_state["last_loaded_time"])
             self.persona_state["last_updated_time"] = data.get("last_updated_time", self.persona_state["last_updated_time"])
             self.update_persona_status()
-            self.status_label.set_status("healthy", "Persona saved.")
+            self.status_label.set_status("healthy", self.t("persona_window_saved"))
             self.logger.info("Persona updated")
         except ValueError as error:
             self.status_label.set_status("error", str(error))
             self.logger.info("Persona validation failed")
         except Exception as error:
-            self.status_label.set_status("error", "Invalid Persona format.")
+            self.status_label.set_status("error", self.t("persona_window_invalid_format"))
             self.logger.error(f"Persona update failed: {error}")
 
     def reset_persona(self):
-        if not messagebox.askyesno(self.text["persona"], "Restore default Persona?", parent=self):
+        if not messagebox.askyesno(self.t("persona_page_title"), self.t("persona_window_restore_default_confirm"), parent=self):
             return
         data = self.persona_store.reset()
         self.persona_state["last_loaded_time"] = data.get("last_loaded_time", self.persona_state["last_loaded_time"])
         self.persona_state["last_updated_time"] = data.get("last_updated_time", self.persona_state["last_updated_time"])
         self.load_persona_into_fields(data)
-        self.status_label.set_status("healthy", "Default Persona restored.")
+        self.status_label.set_status("healthy", self.t("persona_window_default_restored"))
         self.logger.info("Persona reset")
 
     def edit_persona(self):
-        self.status_label.set_status("disabled", "Persona editable.")
+        self.status_label.set_status("disabled", self.t("persona_window_editable"))
         self.update_persona_status()
 
     def add_rule(self):
@@ -219,24 +236,24 @@ class PersonaWindow(ctk.CTkToplevel):
         self.logger.info("Persona rules updated")
 
     def preview_persona_prompt(self):
-        self.set_preview("Loading Persona preview...")
+        self.set_preview(self.t("persona_window_loading_preview"))
         self.run_persona_action(
             lambda: self.persona_store.preview_prompt(self.validate_current_persona()),
             lambda text: (self.set_preview(text), self.logger.info("Persona preview opened"))
         )
 
     def test_persona_prompt(self):
-        self.set_preview("Testing Persona...")
+        self.set_preview(self.t("persona_window_testing"))
         self.run_persona_action(
             lambda: self.persona_store.test_prompt(self.test_prompt_entry.get().strip(), self.validate_current_persona()),
             lambda text: (self.set_preview(text), self.logger.info("Persona tested"))
         )
 
     def preview_final_prompt(self):
-        self.set_preview("Building Final Chat Context Preview...")
+        self.set_preview(self.t("persona_window_building_final_prompt"))
         self.logger.info("Context preview opened")
         if not self.final_prompt_preview_callback:
-            self.set_preview("Final prompt preview unavailable.")
+            self.set_preview(self.t("persona_window_final_prompt_unavailable"))
             return
         self.run_persona_action(
             lambda: self.final_prompt_preview_callback(
