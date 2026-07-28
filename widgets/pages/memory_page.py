@@ -17,8 +17,8 @@ class MemoryPage(ctk.CTkFrame):
     ADVANCED_ITEMS = [
         "memory_page_candidate_memories",
         "memory_page_quality_control",
-        "import_memory",
-        "export_memory"
+        "memory_page_import_memory",
+        "memory_page_export_memory"
     ]
 
     def __init__(

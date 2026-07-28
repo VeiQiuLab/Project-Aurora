@@ -105,6 +105,8 @@
     "memory_page_advanced": "Advanced",
     "memory_page_candidate_memories": "Candidate Memories",
     "memory_page_existing_window_note": "MemoryPage is a v2.6 AppShell wrapper. Memory list management, search, details, import, and export remain in the existing MemoryWindow.",
+    "memory_page_export_memory": "Export Memory",
+    "memory_page_import_memory": "Import Memory",
     "memory_page_list_detail": "Open the existing Memory manager for search, list review, and detailed edits.",
     "memory_page_memory_list": "Memory List",
     "memory_page_open_list": "Open Memory List",
