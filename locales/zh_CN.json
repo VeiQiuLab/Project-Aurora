@@ -90,6 +90,7 @@
     "library_page_retrieval_detail": "\u901a\u8fc7\u73b0\u6709 Knowledge \u5de5\u5177\u6267\u884c RAG \u68c0\u7d22\u6d4b\u8bd5\u3002",
     "library_page_search": "\u641c\u7d22",
     "library_page_search_detail": "\u4f7f\u7528\u5b8c\u6574 Knowledge \u7ba1\u7406\u5668\u6267\u884c\u6587\u6863\u641c\u7d22\u548c\u9884\u89c8\u6d41\u7a0b\u3002",
+    "library_page_search_placeholder": "\u641c\u7d22\u8d44\u6599\u5e93\u6587\u6863",
     "library_page_status_unknown": "\u72b6\u6001\u4e0d\u53ef\u7528",
     "library_page_title": "\u8d44\u6599\u5e93",
     "library_page_toggle_advanced": "\u9ad8\u7ea7",

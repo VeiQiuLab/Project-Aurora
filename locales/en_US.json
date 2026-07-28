@@ -90,6 +90,7 @@
     "library_page_retrieval_detail": "Run RAG retrieval tests through the existing Knowledge tools.",
     "library_page_search": "Search",
     "library_page_search_detail": "Use the full Knowledge manager for document search and preview workflows.",
+    "library_page_search_placeholder": "Search library documents",
     "library_page_status_unknown": "Status unavailable",
     "library_page_title": "Library",
     "library_page_toggle_advanced": "Advanced",

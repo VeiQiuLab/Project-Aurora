@@ -4,7 +4,6 @@ from modules.ui_theme import (
     FONT_HEADER,
     FONT_NORMAL,
     FONT_SMALL,
-    SPACING_LARGE,
     SPACING_MEDIUM,
     SPACING_SMALL,
     status_color
@@ -116,7 +115,7 @@ class LibraryPage(ctk.CTkFrame):
 
         self.search_entry = ctk.CTkEntry(
             self.search_card.body,
-            placeholder_text=self.t("search_knowledge")
+            placeholder_text=self.t("library_page_search_placeholder")
         )
         self.search_entry.pack(fill="x", pady=(SPACING_SMALL, 0))
 
