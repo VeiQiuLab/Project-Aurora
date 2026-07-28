@@ -70,7 +70,7 @@ class SettingsWindow(ctk.CTkToplevel):
         self.on_close_callback = on_close
         self.section_body = None
 
-        self.title(self.text["settings"])
+        self.title(self.t("settings"))
         self.geometry("680x680")
         self.minsize(560, 560)
         self.transient(parent)
@@ -80,7 +80,7 @@ class SettingsWindow(ctk.CTkToplevel):
     def build(self):
         self.settings_title = ctk.CTkLabel(
             self,
-            text=self.text["settings"],
+            text=self.t("settings"),
             font=FONT_TITLE
         )
         self.settings_title.pack(
@@ -165,11 +165,11 @@ class SettingsWindow(ctk.CTkToplevel):
             theme_value = "blue"
 
         self.appearance_option = self.add_option_row(
-            self.text["appearance"],
+            self.t("appearance"),
             list(self.appearance_display.values()),
             self.appearance_display[appearance_value]
         )
-        self.theme_option = self.add_option_row(self.text["theme"], theme_options, theme_value)
+        self.theme_option = self.add_option_row(self.t("theme"), theme_options, theme_value)
         self.language_option = self.add_option_row(
             self.t("language"),
             [self.language_display("zh_CN"), self.language_display("en_US")],
@@ -179,7 +179,7 @@ class SettingsWindow(ctk.CTkToplevel):
     def build_ai_section(self):
         self.add_section_title(self.t("ai"))
         self.ollama_host_entry = self.add_entry_row(
-            self.text["ollama_host"],
+            self.t("ollama_host"),
             self.settings.get("ollama.host", "http://127.0.0.1:11434")
         )
         self.auto_start_ollama_var = ctk.BooleanVar(
@@ -191,15 +191,15 @@ class SettingsWindow(ctk.CTkToplevel):
             self.settings.get("services.ollama.command", "ollama serve")
         )
         self.chat_model_entry = self.add_entry_row(
-            self.text["chat_model"],
+            self.t("chat_model"),
             self.settings.get("chat_model", "qwen3:8b")
         )
         self.embedding_model_entry = self.add_entry_row(
-            self.text["embedding_model"],
+            self.t("embedding_model"),
             self.settings.get("embedding_model", "nomic-embed-text:latest")
         )
         self.openwebui_url_entry = self.add_entry_row(
-            self.text["openwebui_url"],
+            self.t("openwebui_url"),
             self.settings.get("openwebui.host", "http://localhost:8080")
         )
         self.openwebui_type_option = self.add_option_row(
@@ -231,12 +231,12 @@ class SettingsWindow(ctk.CTkToplevel):
     def build_developer_section(self):
         self.add_section_title(self.t("developer"))
         self.refresh_interval_entry = self.add_entry_row(
-            self.text["refresh_interval"],
+            self.t("refresh_interval"),
             self.settings.get("status.refresh_interval", 3)
         )
         self.add_status_row(
             self.t("debug_mode"),
-            self.t("enabled") if self.settings.get("mobile_debug_mode", False) else self.text["disabled"],
+            self.t("enabled") if self.settings.get("mobile_debug_mode", False) else self.t("disabled"),
             "enabled" if self.settings.get("mobile_debug_mode", False) else "disabled"
         )
         self.add_status_row(self.t("log_level"), self.settings.get("log.level", "INFO"))
@@ -246,39 +246,39 @@ class SettingsWindow(ctk.CTkToplevel):
         self.remote_enabled_var = ctk.BooleanVar(
             value=bool(self.settings.get("remote.enabled", False))
         )
-        self.add_switch(self.text["remote_access_enable"], self.remote_enabled_var)
+        self.add_switch(self.t("remote_access_enable"), self.remote_enabled_var)
         self.remote_mode_option = self.add_option_row(
-            self.text["remote_mode"],
+            self.t("remote_mode"),
             ["local"],
             self.settings.get("remote.mode", "local")
         )
         self.add_status_row(self.t("public_access"), self.t("not_available_this_version"), "warning")
         self.preferred_interface_entry = self.add_entry_row(
-            self.text["preferred_interface"],
+            self.t("preferred_interface"),
             self.settings.get("network.preferred_interface", "")
         )
         self.ignore_virtual_adapter_var = ctk.BooleanVar(
             value=bool(self.settings.get("network.ignore_virtual_adapter", True))
         )
-        self.add_switch(self.text["ignore_virtual_adapter"], self.ignore_virtual_adapter_var)
+        self.add_switch(self.t("ignore_virtual_adapter"), self.ignore_virtual_adapter_var)
         self.lan_chat_enabled_var = ctk.BooleanVar(
             value=bool(self.settings.get("remote.lan_chat_enabled", False))
         )
-        self.add_switch(self.text["lan_chat_enable"], self.lan_chat_enabled_var)
+        self.add_switch(self.t("lan_chat_enable"), self.lan_chat_enabled_var)
         self.mobile_access_confirmed_var = ctk.BooleanVar(
             value=bool(self.settings.get("remote.mobile_access_confirmed", False))
         )
-        self.add_switch(self.text["mobile_access_confirm"], self.mobile_access_confirmed_var)
+        self.add_switch(self.t("mobile_access_confirm"), self.mobile_access_confirmed_var)
         self.mobile_chat_timeout_entry = self.add_entry_row(
-            self.text["mobile_chat_timeout"],
+            self.t("mobile_chat_timeout"),
             self.settings.get("mobile_chat_timeout", 60)
         )
         self.mobile_debug_mode_var = ctk.BooleanVar(
             value=bool(self.settings.get("mobile_debug_mode", False))
         )
-        self.add_switch(self.text["mobile_debug_mode"], self.mobile_debug_mode_var)
+        self.add_switch(self.t("mobile_debug_mode"), self.mobile_debug_mode_var)
         self.mobile_response_limit_entry = self.add_entry_row(
-            self.text["mobile_response_limit"],
+            self.t("mobile_response_limit"),
             self.settings.get("mobile_response_limit", 12000)
         )
 
@@ -296,11 +296,11 @@ class SettingsWindow(ctk.CTkToplevel):
         self.persona_enabled_var = ctk.BooleanVar(
             value=bool(self.settings.get("persona.enabled", True))
         )
-        self.add_switch(self.text["persona_enable"], self.persona_enabled_var)
+        self.add_switch(self.t("persona_enable"), self.persona_enabled_var)
 
     def build_memory_section(self):
         self.add_section_title(self.t("memory"))
-        self.add_status_row(self.t("memory_available"), self.text["yes"], "healthy")
+        self.add_status_row(self.t("memory_available"), self.t("yes"), "healthy")
         self.max_injection_entry = self.add_entry_row(
             self.t("maximum_memory_injection"),
             self.settings.get("memory.max_injection", 5)
@@ -357,7 +357,7 @@ class SettingsWindow(ctk.CTkToplevel):
         self.add_status_row(self.t("conversation_count"), conversation_details.get("records", 0))
         self.add_status_row(
             self.t("remote_enabled"),
-            self.text["yes"] if self.settings.get("remote.enabled", False) else self.text["no"],
+            self.t("yes") if self.settings.get("remote.enabled", False) else self.t("no"),
             "enabled" if self.settings.get("remote.enabled", False) else "disabled"
         )
         self.add_status_row(self.t("log_level"), self.settings.get("log.level", "INFO"))
@@ -381,7 +381,7 @@ class SettingsWindow(ctk.CTkToplevel):
 
         self.ollama_test_button = PrimaryButton(
             self.ollama_host_entry.master,
-            text=self.text["test"],
+            text=self.t("test"),
             width=FORM_CONTROL_WIDTH // 3,
             command=lambda: self.test_service(
                 "Ollama",
@@ -394,7 +394,7 @@ class SettingsWindow(ctk.CTkToplevel):
 
         self.openwebui_test_button = PrimaryButton(
             self.openwebui_url_entry.master,
-            text=self.text["test"],
+            text=self.t("test"),
             width=FORM_CONTROL_WIDTH // 3,
             command=lambda: self.test_service(
                 "Open WebUI",
@@ -409,14 +409,14 @@ class SettingsWindow(ctk.CTkToplevel):
         self.result_label = self.footer.message
         self.save_button = PrimaryButton(
             self.footer.buttons,
-            text=self.text["save"],
+            text=self.t("save"),
             command=self.save
         )
         self.save_button.pack(side="left", expand=True, fill="x", padx=(0, 6))
 
         self.close_button = SecondaryButton(
             self.footer.buttons,
-            text=self.text["close"],
+            text=self.t("close"),
             command=self.close
         )
         self.close_button.pack(side="left", expand=True, fill="x", padx=(6, 0))
@@ -514,10 +514,10 @@ class SettingsWindow(ctk.CTkToplevel):
         else:
             ctk.set_appearance_mode("Dark")
 
-        self.title(self.text["settings"])
-        self.settings_title.configure(text=self.text["settings"])
-        self.save_button.configure(text=self.text["save"])
-        self.close_button.configure(text=self.text["close"])
+        self.title(self.t("settings"))
+        self.settings_title.configure(text=self.t("settings"))
+        self.save_button.configure(text=self.t("save"))
+        self.close_button.configure(text=self.t("close"))
         self.remote_enabled_var.set(bool(saved_values.get("remote.enabled", False)))
         self.refresh_main_texts()
         self.logger.info("Settings UI refreshed")
