@@ -95,7 +95,7 @@ class RemoteWindow(ctk.CTkToplevel):
         self.rows = {}
         self.text_boxes = {}
 
-        self.title(self.TEXT["remote_access"])
+        self.title(self.ui_text("remote_access"))
         self.geometry("780x700")
         self.minsize(640, 540)
         self.transient(parent)
@@ -104,6 +104,13 @@ class RemoteWindow(ctk.CTkToplevel):
         self._build()
         self.protocol("WM_DELETE_WINDOW", self.close)
         self.refresh_remote_status()
+
+    def ui_text(self, key):
+        locale_key = REMOTE_TEXT_DEFAULT_KEYS.get(key, key)
+        value = translate_text(locale_key)
+        if value != locale_key:
+            return value
+        return self.TEXT[key]
 
     def _initialize_remote_state(self):
         self.logger.info("Remote configuration loaded")
@@ -165,7 +172,7 @@ class RemoteWindow(ctk.CTkToplevel):
         )
 
     def _build(self):
-        ctk.CTkLabel(self, text=self.TEXT["remote_access"], font=FONT_TITLE).pack(
+        ctk.CTkLabel(self, text=self.ui_text("remote_access"), font=FONT_TITLE).pack(
             anchor="w", padx=SPACING_LARGE, pady=(SPACING_LARGE, SPACING_MEDIUM)
         )
         self.status_label = StatusLabel(self, status="disabled", text=self.TEXT["checking"], anchor="w", justify="left")
@@ -174,65 +181,65 @@ class RemoteWindow(ctk.CTkToplevel):
         self.content = ctk.CTkScrollableFrame(self)
         self.content.pack(fill="both", expand=True, padx=SPACING_LARGE, pady=(0, SPACING_MEDIUM))
 
-        self._add_status_card(self.TEXT["remote_access"], [
-            ("remote_status", self.TEXT["remote_status"]),
-            ("mode", self.TEXT["remote_mode"]),
-            ("local_address", self.TEXT["local_address"]),
-            ("lan_address", self.TEXT["lan_address"]),
-            ("selected_adapter", self.TEXT["selected_network_adapter"]),
-            ("selected_lan_ip", self.TEXT["selected_lan_ip"]),
-            ("network_available", self.TEXT["network_available"]),
-            ("listening_ports", self.TEXT["listening_ports"]),
+        self._add_status_card(self.ui_text("remote_access"), [
+            ("remote_status", self.ui_text("remote_status")),
+            ("mode", self.ui_text("remote_mode")),
+            ("local_address", self.ui_text("local_address")),
+            ("lan_address", self.ui_text("lan_address")),
+            ("selected_adapter", self.ui_text("selected_network_adapter")),
+            ("selected_lan_ip", self.ui_text("selected_lan_ip")),
+            ("network_available", self.ui_text("network_available")),
+            ("listening_ports", self.ui_text("listening_ports")),
         ])
-        self._add_status_card(self.TEXT["safety_gate"], [
-            ("gate_network", self.TEXT["network"]),
-            ("gate_lan", self.TEXT["lan"]),
-            ("gate_auth_required", self.TEXT["required"]),
-            ("gate_auth_configured", self.TEXT["configured"]),
-            ("gate_security_confirmed", self.TEXT["security_confirmation"]),
-            ("gate_overall", self.TEXT["overall"]),
-            ("remote_safety_status", self.TEXT["remote_safety_status"]),
+        self._add_status_card(self.ui_text("safety_gate"), [
+            ("gate_network", self.ui_text("network")),
+            ("gate_lan", self.ui_text("lan")),
+            ("gate_auth_required", self.ui_text("required")),
+            ("gate_auth_configured", self.ui_text("configured")),
+            ("gate_security_confirmed", self.ui_text("security_confirmation")),
+            ("gate_overall", self.ui_text("overall")),
+            ("remote_safety_status", self.ui_text("remote_safety_status")),
         ])
-        self._add_status_card(self.TEXT["lan_chat"], [
-            ("lan_status_state", self.TEXT["lan_status_page"]),
-            ("lan_status_local_url", self.TEXT["local_url"]),
-            ("lan_status_lan_url", self.TEXT["lan_url"]),
-            ("lan_chat_state", self.TEXT["status"]),
-            ("lan_chat_url", self.TEXT["mobile_url"]),
-            ("lan_chat_confirmation", self.TEXT["mobile_access_confirmation"]),
+        self._add_status_card(self.ui_text("lan_chat"), [
+            ("lan_status_state", self.ui_text("lan_status_page")),
+            ("lan_status_local_url", self.ui_text("local_url")),
+            ("lan_status_lan_url", self.ui_text("lan_url")),
+            ("lan_chat_state", self.ui_text("status")),
+            ("lan_chat_url", self.ui_text("mobile_url")),
+            ("lan_chat_confirmation", self.ui_text("mobile_access_confirmation")),
         ])
-        self._add_status_card(self.TEXT["authentication"], [
-            ("auth_required_detail", self.TEXT["authentication_required"]),
-            ("auth_status_detail", self.TEXT["authentication_status"]),
-            ("auth_type_detail", self.TEXT["authentication_type"]),
-            ("token_status_detail", self.TEXT["token_status"]),
-            ("credential_storage_status", self.TEXT["credential_storage"]),
-            ("credential_provider_status", self.TEXT["provider"]),
-            ("credential_test_status", self.TEXT["test_status"]),
-            ("credential_last_check", self.TEXT["last_check_time"]),
+        self._add_status_card(self.ui_text("authentication"), [
+            ("auth_required_detail", self.ui_text("authentication_required")),
+            ("auth_status_detail", self.ui_text("authentication_status")),
+            ("auth_type_detail", self.ui_text("authentication_type")),
+            ("token_status_detail", self.ui_text("token_status")),
+            ("credential_storage_status", self.ui_text("credential_storage")),
+            ("credential_provider_status", self.ui_text("provider")),
+            ("credential_test_status", self.ui_text("test_status")),
+            ("credential_last_check", self.ui_text("last_check_time")),
         ])
-        self._add_status_card(self.TEXT["remote_health"], [
-            ("health_network", self.TEXT["network"]),
-            ("health_local_access", self.TEXT["local_access"]),
-            ("health_lan_access", self.TEXT["lan_access"]),
-            ("health_lan_readiness", self.TEXT["lan_readiness"]),
-            ("health_ios_access", self.TEXT["ios_access"]),
-            ("health_cellular_access", self.TEXT["cellular_access"]),
-            ("health_security", self.TEXT["security"]),
+        self._add_status_card(self.ui_text("remote_health"), [
+            ("health_network", self.ui_text("network")),
+            ("health_local_access", self.ui_text("local_access")),
+            ("health_lan_access", self.ui_text("lan_access")),
+            ("health_lan_readiness", self.ui_text("lan_readiness")),
+            ("health_ios_access", self.ui_text("ios_access")),
+            ("health_cellular_access", self.ui_text("cellular_access")),
+            ("health_security", self.ui_text("security")),
         ])
-        self._add_status_card(self.TEXT["mobile_debug_panel"], [
-            ("mobile_debug_client", self.TEXT["client"]),
-            ("mobile_debug_stage", self.TEXT["stage"]),
-            ("mobile_debug_status", self.TEXT["status"]),
-            ("mobile_debug_duration", self.TEXT["duration"]),
-            ("mobile_debug_model", self.TEXT["model_name"]),
-            ("mobile_debug_capability", self.TEXT["model_capability"]),
-            ("mobile_debug_ollama_url", self.TEXT["ollama_url"]),
-            ("mobile_debug_error", self.TEXT["error"]),
+        self._add_status_card(self.ui_text("mobile_debug_panel"), [
+            ("mobile_debug_client", self.ui_text("client")),
+            ("mobile_debug_stage", self.ui_text("stage")),
+            ("mobile_debug_status", self.ui_text("status")),
+            ("mobile_debug_duration", self.ui_text("duration")),
+            ("mobile_debug_model", self.ui_text("model_name")),
+            ("mobile_debug_capability", self.ui_text("model_capability")),
+            ("mobile_debug_ollama_url", self.ui_text("ollama_url")),
+            ("mobile_debug_error", self.ui_text("error")),
         ])
-        self._add_text_card(self.TEXT["lan_access_preparation"], "checklist", 120)
-        self._add_text_card(self.TEXT["credential_storage_diagnostics"], "credential_steps", 120)
-        self._add_text_card(self.TEXT["credential_history"], "credential_history", 140)
+        self._add_text_card(self.ui_text("lan_access_preparation"), "checklist", 120)
+        self._add_text_card(self.ui_text("credential_storage_diagnostics"), "credential_steps", 120)
+        self._add_text_card(self.ui_text("credential_history"), "credential_history", 140)
         self._add_hint()
         self._add_footer()
 
@@ -255,19 +262,19 @@ class RemoteWindow(ctk.CTkToplevel):
         self.text_boxes[key] = box
 
     def _add_hint(self):
-        card = SectionCard(self.content, self.TEXT["security_status"])
+        card = SectionCard(self.content, self.ui_text("security_status"))
         card.pack(fill="x", pady=(0, SPACING_MEDIUM))
         box = ctk.CTkTextbox(card.body, height=150, wrap="word", font=FONT_BODY)
         box.pack(fill="x")
         box.insert(
             "1.0",
             (
-                f"{self.TEXT['do_not_expose_warning']}\n\n"
-                f"{self.TEXT['auth_required_hint']}\n\n"
-                f"{self.TEXT['local_only_description']}\n"
-                f"{self.TEXT['lan_only_description']}\n"
-                f"{self.TEXT['secure_remote_description']}\n\n"
-                f"{self.TEXT['authentication_not_configured_hint']}"
+                f"{self.ui_text('do_not_expose_warning')}\n\n"
+                f"{self.ui_text('auth_required_hint')}\n\n"
+                f"{self.ui_text('local_only_description')}\n"
+                f"{self.ui_text('lan_only_description')}\n"
+                f"{self.ui_text('secure_remote_description')}\n\n"
+                f"{self.ui_text('authentication_not_configured_hint')}"
             )
         )
         box.configure(state="disabled")
@@ -276,18 +283,18 @@ class RemoteWindow(ctk.CTkToplevel):
         footer = FixedFooter(self)
         footer.pack(fill="x", padx=SPACING_LARGE, pady=(0, SPACING_LARGE))
         buttons = [
-            (SecondaryButton, self.TEXT["understand_risk"], self.confirm_remote_security),
-            (SecondaryButton, self.TEXT["setup_token"], self.setup_token_placeholder),
-            (SecondaryButton, self.TEXT["test_secure_storage"], self.test_secure_storage),
-            (DangerButton, self.TEXT["remove_test_credential"], self.remove_test_credential),
-            (PrimaryButton, self.TEXT["start_lan_status_page"], self.start_lan_status_page),
-            (SecondaryButton, self.TEXT["stop_lan_status_page"], self.stop_lan_status_page),
-            (SecondaryButton, self.TEXT["copy_lan_url"], self.copy_lan_url),
-            (PrimaryButton, self.TEXT["start_lan_chat"], self.start_lan_chat),
-            (SecondaryButton, self.TEXT["stop_lan_chat"], self.stop_lan_chat),
-            (SecondaryButton, self.TEXT["copy_mobile_url"], self.copy_mobile_url),
-            (SecondaryButton, self.TEXT["refresh"], self.refresh_remote_status),
-            (SecondaryButton, self.TEXT["close"], self.close),
+            (SecondaryButton, self.ui_text("understand_risk"), self.confirm_remote_security),
+            (SecondaryButton, self.ui_text("setup_token"), self.setup_token_placeholder),
+            (SecondaryButton, self.ui_text("test_secure_storage"), self.test_secure_storage),
+            (DangerButton, self.ui_text("remove_test_credential"), self.remove_test_credential),
+            (PrimaryButton, self.ui_text("start_lan_status_page"), self.start_lan_status_page),
+            (SecondaryButton, self.ui_text("stop_lan_status_page"), self.stop_lan_status_page),
+            (SecondaryButton, self.ui_text("copy_lan_url"), self.copy_lan_url),
+            (PrimaryButton, self.ui_text("start_lan_chat"), self.start_lan_chat),
+            (SecondaryButton, self.ui_text("stop_lan_chat"), self.stop_lan_chat),
+            (SecondaryButton, self.ui_text("copy_mobile_url"), self.copy_mobile_url),
+            (SecondaryButton, self.ui_text("refresh"), self.refresh_remote_status),
+            (SecondaryButton, self.ui_text("close"), self.close),
         ]
         for index, (button_class, text, command) in enumerate(buttons):
             button = button_class(footer.buttons, text=text, command=command)
@@ -609,7 +616,7 @@ class RemoteWindow(ctk.CTkToplevel):
     def start_lan_status_page(self):
         start_check = self.remote_manager.lan_status_start_check()
         if not start_check.get("user_confirmed"):
-            if not messagebox.askyesno(self.TEXT["lan_status_page"], self.TEXT["lan_status_warning"]):
+            if not messagebox.askyesno(self.ui_text("lan_status_page"), self.ui_text("lan_status_warning")):
                 self.status_label.set_status("error", self.TEXT["blocked"])
                 self.logger.info("LAN status page start blocked")
                 return
@@ -682,7 +689,7 @@ class RemoteWindow(ctk.CTkToplevel):
     def start_lan_chat(self):
         start_check = self.remote_manager.lan_chat_start_check()
         if not start_check.get("mobile_access_confirmed"):
-            if not messagebox.askyesno(self.TEXT["lan_chat"], self.TEXT["lan_chat_warning"]):
+            if not messagebox.askyesno(self.ui_text("lan_chat"), self.ui_text("lan_chat_warning")):
                 self.status_label.set_status("error", self.TEXT["blocked"])
                 self.logger.info("Mobile request blocked")
                 return
@@ -796,7 +803,7 @@ class RemoteDiagnosticsWindow(ctk.CTkToplevel):
         self.rows = {}
         self.text_boxes = {}
 
-        self.title(self.TEXT["remote_diagnostics"])
+        self.title(self.ui_text("remote_diagnostics"))
         self.geometry("760x680")
         self.minsize(620, 520)
         self.transient(parent)
@@ -805,7 +812,7 @@ class RemoteDiagnosticsWindow(ctk.CTkToplevel):
         self.refresh_remote_diagnostics()
 
     def _build(self):
-        ctk.CTkLabel(self, text=self.TEXT["remote_diagnostics"], font=FONT_TITLE).pack(
+        ctk.CTkLabel(self, text=self.ui_text("remote_diagnostics"), font=FONT_TITLE).pack(
             anchor="w", padx=SPACING_LARGE, pady=(SPACING_LARGE, SPACING_MEDIUM)
         )
         self.status_label = StatusLabel(self, status="disabled", text=self.TEXT["checking"], anchor="w", justify="left")
@@ -813,31 +820,31 @@ class RemoteDiagnosticsWindow(ctk.CTkToplevel):
         content = ctk.CTkScrollableFrame(self)
         content.pack(fill="both", expand=True, padx=SPACING_LARGE, pady=(0, SPACING_MEDIUM))
 
-        self._add_status_card(content, self.TEXT["remote_readiness_summary"], [
-            ("summary_network", self.TEXT["network"]),
-            ("summary_security", self.TEXT["security"]),
-            ("summary_authentication", self.TEXT["authentication"]),
-            ("summary_credential", self.TEXT["credential_storage"]),
+        self._add_status_card(content, self.ui_text("remote_readiness_summary"), [
+            ("summary_network", self.ui_text("network")),
+            ("summary_security", self.ui_text("security")),
+            ("summary_authentication", self.ui_text("authentication")),
+            ("summary_credential", self.ui_text("credential_storage")),
         ])
-        self._add_status_card(content, self.TEXT["credential_storage_details"], [
-            ("authentication_status_row", self.TEXT["authentication"]),
-            ("credential_status_row", self.TEXT["credential_storage"]),
-            ("credential_operation", self.TEXT["last_operation"]),
-            ("credential_operation_result", self.TEXT["operation_result"]),
-            ("credential_duration", self.TEXT["duration"]),
-            ("credential_error", self.TEXT["error_reason"]),
-            ("credential_suggestion", self.TEXT["suggestion"]),
+        self._add_status_card(content, self.ui_text("credential_storage_details"), [
+            ("authentication_status_row", self.ui_text("authentication")),
+            ("credential_status_row", self.ui_text("credential_storage")),
+            ("credential_operation", self.ui_text("last_operation")),
+            ("credential_operation_result", self.ui_text("operation_result")),
+            ("credential_duration", self.ui_text("duration")),
+            ("credential_error", self.ui_text("error_reason")),
+            ("credential_suggestion", self.ui_text("suggestion")),
         ])
-        self._add_text_card(content, "authentication_history", self.TEXT["authentication_history"], 120)
-        self._add_text_card(content, "credential_history", self.TEXT["credential_history"], 120)
-        self._add_text_card(content, "remote_history", self.TEXT["remote_history"], 120)
-        self._add_text_card(content, "release_check", self.TEXT["release_check"], 130)
+        self._add_text_card(content, "authentication_history", self.ui_text("authentication_history"), 120)
+        self._add_text_card(content, "credential_history", self.ui_text("credential_history"), 120)
+        self._add_text_card(content, "remote_history", self.ui_text("remote_history"), 120)
+        self._add_text_card(content, "release_check", self.ui_text("release_check"), 130)
 
         footer = FixedFooter(self)
         footer.pack(fill="x", padx=SPACING_LARGE, pady=(0, SPACING_LARGE))
-        SecondaryButton(footer.buttons, text=self.TEXT["refresh"], command=self.refresh_remote_diagnostics).pack(side="left", expand=True, fill="x", padx=(0, SPACING_SMALL))
-        PrimaryButton(footer.buttons, text=self.TEXT["release_check"], command=self.run_release_check).pack(side="left", expand=True, fill="x", padx=SPACING_SMALL)
-        SecondaryButton(footer.buttons, text=self.TEXT["close"], command=self.close).pack(side="left", expand=True, fill="x", padx=(SPACING_SMALL, 0))
+        SecondaryButton(footer.buttons, text=self.ui_text("refresh"), command=self.refresh_remote_diagnostics).pack(side="left", expand=True, fill="x", padx=(0, SPACING_SMALL))
+        PrimaryButton(footer.buttons, text=self.ui_text("release_check"), command=self.run_release_check).pack(side="left", expand=True, fill="x", padx=SPACING_SMALL)
+        SecondaryButton(footer.buttons, text=self.ui_text("close"), command=self.close).pack(side="left", expand=True, fill="x", padx=(SPACING_SMALL, 0))
 
     def _add_status_card(self, parent, title, specs):
         card = SectionCard(parent, title)
@@ -856,6 +863,13 @@ class RemoteDiagnosticsWindow(ctk.CTkToplevel):
         box.pack(fill="x")
         box.configure(state="disabled")
         self.text_boxes[key] = box
+
+    def ui_text(self, key):
+        locale_key = REMOTE_TEXT_DEFAULT_KEYS.get(key, key)
+        value = translate_text(locale_key)
+        if value != locale_key:
+            return value
+        return self.TEXT[key]
 
     def _set_row(self, key, text, status=None):
         if key in self.rows:
