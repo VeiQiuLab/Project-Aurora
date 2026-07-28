@@ -1,6 +1,16 @@
 import customtkinter as ctk
 
-from modules.ui_theme import FONT_HEADER, FONT_NORMAL, FONT_SMALL, SPACING_LARGE, SPACING_MEDIUM, SPACING_SMALL, status_color
+from modules.ui_theme import (
+    FORM_CONTROL_WIDTH,
+    FORM_LABEL_WRAP,
+    FONT_HEADER,
+    FONT_NORMAL,
+    FONT_SMALL,
+    SPACING_LARGE,
+    SPACING_MEDIUM,
+    SPACING_SMALL,
+    status_color
+)
 from widgets.ui_components import PrimaryButton, SectionCard, SecondaryButton, StatusLabel
 
 
@@ -43,7 +53,7 @@ class SettingsPage(ctk.CTkFrame):
         self.show_category(self.current_category)
 
     def _build(self):
-        self.sidebar = ctk.CTkFrame(self, width=180)
+        self.sidebar = ctk.CTkFrame(self, width=FORM_CONTROL_WIDTH)
         self.sidebar.grid(row=0, column=0, sticky="nsw", padx=(0, SPACING_MEDIUM))
         self.sidebar.grid_propagate(False)
 
@@ -84,7 +94,7 @@ class SettingsPage(ctk.CTkFrame):
             text="",
             font=FONT_NORMAL,
             text_color=status_color("disabled"),
-            wraplength=640,
+            wraplength=FORM_LABEL_WRAP * 2,
             justify="left",
             anchor="w"
         )
@@ -99,7 +109,7 @@ class SettingsPage(ctk.CTkFrame):
             text=self.t("settings_page_reuse_note"),
             anchor="w",
             justify="left",
-            wraplength=640
+            wraplength=FORM_LABEL_WRAP * 2
         )
         self.status_label.pack(fill="x", pady=(0, SPACING_MEDIUM))
 
@@ -114,7 +124,7 @@ class SettingsPage(ctk.CTkFrame):
             text=self.t("settings_page_footer_note"),
             font=FONT_SMALL,
             text_color=status_color("disabled"),
-            wraplength=640,
+            wraplength=FORM_LABEL_WRAP * 2,
             justify="left",
             anchor="w"
         )
@@ -155,4 +165,3 @@ class SettingsPage(ctk.CTkFrame):
     def _refresh_category_buttons(self):
         for category_id, button in self.category_buttons.items():
             button.configure(font=FONT_HEADER if category_id == self.current_category else FONT_NORMAL)
-
