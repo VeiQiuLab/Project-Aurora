@@ -4,7 +4,6 @@ from modules.ui_theme import (
     FONT_HEADER,
     FONT_NORMAL,
     FONT_SMALL,
-    SPACING_LARGE,
     SPACING_MEDIUM,
     SPACING_SMALL,
     status_color
