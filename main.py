@@ -337,7 +337,7 @@ status_frame.pack(
 
 status_title = ctk.CTkLabel(
     status_frame,
-    text=TEXT["system_status"],
+    text=t("system_status"),
     font=FONT_HEADER
 )
 status_title.pack(anchor="w", padx=15, pady=(12, 6))
@@ -352,7 +352,7 @@ startup_frame.pack(
 
 startup_title = ctk.CTkLabel(
     startup_frame,
-    text=TEXT["startup_status"],
+    text=t("startup_status"),
     font=FONT_HEADER
 )
 startup_title.pack(anchor="w", padx=15, pady=(12, 6))
@@ -380,7 +380,7 @@ for startup_item in [
 
     startup_state = ctk.CTkLabel(
         startup_row,
-        text=TEXT["ready"],
+        text=t("ready"),
         font=FONT_SMALL,
         text_color=COLOR_SUCCESS
     )
@@ -502,14 +502,14 @@ def show_first_run_wizard():
 
 status_summary_label = ctk.CTkLabel(
     status_frame,
-    text=TEXT["checking"],
+    text=t("checking"),
     font=FONT_NORMAL_BOLD,
     text_color=COLOR_MUTED
 )
 
 dashboard_last_check_label = ctk.CTkLabel(
     status_frame,
-    text=f"{TEXT['last_check']}: --",
+    text=f"{t('last_check')}: --",
     font=FONT_SMALL,
     text_color=COLOR_MUTED
 )
@@ -532,7 +532,7 @@ for name in ["Ollama", "Open WebUI", "API 11434"]:
 
     state = ctk.CTkLabel(
         row,
-        text=TEXT["checking"],
+        text=t("checking"),
         font=FONT_NORMAL,
         text_color=COLOR_MUTED
     )
@@ -546,7 +546,7 @@ for name in ["Docker Desktop", "Docker Engine"]:
     row.pack(fill="x", padx=15, pady=2)
     lbl = ctk.CTkLabel(row, text=name, anchor="w", font=FONT_NORMAL)
     lbl.pack(side="left")
-    state = ctk.CTkLabel(row, text=TEXT["checking"], font=FONT_SMALL, text_color=COLOR_MUTED)
+    state = ctk.CTkLabel(row, text=t("checking"), font=FONT_SMALL, text_color=COLOR_MUTED)
     state.pack(side="right")
     docker_status_labels[name] = state
 
@@ -706,7 +706,7 @@ showcase_frame.pack(fill="x", padx=20, pady=(0, 8))
 
 ctk.CTkLabel(
     showcase_frame,
-    text=TEXT["showcase"],
+    text=t("showcase"),
     font=FONT_HEADER
 ).pack(anchor="w", padx=15, pady=(12, 6))
 
@@ -717,11 +717,11 @@ for showcase_column in range(5):
     showcase_grid.grid_columnconfigure(showcase_column, weight=1)
 
 showcase_items = [
-    (TEXT["local_ai_chat"], TEXT["available_status"]),
-    (TEXT["memory_system"], TEXT["available_status"]),
-    (TEXT["knowledge_base"], TEXT["available_status"]),
-    (TEXT["persona_system"], TEXT["enabled"] if settings.get("persona.enabled", True) else TEXT["disabled"]),
-    (TEXT["remote_security"], TEXT["protected"])
+    (t("local_ai_chat"), t("available_status")),
+    (t("memory_system"), t("available_status")),
+    (t("knowledge_base"), t("available_status")),
+    (t("persona_system"), t("enabled") if settings.get("persona.enabled", True) else t("disabled")),
+    (t("remote_security"), t("protected"))
 ]
 
 for index, (feature_name, feature_status) in enumerate(showcase_items):
@@ -1563,7 +1563,7 @@ actions_frame.pack(fill="x", padx=20, pady=(0, 8))
 
 action_title = ctk.CTkLabel(
     actions_frame,
-    text=TEXT["quick_actions"],
+    text=t("quick_actions"),
     font=FONT_HEADER
 )
 action_title.pack(anchor="w", padx=15, pady=(5, 10))
@@ -1571,7 +1571,7 @@ action_title.pack(anchor="w", padx=15, pady=(5, 10))
 
 btn1 = ui_button(
     actions_frame,
-    text=TEXT["open_webui"],
+    text=t("open_webui"),
     command=launch_open_webui,
     kind="primary"
 )
@@ -1622,7 +1622,7 @@ btn_close_webui.pack(fill="x", padx=40, pady=8)
 
 btn2 = ui_button(
     actions_frame,
-    text=TEXT["models"],
+    text=t("models"),
     command=show_models
 )
 btn2.pack(fill="x", padx=40, pady=8)
@@ -1630,7 +1630,7 @@ btn2.pack(fill="x", padx=40, pady=8)
 
 btn_chat = ui_button(
     actions_frame,
-    text=TEXT["chat"],
+    text=t("chat"),
     command=show_chat,
     kind="primary"
 )
@@ -1647,7 +1647,7 @@ btn_conversation_browser.pack(fill="x", padx=40, pady=8)
 
 btn_memory = ui_button(
     actions_frame,
-    text=TEXT["memory"],
+    text=t("memory"),
     command=show_memory
 )
 btn_memory.pack(fill="x", padx=40, pady=8)
@@ -1655,7 +1655,7 @@ btn_memory.pack(fill="x", padx=40, pady=8)
 
 btn_persona = ui_button(
     actions_frame,
-    text=TEXT["persona"],
+    text=t("persona"),
     command=show_persona
 )
 btn_persona.pack(fill="x", padx=40, pady=8)
@@ -1671,7 +1671,7 @@ btn_knowledge.pack(fill="x", padx=40, pady=8)
 
 btn_remote = ui_button(
     actions_frame,
-    text=TEXT["remote_access"],
+    text=t("remote_access"),
     command=show_remote_access
 )
 btn_remote.pack(fill="x", padx=40, pady=8)
@@ -1679,7 +1679,7 @@ btn_remote.pack(fill="x", padx=40, pady=8)
 
 btn_remote_diagnostics = ui_button(
     actions_frame,
-    text=TEXT["remote_diagnostics"],
+    text=t("remote_diagnostics"),
     command=show_remote_diagnostics
 )
 btn_remote_diagnostics.pack(fill="x", padx=40, pady=8)
@@ -1728,31 +1728,31 @@ def show_settings():
 
 settings_button = ui_button(
     actions_frame,
-    text=TEXT["settings"],
+    text=t("settings"),
     command=show_settings
 )
 settings_button.pack(fill="x", padx=40, pady=8)
 
 
 def refresh_main_texts():
-    status_title.configure(text=TEXT["system_status"])
-    startup_title.configure(text=TEXT["startup_status"])
-    action_title.configure(text=TEXT["quick_actions"])
-    btn1.configure(text=TEXT["open_webui"])
+    status_title.configure(text=t("system_status"))
+    startup_title.configure(text=t("startup_status"))
+    action_title.configure(text=t("quick_actions"))
+    btn1.configure(text=t("open_webui"))
     btn_diagnostic.configure(text=t("runtime_environment_diagnostics"))
     btn_start_ollama.configure(text=t("start_ollama"))
     btn_restart_webui.configure(text=t("restart_openwebui"))
     btn_restart_container.configure(text=t("restart_container"))
     btn_close_webui.configure(text=t("close_openwebui"))
-    btn2.configure(text=TEXT["models"])
-    btn_chat.configure(text=TEXT["chat"])
+    btn2.configure(text=t("models"))
+    btn_chat.configure(text=t("chat"))
     btn_conversation_browser.configure(text=t("conversation_browser"))
-    btn_memory.configure(text=TEXT["memory"])
-    btn_persona.configure(text=TEXT["persona"])
+    btn_memory.configure(text=t("memory"))
+    btn_persona.configure(text=t("persona"))
     btn_knowledge.configure(text=t("knowledge_base"))
-    btn_remote.configure(text=TEXT["remote_access"])
-    btn_remote_diagnostics.configure(text=TEXT["remote_diagnostics"])
-    settings_button.configure(text=TEXT["settings"])
+    btn_remote.configure(text=t("remote_access"))
+    btn_remote_diagnostics.configure(text=t("remote_diagnostics"))
+    settings_button.configure(text=t("settings"))
 
 
 def health_check_legacy():
@@ -1799,12 +1799,12 @@ def health_check():
 
 def show_about():
     messagebox.showinfo(
-        TEXT["about_title"],
+        t("about_title"),
         f"{APP_NAME}\n\n"
         f"Version: v{VERSION}\n"
         f"Build: {BUILD}\n\n"
-        f"{TEXT['a_personal_local_ai_assistant']}\n\n"
-        f"{TEXT['core_features']}:\n"
+        f"{t('a_personal_local_ai_assistant')}\n\n"
+        f"{t('core_features')}:\n"
         f"- Local AI Chat\n"
         f"- Memory System\n"
         f"- Knowledge Base\n"
@@ -1827,7 +1827,7 @@ def shutdown_app():
 
 btn3 = ui_button(
     actions_frame,
-    text=TEXT["health"],
+    text=t("health"),
     command=health_check
 )
 btn3.pack(fill="x", padx=40, pady=8)
@@ -1835,7 +1835,7 @@ btn3.pack(fill="x", padx=40, pady=8)
 
 btn4 = ui_button(
     actions_frame,
-    text=TEXT["about"],
+    text=t("about"),
     command=show_about
 )
 btn4.pack(fill="x", padx=40, pady=8)
@@ -1843,7 +1843,7 @@ btn4.pack(fill="x", padx=40, pady=8)
 
 btn5 = ui_button(
     actions_frame,
-    text=TEXT["exit"],
+    text=t("exit"),
     command=shutdown_app,
     kind="danger"
 )
@@ -1852,8 +1852,8 @@ btn5.pack(fill="x", padx=40, pady=8)
 
 recent_log_title = ctk.CTkLabel(
     legacy_dashboard_frame,
-    text=TEXT["recent_log"],
-    font=("Microsoft YaHei", 16, "bold")
+    text=t("recent_log"),
+    font=FONT_HEADER
 )
 recent_log_title.pack(anchor="w", padx=35, pady=(5, 10))
 
@@ -1872,7 +1872,7 @@ def refresh_recent_logs():
     recent_log_box.delete("1.0", "end")
     recent_log_box.insert(
         "1.0",
-        logger.get_recent_logs_text() or TEXT["no_logs"]
+        logger.get_recent_logs_text() or t("no_logs")
     )
     recent_log_box.configure(state="disabled")
 
@@ -1939,13 +1939,13 @@ def apply_status(status):
         if online:
             label.configure(text=f"[{t('status_ok_short')}] {name}")
             state.configure(
-                text=TEXT["online"],
+                text=t("online"),
                 text_color=COLOR_SUCCESS
             )
         else:
             label.configure(text=f"[{t('status_off_short')}] {name}")
             state.configure(
-                text=TEXT["offline"],
+                text=t("offline"),
                 text_color=COLOR_ERROR
             )
         status_prefix = t("status_ok_short") if online else t("status_off_short")
@@ -1954,7 +1954,7 @@ def apply_status(status):
     online_count = sum(mapping.values())
     if online_count == len(mapping):
         status_summary_label.configure(
-            text=TEXT["all_ready"],
+            text=t("all_ready"),
             text_color=COLOR_SUCCESS
         )
     else:
@@ -1965,7 +1965,7 @@ def apply_status(status):
 
     dashboard_last_check_label.configure(
         text=(
-            f"{TEXT['last_check']}: "
+            f"{t('last_check')}: "
             f"{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}"
         ),
         text_color=COLOR_MUTED
@@ -1975,11 +1975,11 @@ def apply_status(status):
     docker_desktop = bool(status.get("docker_desktop", docker_ready))
     if "Docker Desktop" in docker_status_labels:
         docker_status_labels["Docker Desktop"].configure(
-            text=TEXT["online"] if docker_desktop else TEXT["offline"],
+            text=t("online") if docker_desktop else t("offline"),
             text_color=COLOR_SUCCESS if docker_desktop else COLOR_ERROR
         )
         docker_status_labels["Docker Engine"].configure(
-            text=TEXT["ready"] if docker_ready and "ready" in TEXT else ("Ready" if docker_ready else "Not Ready"),
+            text=t("ready") if docker_ready else t("not_ready"),
             text_color=COLOR_SUCCESS if docker_ready else COLOR_ERROR
         )
 
