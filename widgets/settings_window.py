@@ -1,6 +1,16 @@
 import customtkinter as ctk
 
-from modules.ui_theme import FONT_NORMAL, FONT_SMALL, FONT_TITLE, status_color
+from modules.ui_theme import (
+    FORM_CONTROL_WIDTH,
+    FORM_LABEL_WRAP,
+    FONT_NORMAL,
+    FONT_SMALL,
+    FONT_TITLE,
+    SPACING_SMALL,
+    SPACING_MEDIUM,
+    SPACING_LARGE,
+    status_color
+)
 from widgets.ui_components import (
     FixedFooter,
     FormRow,
@@ -12,6 +22,18 @@ from widgets.ui_components import (
 
 
 class SettingsWindow(ctk.CTkToplevel):
+    HEALTH_LABEL_KEYS = {
+        "Ollama": "settings_window_ollama",
+        "Chat Model": "chat_model",
+        "Embedding Model": "embedding_model",
+        "Persona": "persona",
+        "Memory": "memory",
+        "Knowledge": "knowledge",
+        "Vector Index": "vector_index",
+        "Conversation Store": "conversation",
+        "Remote": "remote"
+    }
+
     def __init__(
         self,
         parent,
@@ -61,13 +83,17 @@ class SettingsWindow(ctk.CTkToplevel):
             text=self.text["settings"],
             font=FONT_TITLE
         )
-        self.settings_title.pack(anchor="w", padx=25, pady=(20, 15))
+        self.settings_title.pack(
+            anchor="w",
+            padx=SPACING_LARGE + SPACING_SMALL,
+            pady=(SPACING_LARGE, SPACING_MEDIUM + SPACING_SMALL)
+        )
 
         self.footer = FixedFooter(self)
-        self.footer.pack(side="bottom", fill="x", padx=25, pady=(0, 20))
+        self.footer.pack(side="bottom", fill="x", padx=SPACING_LARGE + SPACING_SMALL, pady=(0, SPACING_LARGE))
 
         self.content = ctk.CTkScrollableFrame(self)
-        self.content.pack(side="top", fill="both", expand=True, padx=25, pady=(0, 12))
+        self.content.pack(side="top", fill="both", expand=True, padx=SPACING_LARGE + SPACING_SMALL, pady=(0, SPACING_MEDIUM))
         self.section_body = self.content
 
         self.build_general_section()
@@ -83,32 +109,32 @@ class SettingsWindow(ctk.CTkToplevel):
 
     def add_section_title(self, text):
         section = SectionCard(self.content, text)
-        section.pack(fill="x", padx=0, pady=(8, 10))
+        section.pack(fill="x", padx=0, pady=(SPACING_SMALL, SPACING_MEDIUM))
         self.section_body = section.body
         return section
 
     def add_option_row(self, label_text, values, current_value):
         row = FormRow(self.section_body, label_text)
-        row.pack(fill="x", pady=6)
+        row.pack(fill="x", pady=SPACING_SMALL)
         return row.add_option(values, current_value)
 
     def add_entry_row(self, label_text, current_value):
         row = FormRow(self.section_body, label_text)
-        row.pack(fill="x", pady=6)
+        row.pack(fill="x", pady=SPACING_SMALL)
         return row.add_entry(current_value)
 
     def add_status_row(self, label_text, value_text, status="disabled"):
         row = ctk.CTkFrame(self.section_body, fg_color="transparent")
-        row.pack(fill="x", pady=4)
+        row.pack(fill="x", pady=SPACING_SMALL)
         row.grid_columnconfigure(0, weight=1)
         ctk.CTkLabel(
             row,
             text=label_text,
             anchor="w",
             font=FONT_NORMAL,
-            wraplength=300,
+            wraplength=FORM_LABEL_WRAP,
             justify="left"
-        ).grid(row=0, column=0, sticky="w", padx=(0, 12))
+        ).grid(row=0, column=0, sticky="w", padx=(0, SPACING_MEDIUM))
         StatusLabel(
             row,
             status=status,
@@ -120,7 +146,7 @@ class SettingsWindow(ctk.CTkToplevel):
             self.section_body,
             text=text,
             variable=variable
-        ).pack(anchor="w", pady=6)
+        ).pack(anchor="w", pady=SPACING_SMALL)
 
     def build_general_section(self):
         self.add_section_title(self.t("general"))
@@ -260,9 +286,13 @@ class SettingsWindow(ctk.CTkToplevel):
         self.add_section_title(self.t("persona"))
         try:
             current_persona = self.persona_status_provider() if self.persona_status_provider else {}
-            self.add_status_row("Current Persona", current_persona.get("name", "Aurora"), "healthy")
+            self.add_status_row(
+                self.t("settings_window_current_persona"),
+                current_persona.get("name", "Aurora"),
+                "healthy"
+            )
         except Exception as error:
-            self.add_status_row("Current Persona", error, "error")
+            self.add_status_row(self.t("settings_window_current_persona"), error, "error")
         self.persona_enabled_var = ctk.BooleanVar(
             value=bool(self.settings.get("persona.enabled", True))
         )
@@ -316,8 +346,8 @@ class SettingsWindow(ctk.CTkToplevel):
             "Remote"
         ]:
             item = health_items.get(status_name, {})
-            value = item.get("status", "Unknown")
-            self.add_status_row("Conversation" if status_name == "Conversation Store" else status_name, value, value)
+            value = item.get("status", self.t("settings_window_unknown_status"))
+            self.add_status_row(self.t(self.HEALTH_LABEL_KEYS.get(status_name, status_name)), value, value)
 
         memory_details = health_items.get("Memory", {}).get("details", {})
         knowledge_details = health_items.get("Knowledge", {}).get("details", {})
@@ -352,7 +382,7 @@ class SettingsWindow(ctk.CTkToplevel):
         self.ollama_test_button = PrimaryButton(
             self.ollama_host_entry.master,
             text=self.text["test"],
-            width=70,
+            width=FORM_CONTROL_WIDTH // 3,
             command=lambda: self.test_service(
                 "Ollama",
                 self.ollama_host_entry.get().strip(),
@@ -365,7 +395,7 @@ class SettingsWindow(ctk.CTkToplevel):
         self.openwebui_test_button = PrimaryButton(
             self.openwebui_url_entry.master,
             text=self.text["test"],
-            width=70,
+            width=FORM_CONTROL_WIDTH // 3,
             command=lambda: self.test_service(
                 "Open WebUI",
                 self.openwebui_url_entry.get().strip(),
@@ -415,12 +445,12 @@ class SettingsWindow(ctk.CTkToplevel):
         button.configure(state="normal")
         if connected:
             label.configure(
-                text=f"\u2705 Connected ({elapsed_ms}ms)",
+                text=self.t("settings_window_connection_ok").format(elapsed_ms=elapsed_ms),
                 text_color=status_color("healthy")
             )
         else:
             label.configure(
-                text=f"\u274c Cannot connect - {reason}",
+                text=self.t("settings_window_connection_failed").format(reason=reason),
                 text_color=status_color("error")
             )
 
