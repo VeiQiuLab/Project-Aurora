@@ -2,7 +2,16 @@ import threading
 
 import customtkinter as ctk
 
-from modules.ui_theme import FONT_NORMAL, FONT_NORMAL_BOLD, FONT_SMALL, FONT_TITLE
+from modules.ui_theme import (
+    FONT_NORMAL,
+    FONT_NORMAL_BOLD,
+    FONT_SMALL,
+    FONT_TITLE,
+    FORM_CONTROL_WIDTH,
+    SPACING_SMALL,
+    SPACING_MEDIUM,
+    SPACING_LARGE
+)
 from widgets.ui_components import (
     FixedFooter,
     FormRow,
@@ -35,13 +44,13 @@ class ModelsWindow(ctk.CTkToplevel):
         self.settings_get = settings_get
         self.on_close_callback = on_close
         self.columns = [
-            (self.text["name"], "name", 220),
-            (self.text["id"], "model_id", 180),
-            (self.text["size"], "size", 110),
-            (self.text["modified"], "modified", 240)
+            (self.t("name"), "name", FORM_CONTROL_WIDTH),
+            (self.t("model_id"), "model_id", FORM_CONTROL_WIDTH - 70),
+            (self.t("size"), "size", FORM_CONTROL_WIDTH - 140),
+            (self.t("modified"), "modified", FORM_CONTROL_WIDTH)
         ]
 
-        self.title(self.text["models"])
+        self.title(self.t("models"))
         self.geometry("860x560")
         self.minsize(700, 420)
         self.transient(parent)
@@ -51,21 +60,21 @@ class ModelsWindow(ctk.CTkToplevel):
 
     def build(self):
         ctk.CTkLabel(self, text=self.t("ollama_models_title"), font=FONT_TITLE).pack(
-            anchor="w", padx=25, pady=(20, 12)
+            anchor="w", padx=SPACING_LARGE + SPACING_SMALL, pady=(SPACING_LARGE, SPACING_MEDIUM)
         )
 
         status_card = SectionCard(self, self.t("status_overview"))
-        status_card.pack(fill="x", padx=25, pady=(0, 10))
-        chat_row = FormRow(status_card.body, self.text["chat_model"])
-        chat_row.pack(fill="x", pady=6)
+        status_card.pack(fill="x", padx=SPACING_LARGE + SPACING_SMALL, pady=(0, SPACING_MEDIUM))
+        chat_row = FormRow(status_card.body, self.t("chat_model"))
+        chat_row.pack(fill="x", pady=SPACING_SMALL)
         self.chat_model_label = StatusLabel(
             chat_row.control_frame,
             status="disabled",
             text=str(self.settings_get("chat_model", ""))
         )
         self.chat_model_label.pack(side="left")
-        embedding_row = FormRow(status_card.body, self.text["embedding_model"])
-        embedding_row.pack(fill="x", pady=6)
+        embedding_row = FormRow(status_card.body, self.t("embedding_model"))
+        embedding_row.pack(fill="x", pady=SPACING_SMALL)
         self.embedding_model_label = StatusLabel(
             embedding_row.control_frame,
             status="disabled",
@@ -73,31 +82,31 @@ class ModelsWindow(ctk.CTkToplevel):
         )
         self.embedding_model_label.pack(side="left")
         count_row = FormRow(status_card.body, self.t("models"))
-        count_row.pack(fill="x", pady=6)
+        count_row.pack(fill="x", pady=SPACING_SMALL)
         self.count_label = StatusLabel(count_row.control_frame, status="disabled", text="--")
         self.count_label.pack(side="left")
-        self.status_label = StatusLabel(status_card.body, status="disabled", text=self.text["checking"], anchor="w", justify="left")
-        self.status_label.pack(fill="x", pady=(8, 0))
+        self.status_label = StatusLabel(status_card.body, status="disabled", text=self.t("checking"), anchor="w", justify="left")
+        self.status_label.pack(fill="x", pady=(SPACING_MEDIUM - SPACING_SMALL, 0))
 
-        list_card = SectionCard(self, self.text["models"])
-        list_card.pack(fill="both", expand=True, padx=25, pady=(0, 10))
+        list_card = SectionCard(self, self.t("model_list_title"))
+        list_card.pack(fill="both", expand=True, padx=SPACING_LARGE + SPACING_SMALL, pady=(0, SPACING_MEDIUM))
         self.model_table = ctk.CTkScrollableFrame(list_card.body)
         self.model_table.pack(fill="both", expand=True)
         self.render_header()
 
         self.footer = FixedFooter(self)
-        self.footer.pack(fill="x", padx=25, pady=(0, 20))
+        self.footer.pack(fill="x", padx=SPACING_LARGE + SPACING_SMALL, pady=(0, SPACING_LARGE))
         self.refresh_button = PrimaryButton(
             self.footer.buttons,
-            text=self.text["refresh"],
+            text=self.t("refresh"),
             command=self.refresh_models
         )
-        self.refresh_button.pack(side="left", expand=True, fill="x", padx=(0, 6))
+        self.refresh_button.pack(side="left", expand=True, fill="x", padx=(0, SPACING_SMALL))
         SecondaryButton(
             self.footer.buttons,
-            text=self.text["close"],
+            text=self.t("close"),
             command=self.close
-        ).pack(side="left", expand=True, fill="x", padx=(6, 0))
+        ).pack(side="left", expand=True, fill="x", padx=(SPACING_SMALL, 0))
 
     def render_header(self):
         for index, (label, _field, width) in enumerate(self.columns):
@@ -108,7 +117,7 @@ class ModelsWindow(ctk.CTkToplevel):
                 width=width,
                 anchor="w",
                 font=FONT_NORMAL_BOLD
-            ).grid(row=0, column=index, padx=8, pady=(8, 6), sticky="w")
+            ).grid(row=0, column=index, padx=SPACING_MEDIUM - SPACING_SMALL, pady=(SPACING_MEDIUM - SPACING_SMALL, SPACING_SMALL), sticky="w")
 
     def clear_rows(self):
         for widget in self.model_table.winfo_children():
@@ -126,11 +135,11 @@ class ModelsWindow(ctk.CTkToplevel):
         if not records:
             ctk.CTkLabel(
                 self.model_table,
-                text=self.text["no_models"],
+                text=self.t("models_window_no_models"),
                 font=FONT_NORMAL,
                 text_color=self.count_label.cget("text_color")
-            ).grid(row=1, column=0, columnspan=len(self.columns), padx=8, pady=20)
-            self.status_label.set_status("warning", self.text["no_models"])
+            ).grid(row=1, column=0, columnspan=len(self.columns), padx=SPACING_MEDIUM - SPACING_SMALL, pady=SPACING_LARGE)
+            self.status_label.set_status("warning", self.t("models_window_no_models"))
             return
         for row_index, record in enumerate(records, start=1):
             for column_index, (_label, field, width) in enumerate(self.columns):
@@ -140,13 +149,13 @@ class ModelsWindow(ctk.CTkToplevel):
                     width=width,
                     anchor="w",
                     font=FONT_SMALL
-                ).grid(row=row_index, column=column_index, padx=8, pady=6, sticky="w")
-        self.status_label.set_status("healthy", f"{len(records)} {self.text['models']}")
+                ).grid(row=row_index, column=column_index, padx=SPACING_MEDIUM - SPACING_SMALL, pady=SPACING_SMALL, sticky="w")
+        self.status_label.set_status("healthy", self.t("models_window_models_loaded").format(count=len(records)))
         self.logger.info(f"Models loaded: {len(records)}")
 
     def refresh_models(self):
-        self.refresh_button.configure(state="disabled", text=self.text["checking"])
-        self.status_label.set_status("disabled", self.text["checking"])
+        self.refresh_button.configure(state="disabled", text=self.t("checking"))
+        self.status_label.set_status("disabled", self.t("checking"))
 
         def load_model_rows():
             try:
@@ -159,7 +168,7 @@ class ModelsWindow(ctk.CTkToplevel):
                 if not self.winfo_exists():
                     return
                 self.update_model_rows(loaded_records)
-                self.refresh_button.configure(state="normal", text=self.text["refresh"])
+                self.refresh_button.configure(state="normal", text=self.t("refresh"))
 
             try:
                 self.after(0, finish)
