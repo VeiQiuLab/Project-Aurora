@@ -73,7 +73,10 @@ class ChatPage(ctk.CTkFrame):
             anchor="w"
         ).grid(row=0, column=0, sticky="ew", padx=SPACING_MEDIUM, pady=(SPACING_LARGE, SPACING_SMALL))
 
-        self.search_entry = ctk.CTkEntry(self.sidebar)
+        self.search_entry = ctk.CTkEntry(
+            self.sidebar,
+            placeholder_text=self.t("chat_page_search_placeholder")
+        )
         self.search_entry.grid(row=1, column=0, sticky="ew", padx=SPACING_MEDIUM, pady=SPACING_SMALL)
 
         PrimaryButton(
@@ -214,4 +217,3 @@ class ChatPage(ctk.CTkFrame):
             updated = str(record.get("updated_at") or "")
             labels.append(f"{title}  {updated}".strip())
         return labels
-
