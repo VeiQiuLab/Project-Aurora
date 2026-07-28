@@ -26,7 +26,17 @@ class AppShell(ctk.CTkFrame):
         ("settings", "nav_settings")
     ]
 
-    def __init__(self, parent, *, app_name="Aurora", translate=None, nav_items=None, on_page_change=None, **kwargs):
+    def __init__(
+        self,
+        parent,
+        *,
+        app_name="Aurora",
+        translate=None,
+        nav_items=None,
+        page_builders=None,
+        on_page_change=None,
+        **kwargs
+    ):
         kwargs.setdefault("fg_color", "transparent")
         super().__init__(parent, **kwargs)
         self.app_name = app_name
@@ -34,7 +44,7 @@ class AppShell(ctk.CTkFrame):
         self.nav_items = list(nav_items or self.DEFAULT_NAV_ITEMS)
         self.on_page_change = on_page_change
         self.current_page = None
-        self.page_builders = {}
+        self.page_builders = dict(page_builders or {})
         self.page_frames = {}
         self.nav_buttons = {}
 
@@ -165,4 +175,3 @@ class AppShell(ctk.CTkFrame):
         for page_id, button in self.nav_buttons.items():
             selected = page_id == self.current_page
             button.configure(font=FONT_HEADER if selected else FONT_NORMAL)
-
