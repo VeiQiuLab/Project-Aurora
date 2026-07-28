@@ -154,6 +154,10 @@ from modules.language import TEXT, set_language as set_legacy_language
 from modules.i18n import normalize_language, set_language as set_i18n_language, t
 from modules.ui_theme import (
     button_style,
+    COLOR_ERROR,
+    COLOR_MUTED,
+    COLOR_SUCCESS,
+    COLOR_WARNING,
     FONT_APP_TITLE,
     FONT_HEADER,
     FONT_NORMAL,
@@ -371,14 +375,14 @@ for startup_item in [
         startup_row,
         text=startup_item,
         anchor="w",
-        font=("Microsoft YaHei", 13)
+        font=FONT_NORMAL
     ).pack(side="left")
 
     startup_state = ctk.CTkLabel(
         startup_row,
         text=TEXT["ready"],
-        font=("Microsoft YaHei", 12),
-        text_color="#32CD32"
+        font=FONT_SMALL,
+        text_color=COLOR_SUCCESS
     )
     startup_state.pack(side="right")
     startup_status_labels[startup_item] = startup_state
@@ -499,15 +503,15 @@ def show_first_run_wizard():
 status_summary_label = ctk.CTkLabel(
     status_frame,
     text=TEXT["checking"],
-    font=("Microsoft YaHei", 13, "bold"),
-    text_color="gray"
+    font=FONT_NORMAL_BOLD,
+    text_color=COLOR_MUTED
 )
 
 dashboard_last_check_label = ctk.CTkLabel(
     status_frame,
     text=f"{TEXT['last_check']}: --",
-    font=("Microsoft YaHei", 12),
-    text_color="gray"
+    font=FONT_SMALL,
+    text_color=COLOR_MUTED
 )
 
 for name in ["Ollama", "Open WebUI", "API 11434"]:
@@ -522,15 +526,15 @@ for name in ["Ollama", "Open WebUI", "API 11434"]:
         row,
         text=f"[ ] {name}",
         anchor="w",
-        font=("Microsoft YaHei", 15)
+        font=FONT_SECTION
     )
     lbl.pack(side="left")
 
     state = ctk.CTkLabel(
         row,
         text=TEXT["checking"],
-        font=("Microsoft YaHei", 13),
-        text_color="gray"
+        font=FONT_NORMAL,
+        text_color=COLOR_MUTED
     )
     state.pack(side="right")
 
@@ -540,9 +544,9 @@ docker_status_labels = {}
 for name in ["Docker Desktop", "Docker Engine"]:
     row = ctk.CTkFrame(status_frame, fg_color="transparent")
     row.pack(fill="x", padx=15, pady=2)
-    lbl = ctk.CTkLabel(row, text=name, anchor="w", font=("Microsoft YaHei", 13))
+    lbl = ctk.CTkLabel(row, text=name, anchor="w", font=FONT_NORMAL)
     lbl.pack(side="left")
-    state = ctk.CTkLabel(row, text=TEXT["checking"], font=("Microsoft YaHei", 12), text_color="gray")
+    state = ctk.CTkLabel(row, text=TEXT["checking"], font=FONT_SMALL, text_color=COLOR_MUTED)
     state.pack(side="right")
     docker_status_labels[name] = state
 
@@ -551,13 +555,13 @@ dashboard_last_check_label.pack(pady=(0, 10))
 
 diagnostic_title = ctk.CTkLabel(
     status_frame,
-    text="AI Environment Diagnostic",
-    font=("Microsoft YaHei", 15, "bold")
+    text=t("ai_environment_diagnostic"),
+    font=FONT_SECTION
 )
 diagnostic_title.pack(anchor="w", padx=15, pady=(2, 4))
 diagnostic_box = ctk.CTkTextbox(status_frame, height=105, wrap="word")
 diagnostic_box.pack(fill="x", padx=15, pady=(0, 10))
-diagnostic_box.insert("1.0", "Diagnostic not started")
+diagnostic_box.insert("1.0", t("diagnostic_not_started"))
 diagnostic_box.configure(state="disabled")
 diagnostic_running = False
 
@@ -577,7 +581,7 @@ health_center_summary = ctk.CTkLabel(
     health_center_header,
     text=t("checking"),
     font=FONT_NORMAL_BOLD,
-    text_color="gray"
+    text_color=COLOR_MUTED
 )
 health_center_summary.pack(side="right")
 
@@ -617,7 +621,7 @@ for column, (group_title, health_names) in enumerate(health_center_groups):
             row_frame,
             text=t("checking"),
             font=FONT_SMALL_BOLD,
-            text_color="gray",
+            text_color=COLOR_MUTED,
             anchor="e",
             width=78
         )
@@ -633,7 +637,7 @@ for stat_name in ["Memory", "Knowledge", "Conversation"]:
         health_stats_frame,
         text=f"{stat_name}: --",
         font=FONT_SMALL,
-        text_color="gray"
+        text_color=COLOR_MUTED
     )
     stat_label.pack(side="left", padx=(0, 18))
     health_stat_labels[stat_name] = stat_label
@@ -650,9 +654,9 @@ def refresh_system_health_center():
     if health_center_running:
         return
     health_center_running = True
-    health_center_summary.configure(text=t("checking"), text_color="gray")
+    health_center_summary.configure(text=t("checking"), text_color=COLOR_MUTED)
     for label in health_center_labels.values():
-        label.configure(text=t("checking"), text_color="gray")
+        label.configure(text=t("checking"), text_color=COLOR_MUTED)
 
     def run_check():
         try:
@@ -683,7 +687,7 @@ def refresh_system_health_center():
 
             overall = report.get("status", "Error")
             if error_message:
-                health_center_summary.configure(text="Error", text_color="red")
+                health_center_summary.configure(text=t("error"), text_color=COLOR_ERROR)
                 logger.error(f"Dashboard health center failed: {error_message}")
             else:
                 health_center_summary.configure(text=overall, text_color=health_status_color(overall))
@@ -703,7 +707,7 @@ showcase_frame.pack(fill="x", padx=20, pady=(0, 8))
 ctk.CTkLabel(
     showcase_frame,
     text=TEXT["showcase"],
-    font=("Microsoft YaHei", 16, "bold")
+    font=FONT_HEADER
 ).pack(anchor="w", padx=15, pady=(12, 6))
 
 showcase_grid = ctk.CTkFrame(showcase_frame, fg_color="transparent")
@@ -726,13 +730,13 @@ for index, (feature_name, feature_status) in enumerate(showcase_items):
     ctk.CTkLabel(
         feature_card,
         text=feature_name,
-        font=("Microsoft YaHei", 12, "bold")
+        font=FONT_SMALL_BOLD
     ).pack(pady=(10, 2))
     ctk.CTkLabel(
         feature_card,
         text=feature_status,
-        font=("Microsoft YaHei", 11),
-        text_color="#32CD32"
+        font=FONT_SMALL,
+        text_color=COLOR_SUCCESS
     ).pack(pady=(0, 10))
 
 logger.info("Showcase opened")
@@ -1078,7 +1082,7 @@ def show_context_inspector(payload, parent_window=None):
             else:
                 body.pack(fill="x", padx=12, pady=(0, 12))
 
-        title_button = ctk.CTkButton(
+        title_button = ui_button(
             outer,
             text=f"\u25bc {name}",
             anchor="w",
@@ -1087,24 +1091,24 @@ def show_context_inspector(payload, parent_window=None):
         title_button.pack(fill="x", padx=10, pady=(10, 6))
 
         meta = (
-            f"Status: {'Enabled' if record.get('enabled') else 'Disabled'}\n"
-            f"Characters: {record.get('characters', 0)}\n"
-            f"Tokens: {record.get('tokens', 0)}"
+            f"{t('status')}: {t('enabled') if record.get('enabled') else t('disabled')}\n"
+            f"{t('characters')}: {record.get('characters', 0)}\n"
+            f"{t('tokens')}: {record.get('tokens', 0)}"
         )
         ctk.CTkLabel(
             body,
             text=meta,
-            font=("Microsoft YaHei", 12),
-            text_color="gray",
+            font=FONT_SMALL,
+            text_color=COLOR_MUTED,
             anchor="w",
             justify="left"
         ).pack(anchor="w", pady=(0, 6))
 
         content = str(record.get("content", "") or "")
         if len(content) > preview_limit:
-            content = content[:preview_limit] + "\n\n[Context preview truncated]"
+            content = content[:preview_limit] + f"\n\n[{t('context_preview_truncated')}]"
         if not content.strip():
-            content = "[No content]"
+            content = f"[{t('no_content')}]"
         text_box = ctk.CTkTextbox(body, height=150, wrap="word")
         text_box.pack(fill="x")
         text_box.insert("1.0", content)
@@ -1117,17 +1121,17 @@ def show_context_inspector(payload, parent_window=None):
     bottom = ctk.CTkFrame(context_inspector_window, fg_color="transparent")
     bottom.pack(fill="x", padx=25, pady=(0, 20))
 
-    status_label = ctk.CTkLabel(bottom, text="", font=("Microsoft YaHei", 12), text_color="gray")
+    status_label = ctk.CTkLabel(bottom, text="", font=FONT_SMALL, text_color=COLOR_MUTED)
     status_label.pack(side="left", padx=(0, 10))
 
     def copy_final_prompt():
         try:
             context_inspector_window.clipboard_clear()
             context_inspector_window.clipboard_append(payload.get("final_prompt", ""))
-            status_label.configure(text="Final Prompt copied.", text_color="#32CD32")
+            status_label.configure(text=t("final_prompt_copied"), text_color=COLOR_SUCCESS)
             logger.info("Final prompt copied")
         except Exception as error:
-            status_label.configure(text="Copy failed.", text_color="red")
+            status_label.configure(text=t("copy_failed"), text_color=COLOR_ERROR)
             logger.error(f"Final prompt copy failed: {error}")
 
     def close_context_inspector():
@@ -1135,8 +1139,8 @@ def show_context_inspector(payload, parent_window=None):
         context_inspector_window.destroy()
         context_inspector_window = None
 
-    ctk.CTkButton(bottom, text="Copy Final Prompt", command=copy_final_prompt).pack(side="right", padx=(6, 0))
-    ctk.CTkButton(bottom, text=TEXT["close"], command=close_context_inspector).pack(side="right", padx=6)
+    ui_button(bottom, text=t("copy_final_prompt"), command=copy_final_prompt).pack(side="right", padx=(6, 0))
+    ui_button(bottom, text=t("close"), command=close_context_inspector).pack(side="right", padx=6)
     context_inspector_window.protocol("WM_DELETE_WINDOW", close_context_inspector)
 
 
@@ -1722,7 +1726,7 @@ def show_settings():
     )
 
 
-settings_button = ctk.CTkButton(
+settings_button = ui_button(
     actions_frame,
     text=TEXT["settings"],
     command=show_settings
@@ -1821,7 +1825,7 @@ def shutdown_app():
     app.destroy()
 
 
-btn3 = ctk.CTkButton(
+btn3 = ui_button(
     actions_frame,
     text=TEXT["health"],
     command=health_check
@@ -1829,7 +1833,7 @@ btn3 = ctk.CTkButton(
 btn3.pack(fill="x", padx=40, pady=8)
 
 
-btn4 = ctk.CTkButton(
+btn4 = ui_button(
     actions_frame,
     text=TEXT["about"],
     command=show_about
@@ -1837,10 +1841,11 @@ btn4 = ctk.CTkButton(
 btn4.pack(fill="x", padx=40, pady=8)
 
 
-btn5 = ctk.CTkButton(
+btn5 = ui_button(
     actions_frame,
     text=TEXT["exit"],
-    command=shutdown_app
+    command=shutdown_app,
+    kind="danger"
 )
 btn5.pack(fill="x", padx=40, pady=8)
 
@@ -1935,13 +1940,13 @@ def apply_status(status):
             label.configure(text=f"[{t('status_ok_short')}] {name}")
             state.configure(
                 text=TEXT["online"],
-                text_color="#32CD32"
+                text_color=COLOR_SUCCESS
             )
         else:
             label.configure(text=f"[{t('status_off_short')}] {name}")
             state.configure(
                 text=TEXT["offline"],
-                text_color="red"
+                text_color=COLOR_ERROR
             )
         status_prefix = t("status_ok_short") if online else t("status_off_short")
         label.configure(text=f"[{status_prefix}] {display_name}")
@@ -1950,12 +1955,12 @@ def apply_status(status):
     if online_count == len(mapping):
         status_summary_label.configure(
             text=TEXT["all_ready"],
-            text_color="#32CD32"
+            text_color=COLOR_SUCCESS
         )
     else:
         status_summary_label.configure(
             text=f"{online_count} / {len(mapping)} services online",
-            text_color="orange"
+            text_color=COLOR_WARNING
         )
 
     dashboard_last_check_label.configure(
@@ -1963,7 +1968,7 @@ def apply_status(status):
             f"{TEXT['last_check']}: "
             f"{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}"
         ),
-        text_color="gray"
+        text_color=COLOR_MUTED
     )
 
     docker_ready = bool(status.get("docker", False))
@@ -1971,11 +1976,11 @@ def apply_status(status):
     if "Docker Desktop" in docker_status_labels:
         docker_status_labels["Docker Desktop"].configure(
             text=TEXT["online"] if docker_desktop else TEXT["offline"],
-            text_color="#32CD32" if docker_desktop else "red"
+            text_color=COLOR_SUCCESS if docker_desktop else COLOR_ERROR
         )
         docker_status_labels["Docker Engine"].configure(
             text=TEXT["ready"] if docker_ready and "ready" in TEXT else ("Ready" if docker_ready else "Not Ready"),
-            text_color="#32CD32" if docker_ready else "red"
+            text_color=COLOR_SUCCESS if docker_ready else COLOR_ERROR
         )
 
     try:
