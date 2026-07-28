@@ -122,6 +122,12 @@ class AppShell(ctk.CTkFrame):
     def register_page(self, page_id, builder):
         self.page_builders[page_id] = builder
 
+    def register_pages(self, page_builders):
+        self.page_builders.update(page_builders or {})
+
+    def navigate(self, page_id):
+        self.show_page(page_id)
+
     def show_page(self, page_id):
         if page_id not in {item[0] for item in self.nav_items}:
             return

@@ -170,6 +170,7 @@ from modules.search import search_memories, search_conversations
 from modules.memory_retrieval import format_memory_context, retrieve_memories
 from modules.retrieval import format_knowledge_context, search_knowledge, retrieval_summary
 from modules.service_manager import ServiceManager
+from widgets.app_shell import AppShell
 from widgets.chat_window import ChatWindow
 from widgets.conversation_browser import ConversationBrowserWindow
 from widgets.first_run_wizard import FirstRunWizard
@@ -178,6 +179,13 @@ from widgets.knowledge_window import KnowledgeWindow
 from widgets.memory_window import MemoryWindow
 from widgets.models_window import ModelsWindow
 from widgets.persona_window import PersonaWindow
+from widgets.pages.chat_page import ChatPage
+from widgets.pages.home_page import HomePage
+from widgets.pages.library_page import LibraryPage
+from widgets.pages.memory_page import MemoryPage
+from widgets.pages.persona_page import PersonaPage
+from widgets.pages.remote_page import RemotePage
+from widgets.pages.settings_page import SettingsPage
 from widgets.remote_window import RemoteWindow, RemoteDiagnosticsWindow
 from widgets.settings_window import SettingsWindow
 
@@ -376,6 +384,7 @@ for startup_item in [
     startup_status_labels[startup_item] = startup_state
 
 status_labels = {}
+app_shell = None
 models_window = None
 health_window = None
 settings_window = None
@@ -2124,9 +2133,240 @@ def startup_check():
     threading.Thread(target=check_services, daemon=True).start()
 
 
+def navigate_app_shell(page_name):
+    if app_shell is not None:
+        app_shell.navigate(page_name)
+
+
+def app_shell_home_status_provider():
+    memory_count = 0
+    knowledge_count = 0
+    persona_name = "--"
+    try:
+        memory_count = len(memory_store.list_memories())
+    except Exception as error:
+        logger.error(f"AppShell memory status failed: {error}")
+    try:
+        knowledge_health = knowledge_store.health()
+        knowledge_count = knowledge_health.get("total", 0)
+    except Exception as error:
+        logger.error(f"AppShell knowledge status failed: {error}")
+    try:
+        persona_status = persona_store.status(
+            settings.get("persona.enabled", True),
+            persona_store.load(update_timestamp=False)
+        )
+        persona_name = persona_status.get("name", "--")
+    except Exception as error:
+        logger.error(f"AppShell persona status failed: {error}")
+
+    remote_enabled = settings.get("remote.enabled", False)
+    chat_model = settings.get("chat_model", "")
+    return {
+        "overall": "healthy",
+        "summary": t("app_shell_ready"),
+        "ai_runtime": {
+            "status": "healthy" if chat_model else "warning",
+            "text": t("ready") if chat_model else t("missing"),
+            "detail": chat_model or "--"
+        },
+        "memory": {
+            "status": "healthy",
+            "text": t("ready"),
+            "detail": f"{t('memory_count')}: {memory_count}"
+        },
+        "knowledge": {
+            "status": "healthy",
+            "text": t("ready"),
+            "detail": f"{t('knowledge_documents')}: {knowledge_count}"
+        },
+        "persona": {
+            "status": "enabled" if settings.get("persona.enabled", True) else "disabled",
+            "text": t("enabled") if settings.get("persona.enabled", True) else t("disabled"),
+            "detail": persona_name
+        },
+        "remote": {
+            "status": "enabled" if remote_enabled else "disabled",
+            "text": t("enabled") if remote_enabled else t("disabled"),
+            "detail": t("remote")
+        }
+    }
+
+
+def app_shell_library_status_provider():
+    try:
+        health = knowledge_store.health()
+        vector_health = health.get("vector_index", {})
+        index_exists = bool(vector_health.get("exists"))
+        return {
+            "status": "healthy" if settings.get("knowledge.enabled", True) else "disabled",
+            "text": t("enabled") if settings.get("knowledge.enabled", True) else t("disabled"),
+            "documents": health.get("total", 0),
+            "retrieval": t("ready") if settings.get("knowledge.enabled", True) else t("disabled"),
+            "retrieval_state": "healthy" if settings.get("knowledge.enabled", True) else "disabled",
+            "index": t("available") if index_exists else t("missing"),
+            "index_state": "healthy" if index_exists else "warning"
+        }
+    except Exception as error:
+        logger.error(f"AppShell library status failed: {error}")
+        return {"status": "error", "text": str(error)}
+
+
+def app_shell_memory_status_provider():
+    try:
+        memories = memory_store.list_memories()
+        return {
+            "status": "healthy",
+            "text": t("available"),
+            "total": len(memories),
+            "recent": min(len(memories), 5)
+        }
+    except Exception as error:
+        logger.error(f"AppShell memory status failed: {error}")
+        return {"status": "error", "text": str(error)}
+
+
+def app_shell_persona_status_provider():
+    try:
+        persona = persona_store.load(update_timestamp=False)
+        status = persona_store.status(settings.get("persona.enabled", True), persona)
+        status.update({
+            "description": persona.get("description", ""),
+            "style": persona.get("style", "")
+        })
+        return status
+    except Exception as error:
+        logger.error(f"AppShell persona status failed: {error}")
+        return {"status": "error", "text": str(error)}
+
+
+def app_shell_remote_status_provider():
+    remote_enabled = settings.get("remote.enabled", False)
+    auth_configured = settings.get("remote.authentication_configured", False)
+    security_confirmed = settings.get("remote.security_confirmed", False)
+    return {
+        "status": "enabled" if remote_enabled else "disabled",
+        "text": t("enabled") if remote_enabled else t("disabled"),
+        "remote": t("enabled") if remote_enabled else t("disabled"),
+        "authentication": t("configured") if auth_configured else t("not_configured"),
+        "safety": t("confirmed") if security_confirmed else t("not_confirmed"),
+        "devices": t("not_available_this_version"),
+        "security_policy": t("configured"),
+        "access_control": t("configured")
+    }
+
+
+def app_shell_settings_status_provider():
+    return {
+        "status": "healthy",
+        "text": t("settings_page_reuse_note")
+    }
+
+
+def app_shell_conversation_provider():
+    try:
+        return ConversationManager().list_conversations()
+    except Exception as error:
+        logger.error(f"AppShell conversation list failed: {error}")
+        return []
+
+
+def create_app_shell():
+    global app_shell
+    if app_shell is not None:
+        return app_shell
+
+    page_builders = {
+        "home": lambda parent: HomePage(
+            parent,
+            translate=t,
+            status_provider=app_shell_home_status_provider,
+            quick_actions={
+                "new_chat": lambda: navigate_app_shell("chat"),
+                "open_library": lambda: navigate_app_shell("library"),
+                "settings": lambda: navigate_app_shell("settings")
+            },
+            logger=logger
+        ),
+        "chat": lambda parent: ChatPage(
+            parent,
+            translate=t,
+            open_chat_callback=show_chat,
+            new_chat_callback=show_chat,
+            conversation_provider=app_shell_conversation_provider,
+            model_provider=lambda: settings.get("chat_model", ""),
+            logger=logger
+        ),
+        "library": lambda parent: LibraryPage(
+            parent,
+            translate=t,
+            open_knowledge_callback=show_knowledge,
+            knowledge_status_provider=app_shell_library_status_provider,
+            logger=logger
+        ),
+        "memory": lambda parent: MemoryPage(
+            parent,
+            translate=t,
+            open_memory_callback=show_memory,
+            memory_status_provider=app_shell_memory_status_provider,
+            logger=logger
+        ),
+        "persona": lambda parent: PersonaPage(
+            parent,
+            translate=t,
+            open_persona_callback=show_persona,
+            persona_status_provider=app_shell_persona_status_provider,
+            logger=logger
+        ),
+        "remote": lambda parent: RemotePage(
+            parent,
+            translate=t,
+            open_remote_callback=show_remote_access,
+            open_diagnostics_callback=show_remote_diagnostics,
+            remote_status_provider=app_shell_remote_status_provider,
+            logger=logger
+        ),
+        "settings": lambda parent: SettingsPage(
+            parent,
+            translate=t,
+            open_settings_callback=show_settings,
+            settings_status_provider=app_shell_settings_status_provider,
+            logger=logger
+        )
+    }
+
+    for widget in (
+        title,
+        version,
+        status_columns_frame,
+        health_center_frame,
+        showcase_frame,
+        actions_frame,
+        recent_log_title,
+        recent_log_box
+    ):
+        try:
+            widget.pack_forget()
+        except Exception:
+            pass
+
+    app_shell = AppShell(
+        app,
+        app_name=APP_NAME,
+        translate=t,
+        page_builders=page_builders,
+        on_page_change=lambda page_name: logger.info(f"AppShell page opened: {page_name}")
+    )
+    app_shell.pack(fill="both", expand=True)
+    logger.info("AppShell initialized")
+    return app_shell
+
+
 logger.info("Application started")
 
 app.protocol("WM_DELETE_WINDOW", shutdown_app)
+
+create_app_shell()
 
 if first_run_required:
     app.after(100, show_first_run_wizard)
