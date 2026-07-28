@@ -3,7 +3,16 @@ from tkinter import StringVar
 
 import customtkinter as ctk
 
-from modules.ui_theme import FONT_APP_TITLE, FONT_BODY, FONT_HEADER, FONT_TITLE
+from modules.ui_theme import (
+    FONT_APP_TITLE,
+    FONT_HEADER,
+    FONT_TITLE,
+    FORM_CONTROL_WIDTH,
+    FORM_LABEL_WRAP,
+    SPACING_SMALL,
+    SPACING_MEDIUM,
+    SPACING_LARGE
+)
 from widgets.ui_components import (
     FixedFooter,
     FormRow,
@@ -53,7 +62,7 @@ class FirstRunWizard(ctk.CTkToplevel):
             "embedding_model": str(self.settings_get("embedding_model", "nomic-embed-text:latest") or "nomic-embed-text:latest")
         }
 
-        self.title("Project Aurora First Run")
+        self.title(self.t("first_run_window_title"))
         self.geometry("620x520")
         self.minsize(560, 480)
         self.protocol("WM_DELETE_WINDOW", lambda: None)
@@ -64,19 +73,19 @@ class FirstRunWizard(ctk.CTkToplevel):
 
     def build_ui(self):
         self.container = ctk.CTkFrame(self)
-        self.container.pack(fill="both", expand=True, padx=24, pady=24)
+        self.container.pack(fill="both", expand=True, padx=SPACING_LARGE + SPACING_SMALL, pady=SPACING_LARGE + SPACING_SMALL)
 
         self.title_label = ctk.CTkLabel(self.container, text="", font=FONT_TITLE)
-        self.title_label.pack(anchor="w", pady=(4, 10))
+        self.title_label.pack(anchor="w", pady=(SPACING_SMALL, SPACING_MEDIUM))
 
-        self.content_card = SectionCard(self.container, "Project Aurora")
+        self.content_card = SectionCard(self.container, self.t("project_aurora"))
         self.content_card.pack(fill="both", expand=True)
 
         self.footer = FixedFooter(self.container)
-        self.footer.pack(fill="x", pady=(16, 0))
-        self.back_button = SecondaryButton(self.footer.buttons, text="Back", width=100, command=self.prev_step)
+        self.footer.pack(fill="x", pady=(SPACING_LARGE - SPACING_SMALL, 0))
+        self.back_button = SecondaryButton(self.footer.buttons, text=self.t("back"), width=FORM_CONTROL_WIDTH - 150, command=self.prev_step)
         self.back_button.pack(side="left")
-        self.next_button = PrimaryButton(self.footer.buttons, text="Next", width=120, command=self.next_step)
+        self.next_button = PrimaryButton(self.footer.buttons, text=self.t("next"), width=FORM_CONTROL_WIDTH - 130, command=self.next_step)
         self.next_button.pack(side="right")
 
     def clear_content(self):
@@ -90,16 +99,16 @@ class FirstRunWizard(ctk.CTkToplevel):
             text=text,
             anchor="w",
             justify="left",
-            wraplength=500
+            wraplength=FORM_LABEL_WRAP + 180
         )
         if size:
             label.configure(font=FONT_TITLE if size >= 18 else FONT_HEADER)
-        label.pack(fill="x", pady=6)
+        label.pack(fill="x", pady=SPACING_SMALL)
         return label
 
     def refresh_nav(self):
         self.back_button.configure(state="normal" if self.state["step"] > 0 else "disabled")
-        self.next_button.configure(text="Finish" if self.state["step"] == 5 else "Next")
+        self.next_button.configure(text=self.t("finish") if self.state["step"] == 5 else self.t("next"))
 
     def load_models_async(self, status_label=None):
         def run():
@@ -110,9 +119,9 @@ class FirstRunWizard(ctk.CTkToplevel):
                 self.state["models"] = result.get("models", [])
                 if status_label is not None:
                     if result.get("ok"):
-                        status_label.set_status("healthy", text=f"OK | Models: {len(self.state['models'])}")
+                        status_label.set_status("healthy", text=self.t("first_run_ollama_detected").format(count=len(self.state["models"])))
                     else:
-                        status_label.set_status("error", text=f"Not detected | {result.get('reason', '')}")
+                        status_label.set_status("error", text=self.t("first_run_ollama_not_detected").format(reason=result.get("reason", "")))
 
             try:
                 self.after(0, finish)
@@ -124,8 +133,8 @@ class FirstRunWizard(ctk.CTkToplevel):
     def choose_model_step(self, kind):
         self.clear_content()
         is_chat = kind == "chat"
-        self.title_label.configure(text="Step 3 - Chat Model" if is_chat else "Step 4 - Embedding Model")
-        self.text_row("Read Ollama /api/tags and select the model used for chat or embeddings.")
+        self.title_label.configure(text=self.t("first_run_step_chat_model") if is_chat else self.t("first_run_step_embedding_model"))
+        self.text_row(self.t("first_run_model_selection_hint"))
         candidates = [
             item["name"]
             for item in self.state["models"]
@@ -136,11 +145,11 @@ class FirstRunWizard(ctk.CTkToplevel):
         current = self.state["chat_model"] if is_chat else self.state["embedding_model"]
         if current and current not in candidates:
             candidates.insert(0, current)
-        values = candidates or [current or "No models available"]
+        values = candidates or [current or self.t("models_window_no_models")]
         selected = StringVar(value=current if current in values else values[0])
-        row = FormRow(self.content_card.body, self.text["chat_model"] if is_chat else self.text["embedding_model"])
-        row.pack(fill="x", pady=12)
-        menu = ctk.CTkOptionMenu(row.control_frame, values=values, variable=selected, width=360)
+        row = FormRow(self.content_card.body, self.t("chat_model") if is_chat else self.t("embedding_model"))
+        row.pack(fill="x", pady=SPACING_MEDIUM)
+        menu = ctk.CTkOptionMenu(row.control_frame, values=values, variable=selected, width=FORM_CONTROL_WIDTH + 110)
         menu.pack(side="left")
 
         def remember_choice(*_args):
@@ -156,31 +165,31 @@ class FirstRunWizard(ctk.CTkToplevel):
         self.clear_content()
         step = self.state["step"]
         if step == 0:
-            self.title_label.configure(text="Welcome to Project Aurora")
+            self.title_label.configure(text=self.t("first_run_welcome_title"))
             ctk.CTkLabel(self.content_card.body, text="Aurora", font=FONT_APP_TITLE).pack(anchor="w", pady=(12, 6))
-            self.text_row(f"Version: {self.release} | Build: {self.build}", status="healthy")
-            self.text_row("Welcome to Project Aurora. This wizard completes the basic local AI setup for first launch.", size=15)
+            self.text_row(self.t("first_run_version_build").format(release=self.release, build=self.build), status="healthy")
+            self.text_row(self.t("first_run_welcome_message"), size=15)
         elif step == 1:
-            self.title_label.configure(text="Step 2 - Detect Ollama")
-            self.text_row("Detect the local Ollama service status.")
-            status_label = self.text_row("Checking Ollama...", "disabled", 16)
+            self.title_label.configure(text=self.t("first_run_step_detect_ollama"))
+            self.text_row(self.t("first_run_detect_ollama_hint"))
+            status_label = self.text_row(self.t("first_run_checking_ollama"), "disabled", 16)
             self.load_models_async(status_label)
         elif step == 2:
             self.choose_model_step("chat")
         elif step == 3:
             self.choose_model_step("embedding")
         elif step == 4:
-            self.title_label.configure(text="Step 5 - Persona")
+            self.title_label.configure(text=self.t("first_run_step_persona"))
             persona_status = self.persona_status_provider()
-            self.text_row(f"Current Persona: {persona_status.get('name', 'Aurora')}", "healthy", 16)
-            self.text_row(f"Rules: {persona_status.get('rules_count', 0)}")
-            self.text_row(f"Enabled: {'Yes' if persona_status.get('enabled') else 'No'}")
+            self.text_row(self.t("first_run_current_persona").format(name=persona_status.get("name", "Aurora")), "healthy", 16)
+            self.text_row(self.t("first_run_rules_count").format(count=persona_status.get("rules_count", 0)))
+            self.text_row(self.t("first_run_enabled_state").format(value=self.t("yes") if persona_status.get("enabled") else self.t("no")))
         else:
-            self.title_label.configure(text="Step 6 - Complete")
-            self.text_row("Aurora is ready.", "healthy", 18)
-            self.text_row(f"Chat Model: {self.state['chat_model']}")
-            self.text_row(f"Embedding Model: {self.state['embedding_model']}")
-            self.text_row("Click Finish to enter the main dashboard.")
+            self.title_label.configure(text=self.t("first_run_step_complete"))
+            self.text_row(self.t("first_run_ready"), "healthy", 18)
+            self.text_row(self.t("first_run_chat_model_summary").format(model=self.state["chat_model"]))
+            self.text_row(self.t("first_run_embedding_model_summary").format(model=self.state["embedding_model"]))
+            self.text_row(self.t("first_run_finish_hint"))
         self.refresh_nav()
 
     def next_step(self):
