@@ -303,9 +303,10 @@ app.resizable(True, True)
 
 logger.info(f"Window Size: {width} x {height}")
 
+legacy_dashboard_frame = ctk.CTkFrame(app, fg_color="transparent")
 
 title = ctk.CTkLabel(
-    app,
+    legacy_dashboard_frame,
     text=APP_NAME,
     font=FONT_APP_TITLE
 )
@@ -313,16 +314,15 @@ title.pack(pady=(20, 5))
 
 
 version = ctk.CTkLabel(
-    app,
+    legacy_dashboard_frame,
     text=f"Version {VERSION} - Build {BUILD}",
     font=FONT_NORMAL
 )
 version.pack()
 
-
-status_frame = ctk.CTkFrame(app)
-status_columns_frame = ctk.CTkFrame(app, fg_color="transparent")
+status_columns_frame = ctk.CTkFrame(legacy_dashboard_frame, fg_color="transparent")
 status_columns_frame.pack(fill="x", padx=20, pady=15)
+status_frame = ctk.CTkFrame(status_columns_frame)
 
 status_frame.pack(
     side="left",
@@ -561,7 +561,7 @@ diagnostic_box.insert("1.0", "Diagnostic not started")
 diagnostic_box.configure(state="disabled")
 diagnostic_running = False
 
-health_center_frame = ctk.CTkFrame(app)
+health_center_frame = ctk.CTkFrame(legacy_dashboard_frame)
 health_center_frame.pack(fill="x", padx=20, pady=(0, 8))
 
 health_center_header = ctk.CTkFrame(health_center_frame, fg_color="transparent")
@@ -697,7 +697,7 @@ def refresh_system_health_center():
 
     threading.Thread(target=run_check, daemon=True).start()
 
-showcase_frame = ctk.CTkFrame(app)
+showcase_frame = ctk.CTkFrame(legacy_dashboard_frame)
 showcase_frame.pack(fill="x", padx=20, pady=(0, 8))
 
 ctk.CTkLabel(
@@ -1553,7 +1553,7 @@ def test_settings_service_connection(target_window, service_name, url, callback)
     threading.Thread(target=run_check, daemon=True).start()
 
 
-actions_frame = ctk.CTkScrollableFrame(app, height=250)
+actions_frame = ctk.CTkScrollableFrame(legacy_dashboard_frame, height=250)
 actions_frame.pack(fill="x", padx=20, pady=(0, 8))
 
 
@@ -1846,14 +1846,14 @@ btn5.pack(fill="x", padx=40, pady=8)
 
 
 recent_log_title = ctk.CTkLabel(
-    app,
+    legacy_dashboard_frame,
     text=TEXT["recent_log"],
     font=("Microsoft YaHei", 16, "bold")
 )
 recent_log_title.pack(anchor="w", padx=35, pady=(5, 10))
 
 recent_log_box = ctk.CTkTextbox(
-    app,
+    legacy_dashboard_frame,
     height=130,
     wrap="none"
 )
@@ -2335,20 +2335,10 @@ def create_app_shell():
         )
     }
 
-    for widget in (
-        title,
-        version,
-        status_columns_frame,
-        health_center_frame,
-        showcase_frame,
-        actions_frame,
-        recent_log_title,
-        recent_log_box
-    ):
-        try:
-            widget.pack_forget()
-        except Exception:
-            pass
+    try:
+        legacy_dashboard_frame.pack_forget()
+    except Exception:
+        pass
 
     app_shell = AppShell(
         app,
