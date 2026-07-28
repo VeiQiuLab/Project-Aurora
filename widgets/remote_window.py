@@ -5,6 +5,7 @@ from tkinter import messagebox
 
 import customtkinter as ctk
 
+from modules.i18n import t as translate_text
 from modules.ui_theme import (
     FONT_BODY,
     FONT_SMALL,
@@ -26,21 +27,34 @@ from widgets.ui_components import (
 )
 
 
-REMOTE_TEXT_DEFAULTS = {
-    "authentication_history": "Authentication History",
-    "authentication_not_configured_hint": "Authentication is not configured yet.",
-    "lan_only_description": "LAN Only is limited to trusted local network access.",
-    "lan_url": "LAN URL",
-    "local_only_description": "Local Only keeps Aurora on this Windows device.",
-    "local_url": "Local URL",
-    "no_history": "No history.",
-    "no_lan_address": "No LAN address available.",
-    "not_ready": "Not Ready",
-    "release_check": "Release Check",
-    "secure_remote_description": "Secure Remote is reserved for a future authenticated tunnel.",
-    "security": "Security",
-    "understand_risk": "I Understand the Risk"
+REMOTE_TEXT_DEFAULT_KEYS = {
+    "authentication_history": "remote_window_authentication_history",
+    "authentication_not_configured_hint": "remote_window_authentication_not_configured_hint",
+    "lan_only_description": "remote_window_lan_only_description",
+    "lan_url": "remote_window_lan_url",
+    "local_only_description": "remote_window_local_only_description",
+    "local_url": "remote_window_local_url",
+    "no_history": "remote_window_no_history",
+    "no_lan_address": "remote_window_no_lan_address",
+    "not_ready": "remote_window_not_ready",
+    "release_check": "remote_page_release_check",
+    "secure_remote_description": "remote_window_secure_remote_description",
+    "security": "remote_page_security",
+    "understand_risk": "remote_window_understand_risk",
+    "remote_history": "remote_window_remote_history"
 }
+
+
+def remote_text_defaults():
+    return {key: translate_text(locale_key) for key, locale_key in REMOTE_TEXT_DEFAULT_KEYS.items()}
+
+
+def localized_text(text):
+    values = {}
+    for key, value in text.items():
+        translated = translate_text(key)
+        values[key] = translated if translated != key else value
+    return values
 
 
 class RemoteWindow(ctk.CTkToplevel):
@@ -74,7 +88,7 @@ class RemoteWindow(ctk.CTkToplevel):
         self.lan_status_server = lan_status_server
         self.lan_status_snapshot = lan_status_snapshot
         self.mobile_chat_service = mobile_chat_service
-        self.TEXT = {**REMOTE_TEXT_DEFAULTS, **text}
+        self.TEXT = {**remote_text_defaults(), **localized_text(text)}
         self.logger = logger
         self.default_lan_status_port = default_lan_status_port
         self.on_close = on_close
@@ -357,7 +371,7 @@ class RemoteWindow(ctk.CTkToplevel):
         self._set_row("mobile_debug_error", mobile_debug.get("error") or self.TEXT["none"])
 
         checklist_lines = [
-            f"{item.get('label', '--')}: {'OK' if item.get('ok') else 'Missing'}"
+            f"{item.get('label', '--')}: {self.TEXT.get('status_ok_short', translate_text('status_ok_short')) if item.get('ok') else self.TEXT['missing']}"
             for item in checklist
         ]
         self._set_box("checklist", "\n".join(checklist_lines))
@@ -775,7 +789,7 @@ class RemoteDiagnosticsWindow(ctk.CTkToplevel):
         super().__init__(parent)
         self.remote_manager = remote_manager
         self.credential_storage_provider = credential_storage_provider
-        self.TEXT = {**REMOTE_TEXT_DEFAULTS, **text}
+        self.TEXT = {**remote_text_defaults(), **localized_text(text)}
         self.logger = logger
         self.project_root = Path(project_root)
         self.on_close = on_close
@@ -816,7 +830,7 @@ class RemoteDiagnosticsWindow(ctk.CTkToplevel):
         ])
         self._add_text_card(content, "authentication_history", self.TEXT["authentication_history"], 120)
         self._add_text_card(content, "credential_history", self.TEXT["credential_history"], 120)
-        self._add_text_card(content, "remote_history", "Remote History", 120)
+        self._add_text_card(content, "remote_history", self.TEXT["remote_history"], 120)
         self._add_text_card(content, "release_check", self.TEXT["release_check"], 130)
 
         footer = FixedFooter(self)
