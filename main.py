@@ -452,158 +452,35 @@ def fetch_ollama_models_from_api(timeout=5):
 
 
 def show_first_run_wizard():
-    wizard = ctk.CTkToplevel(app)
-    wizard.title("Project Aurora First Run")
-    wizard.geometry("620x520")
-    wizard.minsize(560, 480)
-    wizard.protocol("WM_DELETE_WINDOW", lambda: None)
-    wizard.grab_set()
+    def current_persona_status():
+        persona = persona_store.load(update_timestamp=False)
+        return persona_store.status(settings.get("persona.enabled", True), persona)
 
-    state = {
-        "step": 0,
-        "models": [],
-        "ollama_ok": False,
-        "chat_model": str(settings.get("chat_model", "qwen3:8b") or "qwen3:8b"),
-        "embedding_model": str(settings.get("embedding_model", "nomic-embed-text:latest") or "nomic-embed-text:latest")
-    }
+    def complete_first_run(state, wizard):
+        settings.set("chat_model", state["chat_model"])
+        settings.set("embedding_model", state["embedding_model"])
+        settings.set("first_run.completed", True)
+        logger.info("First Run Wizard completed")
+        wizard.grab_release()
+        wizard.destroy()
+        app.deiconify()
+        startup_check()
+        refresh_recent_logs()
+        refresh_status()
+        refresh_system_health_center()
 
-    container = ctk.CTkFrame(wizard)
-    container.pack(fill="both", expand=True, padx=24, pady=24)
-
-    title_label = ctk.CTkLabel(container, text="", font=("Microsoft YaHei", 24, "bold"))
-    title_label.pack(anchor="w", pady=(4, 10))
-
-    content_frame = ctk.CTkFrame(container, fg_color="transparent")
-    content_frame.pack(fill="both", expand=True)
-
-    nav_frame = ctk.CTkFrame(container, fg_color="transparent")
-    nav_frame.pack(fill="x", pady=(16, 0))
-
-    back_button = ui_button(nav_frame, text="Back", width=100)
-    back_button.pack(side="left")
-    next_button = ui_button(nav_frame, text="Next", width=120, kind="primary")
-    next_button.pack(side="right")
-
-    def clear_content():
-        for child in content_frame.winfo_children():
-            child.destroy()
-
-    def text_row(text, color="gray", size=14):
-        label = ctk.CTkLabel(content_frame, text=text, font=("Microsoft YaHei", size), text_color=color, anchor="w", justify="left")
-        label.pack(fill="x", pady=6)
-        return label
-
-    def refresh_nav():
-        back_button.configure(state="normal" if state["step"] > 0 else "disabled")
-        next_button.configure(text="Finish" if state["step"] == 5 else "Next")
-
-    def load_models_async(status_label=None):
-        def run():
-            result = fetch_ollama_models_from_api()
-
-            def finish():
-                state["ollama_ok"] = bool(result.get("ok"))
-                state["models"] = result.get("models", [])
-                if status_label is not None:
-                    if result.get("ok"):
-                        status_label.configure(text=f"OK | Models: {len(state['models'])}", text_color="#32CD32")
-                    else:
-                        status_label.configure(text=f"Not detected | {result.get('reason', '')}", text_color="red")
-
-            try:
-                wizard.after(0, finish)
-            except Exception:
-                return
-
-        threading.Thread(target=run, daemon=True).start()
-
-    def choose_model_step(kind):
-        clear_content()
-        is_chat = kind == "chat"
-        title_label.configure(text="Step 3 - Chat Model" if is_chat else "Step 4 - Embedding Model")
-        text_row("Read Ollama /api/tags and select the model used for chat or embeddings.")
-        candidates = [
-            item["name"]
-            for item in state["models"]
-            if (item.get("capability") == "Chat Supported") == is_chat
-        ]
-        if not candidates:
-            candidates = [item["name"] for item in state["models"]]
-        current = state["chat_model"] if is_chat else state["embedding_model"]
-        if current and current not in candidates:
-            candidates.insert(0, current)
-        values = candidates or [current or "No models available"]
-        selected = StringVar(value=current if current in values else values[0])
-        menu = ctk.CTkOptionMenu(content_frame, values=values, variable=selected, width=360)
-        menu.pack(anchor="w", pady=12)
-
-        def remember_choice(*_args):
-            if is_chat:
-                state["chat_model"] = selected.get()
-            else:
-                state["embedding_model"] = selected.get()
-
-        selected.trace_add("write", remember_choice)
-        remember_choice()
-
-    def render():
-        clear_content()
-        step = state["step"]
-        if step == 0:
-            title_label.configure(text="Welcome to Project Aurora")
-            ctk.CTkLabel(content_frame, text="Aurora", font=("Microsoft YaHei", 42, "bold")).pack(anchor="w", pady=(12, 6))
-            text_row(f"Version: {RELEASE} | Build: {BUILD}", "#32CD32")
-            text_row("Welcome to Project Aurora. This wizard completes the basic local AI setup for first launch.", size=15)
-        elif step == 1:
-            title_label.configure(text="Step 2 - Detect Ollama")
-            text_row("Detect the local Ollama service status.")
-            status_label = text_row("Checking Ollama...", "gray", 16)
-            load_models_async(status_label)
-        elif step == 2:
-            choose_model_step("chat")
-        elif step == 3:
-            choose_model_step("embedding")
-        elif step == 4:
-            title_label.configure(text="Step 5 - Persona")
-            persona = persona_store.load(update_timestamp=False)
-            persona_status = persona_store.status(settings.get("persona.enabled", True), persona)
-            text_row(f"Current Persona: {persona_status.get('name', 'Aurora')}", "#32CD32", 16)
-            text_row(f"Rules: {persona_status.get('rules_count', 0)}")
-            text_row(f"Enabled: {'Yes' if persona_status.get('enabled') else 'No'}")
-        else:
-            title_label.configure(text="Step 6 - Complete")
-            text_row("Aurora is ready.", "#32CD32", 18)
-            text_row(f"Chat Model: {state['chat_model']}")
-            text_row(f"Embedding Model: {state['embedding_model']}")
-            text_row("Click Finish to enter the main dashboard.")
-        refresh_nav()
-
-    def next_step():
-        if state["step"] >= 5:
-            settings.set("chat_model", state["chat_model"])
-            settings.set("embedding_model", state["embedding_model"])
-            settings.set("first_run.completed", True)
-            logger.info("First Run Wizard completed")
-            wizard.grab_release()
-            wizard.destroy()
-            app.deiconify()
-            startup_check()
-            refresh_recent_logs()
-            refresh_status()
-            refresh_system_health_center()
-            return
-        state["step"] += 1
-        render()
-
-    def prev_step():
-        if state["step"] > 0:
-            state["step"] -= 1
-            render()
-
-    back_button.configure(command=prev_step)
-    next_button.configure(command=next_step)
-    logger.info("First Run Wizard opened")
-    render()
+    FirstRunWizard(
+        app,
+        release=RELEASE,
+        build=BUILD,
+        text=TEXT,
+        translate=t,
+        settings_get=settings.get,
+        model_fetcher=fetch_ollama_models_from_api,
+        persona_status_provider=current_persona_status,
+        on_complete=complete_first_run,
+        logger=logger
+    )
 
 status_summary_label = ctk.CTkLabel(
     status_frame,
@@ -998,104 +875,19 @@ def show_models():
         models_window.lift()
         return
 
-    models_window = ctk.CTkToplevel(app)
-    models_window.title(TEXT["models"])
-    models_window.geometry("820x480")
-    models_window.minsize(680, 320)
-    models_window.transient(app)
-
-    model_title = ctk.CTkLabel(
-        models_window,
-        text=t("ollama_models_title"),
-        font=("Microsoft YaHei", 20, "bold")
-    )
-    model_title.pack(anchor="w", padx=20, pady=(18, 10))
-
-    model_table = ctk.CTkScrollableFrame(models_window)
-    model_table.pack(fill="both", expand=True, padx=20, pady=(0, 20))
-
-    columns = [
-        (TEXT["name"], "name", 220),
-        (TEXT["id"], "model_id", 180),
-        (TEXT["size"], "size", 110),
-        (TEXT["modified"], "modified", 240)
-    ]
-
-    for index, (label, _, width) in enumerate(columns):
-        model_table.grid_columnconfigure(index, weight=1)
-        ctk.CTkLabel(
-            model_table,
-            text=label,
-            width=width,
-            anchor="w",
-            font=("Microsoft YaHei", 13, "bold")
-        ).grid(row=0, column=index, padx=8, pady=(8, 6), sticky="w")
-
-    records = []
-
-    if records:
-        for row_index, record in enumerate(records, start=1):
-            for column_index, (_, field, width) in enumerate(columns):
-                ctk.CTkLabel(
-                    model_table,
-                    text=record.get(field, ""),
-                    width=width,
-                    anchor="w",
-                    font=("Microsoft YaHei", 12)
-                ).grid(
-                    row=row_index,
-                    column=column_index,
-                    padx=8,
-                    pady=6,
-                    sticky="w"
-                )
-    else:
-        ctk.CTkLabel(
-            model_table,
-            text="No Ollama models found.",
-            font=("Microsoft YaHei", 13),
-            text_color="gray"
-        ).grid(row=1, column=0, columnspan=len(columns), padx=8, pady=20)
-
-    def update_model_rows(records):
-        if models_window is None or not models_window.winfo_exists():
-            return
-        for widget in model_table.winfo_children():
-            info = widget.grid_info()
-            if str(info.get("row", "")) not in {"", "0"}:
-                widget.destroy()
-        if not records:
-            ctk.CTkLabel(
-                model_table,
-                text=TEXT["no_models"],
-                font=("Microsoft YaHei", 13),
-                text_color="gray"
-            ).grid(row=1, column=0, columnspan=len(columns), padx=8, pady=20)
-            return
-        for row_index, record in enumerate(records, start=1):
-            for column_index, (_, field, width) in enumerate(columns):
-                ctk.CTkLabel(
-                    model_table, text=record.get(field, ""), width=width,
-                    anchor="w", font=("Microsoft YaHei", 12)
-                ).grid(row=row_index, column=column_index, padx=8, pady=6, sticky="w")
-
-    def load_model_rows():
-        try:
-            loaded_records = get_model_records()
-        except Exception as error:
-            logger.error(f"Model loading failed: {error}")
-            loaded_records = []
-        app.after(0, lambda: update_model_rows(loaded_records))
-
-    threading.Thread(target=load_model_rows, daemon=True).start()
-
-    def close_models_window():
+    def clear_models_window():
         global models_window
-        models_window.destroy()
         models_window = None
 
-    models_window.protocol("WM_DELETE_WINDOW", close_models_window)
-
+    models_window = ModelsWindow(
+        app,
+        text=TEXT,
+        translate=t,
+        logger=logger,
+        model_fetcher=get_model_records,
+        settings_get=settings.get,
+        on_close=clear_models_window
+    )
 
 def build_context_sections(memories=None, knowledge_items=None, persona=None, conversation_messages=None):
     memory_text = format_memory_context(memories)
@@ -1343,341 +1135,17 @@ def show_chat():
         return
 
     logger.info("Chat started")
-    chat_window = ctk.CTkToplevel(app)
-    chat_window.title(TEXT["chat"])
-    chat_window.geometry("900x680")
-    chat_window.minsize(720, 560)
-    chat_window.transient(app)
 
-    ctk.CTkLabel(
-        chat_window,
-        text=TEXT["chat"],
-        font=("Microsoft YaHei", 22, "bold")
-    ).pack(anchor="w", padx=25, pady=(20, 12))
-
-    model_frame = ctk.CTkFrame(chat_window, fg_color="transparent")
-    model_frame.pack(fill="x", padx=25, pady=(0, 10))
-    ctk.CTkLabel(
-        model_frame,
-        text=TEXT["model_selector"],
-        font=("Microsoft YaHei", 14, "bold")
-    ).pack(side="left")
-
-    selected_model = {"name": ""}
-    initial_persona = persona_store.load() if settings.get("persona.enabled", True) else None
-    if initial_persona:
-        logger.info("Persona loaded")
-        logger.info("Persona loaded timestamp updated")
-    else:
-        logger.info("Persona disabled")
-    session = ChatSession(build_memory_context(persona=initial_persona))
-    conversation_manager = ConversationManager()
-    conversation_state = {
-        "id": None,
-        "created_at": None,
-        "title": "New Conversation"
-    }
-    stream_state = {
-        "running": False,
-        "stop_event": None
-    }
-    debug_context_var = ctk.BooleanVar(value=False)
-
-    conversation_frame = ctk.CTkFrame(chat_window, fg_color="transparent")
-    conversation_frame.pack(fill="x", padx=25, pady=(0, 10))
-    ctk.CTkLabel(
-        conversation_frame,
-        text=TEXT["conversation_list"],
-        font=("Microsoft YaHei", 14, "bold")
-    ).pack(side="left")
-    conversation_selector = ctk.CTkOptionMenu(
-        conversation_frame,
-        values=[TEXT["no_conversations"]],
-        width=280,
-        command=lambda _value: load_conversation()
-    )
-    conversation_selector.pack(side="right")
-
-    conversation_search_frame = ctk.CTkFrame(chat_window, fg_color="transparent")
-    conversation_search_frame.pack(fill="x", padx=25, pady=(0, 8))
-    conversation_search_entry = ctk.CTkEntry(conversation_search_frame, placeholder_text="Search conversations")
-    conversation_search_entry.pack(side="left", fill="x", expand=True, padx=(0, 6))
-
-    def search_conversation_list():
-        refresh_conversations(conversation_search_entry.get())
-        logger.info("Conversation searched")
-
-    ctk.CTkButton(
-        conversation_search_frame,
-        text="Search",
-        width=80,
-        command=search_conversation_list
-    ).pack(side="right")
-
-    def select_model(model):
-        if model and model not in {"Loading...", "No models available"}:
-            if infer_model_capability(model) != "Chat Supported":
-                chat_status.configure(text=TEXT["model_cannot_chat"], text_color="red")
-                logger.info("Embedding model blocked from chat")
-                return
-            selected_model["name"] = model
-            settings.set("chat_model", model)
-            logger.info(f"Chat model selected: {model}")
-
-    model_selector = ctk.CTkOptionMenu(
-        model_frame,
-        values=["Loading..."],
-        width=280,
-        command=select_model
-    )
-    model_selector.set("Loading...")
-    model_selector.pack(side="right")
-
-    chat_display = ctk.CTkTextbox(chat_window, wrap="word")
-    chat_display.pack(fill="both", expand=True, padx=25, pady=(0, 12))
-    chat_display.configure(state="disabled")
-
-    ctk.CTkLabel(
-        chat_window,
-        text=TEXT["input_box"],
-        font=("Microsoft YaHei", 14, "bold")
-    ).pack(anchor="w", padx=25, pady=(0, 6))
-
-    input_box = ctk.CTkTextbox(chat_window, height=90, wrap="word")
-    input_box.pack(fill="x", padx=25, pady=(0, 10))
-
-    debug_switch = ctk.CTkSwitch(
-        chat_window,
-        text=t("show_chat_context_debug_info"),
-        variable=debug_context_var
-    )
-    debug_switch.pack(anchor="w", padx=25, pady=(0, 8))
-
-    chat_status = ctk.CTkLabel(
-        chat_window,
-        text=t("loading_ollama_models"),
-        font=("Microsoft YaHei", 12),
-        text_color="gray"
-    )
-    chat_status.pack(anchor="w", padx=25, pady=(0, 8))
-
-    def is_open():
-        try:
-            return chat_window is not None and chat_window.winfo_exists()
-        except Exception:
-            return False
-
-    def append_text(text):
-        chat_display.configure(state="normal")
-        chat_display.insert("end", text + "\n\n")
-        chat_display.see("end")
-        chat_display.configure(state="disabled")
-
-    def append_stream_chunk(chunk):
-        if not is_open():
-            return
-        chat_display.configure(state="normal")
-        chat_display.insert("end", chunk)
-        chat_display.see("end")
-        chat_display.configure(state="disabled")
-
-    conversation_records = []
-
-    def conversation_label(record):
-        updated = record.get("updated_at", "").replace("T", " ").replace("+00:00", " UTC")
-        return f"{record.get('title', 'New Conversation')}\n{record.get('model', 'Unknown model')}\n{updated}"
-
-    def refresh_conversations(keyword=""):
-        nonlocal conversation_records
-        if keyword.strip():
-            conversation_records = search_conversations(conversation_manager.directory, keyword)
+    def initial_chat_context():
+        initial_persona = persona_store.load() if settings.get("persona.enabled", True) else None
+        if initial_persona:
+            logger.info("Persona loaded")
+            logger.info("Persona loaded timestamp updated")
         else:
-            conversation_records = conversation_manager.list_conversations()
-        labels = [conversation_label(item) for item in conversation_records]
-        conversation_selector.configure(values=labels or [TEXT["no_conversations"]])
-        conversation_selector.set(labels[0] if labels else TEXT["no_conversations"])
+            logger.info("Persona disabled")
+        return build_memory_context(persona=initial_persona)
 
-    def load_conversation_by_id(conversation_id):
-        global active_conversation_id
-        if stream_state["running"]:
-            chat_status.configure(text="Please stop generation before loading a conversation.", text_color="orange")
-            return
-        if not conversation_id:
-            return
-        try:
-            if conversation_state["id"] and len(session.snapshot()) > 1:
-                save_conversation(auto=True)
-            data = conversation_manager.load(conversation_id)
-            session.replace(data.get("messages", []))
-            conversation_state["id"] = data.get("id")
-            conversation_state["created_at"] = data.get("created_at")
-            conversation_state["title"] = data.get("title", "New Conversation")
-            active_conversation_id = conversation_state["id"]
-            if data.get("model"):
-                selected_model["name"] = data["model"]
-                model_selector.set(data["model"])
-            render_messages(session.snapshot())
-            chat_status.configure(text="Conversation loaded.", text_color="#32CD32")
-            logger.info("Conversation loaded")
-            logger.info("Conversation switched")
-        except (OSError, ValueError, json.JSONDecodeError) as error:
-            logger.error(f"Conversation load failed: {error}")
-            chat_status.configure(text="Unable to load conversation.", text_color="red")
-
-    chat_load_conversation_callback = load_conversation_by_id
-
-    def render_messages(messages):
-        chat_display.configure(state="normal")
-        chat_display.delete("1.0", "end")
-        for message in messages:
-            if message.get("role") == "system":
-                continue
-            label = "You" if message.get("role") == "user" else "Aurora"
-            chat_display.insert("end", f"{label}:\n{message.get('content', '')}\n\n")
-        chat_display.see("end")
-        chat_display.configure(state="disabled")
-
-    def new_conversation():
-        global active_conversation_id
-        if stream_state["running"]:
-            chat_status.configure(text="Please stop generation first.", text_color="orange")
-            return
-        if len(session.snapshot()) > 1:
-            save_conversation(auto=True)
-        session.clear()
-        conversation_state["id"] = None
-        conversation_state["created_at"] = None
-        conversation_state["title"] = "New Conversation"
-        active_conversation_id = None
-        render_messages(session.snapshot())
-        chat_status.configure(text="New conversation.", text_color="gray")
-        logger.info("Conversation created")
-
-    def save_conversation(auto=False):
-        global active_conversation_id
-        if stream_state["running"]:
-            chat_status.configure(text="Please stop generation before saving.", text_color="orange")
-            return
-        messages = session.snapshot()
-        if len(messages) <= 1:
-            chat_status.configure(text="No conversation content to save.", text_color="orange")
-            return
-        title = conversation_state["title"]
-        if title == "New Conversation":
-            title = next((m.get("content", "") for m in messages if m.get("role") == "user"), title)
-        data = conversation_manager.save(
-            conversation_state["id"],
-            selected_model["name"],
-            messages,
-            title=title[:40],
-            created_at=conversation_state["created_at"]
-        )
-        conversation_state["id"] = data["id"]
-        conversation_state["created_at"] = data["created_at"]
-        conversation_state["title"] = data["title"]
-        active_conversation_id = data["id"]
-        refresh_conversations()
-        chat_status.configure(text="Conversation auto saved." if auto else "Conversation saved.", text_color="#32CD32")
-        logger.info("Conversation auto saved" if auto else "Conversation saved")
-
-    def load_conversation():
-        if stream_state["running"]:
-            chat_status.configure(text="Please stop generation before loading.", text_color="orange")
-            return
-        selected = conversation_selector.get()
-        record = next((item for item in conversation_records if conversation_label(item) == selected), None)
-        if record is None:
-            return
-        load_conversation_by_id(record["id"])
-
-    def delete_conversation():
-        global active_conversation_id
-        selected = conversation_selector.get()
-        record = next((item for item in conversation_records if conversation_label(item) == selected), None)
-        if record is None or not messagebox.askyesno("Delete Chat", "Delete selected conversation?", parent=chat_window):
-            return
-        try:
-            conversation_manager.delete(record["id"])
-            if conversation_state["id"] == record["id"]:
-                new_conversation()
-            if active_conversation_id == record["id"]:
-                active_conversation_id = None
-            refresh_conversations()
-            chat_status.configure(text="Conversation deleted.", text_color="gray")
-            logger.info("Conversation deleted")
-        except OSError as error:
-            logger.error(f"Conversation delete failed: {error}")
-
-    def rename_conversation():
-        if not conversation_state["id"]:
-            chat_status.configure(text="Please load a conversation first.", text_color="orange")
-            return
-        dialog = ctk.CTkInputDialog(text="Enter conversation title:", title=TEXT["rename_chat"])
-        title = dialog.get_input()
-        if not title or not title.strip():
-            return
-        try:
-            data = conversation_manager.rename(conversation_state["id"], title)
-            conversation_state["title"] = data["title"]
-            refresh_conversations()
-            chat_status.configure(text="Conversation renamed.", text_color="#32CD32")
-            logger.info("Conversation renamed")
-        except (OSError, ValueError, json.JSONDecodeError) as error:
-            logger.error(f"Conversation rename failed: {error}")
-
-    def update_models(records):
-        if not is_open():
-            return
-        names = [
-            record.get("name", "")
-            for record in records
-            if infer_model_capability(record.get("name", "")) == "Chat Supported"
-        ]
-        names = [name for name in names if name]
-        if not names:
-            model_selector.configure(values=["No models available"])
-            model_selector.set("No models available")
-            chat_status.configure(
-                text="No Ollama models found. Start Ollama and retry.",
-                text_color="orange"
-            )
-            return
-        configured_chat_model = str(settings.get("chat_model", "qwen3:8b") or "").strip()
-        selected_name = configured_chat_model if configured_chat_model in names else names[0]
-        selected_model["name"] = selected_name
-        model_selector.configure(values=names)
-        model_selector.set(selected_name)
-        chat_status.configure(
-            text=f"{len(names)} model(s) available",
-            text_color="#32CD32"
-        )
-        logger.info(f"Chat models loaded: {len(names)}")
-        logger.info("Model capability checked")
-
-    def load_models():
-        try:
-            records = get_model_records()
-        except Exception as error:
-            logger.error(f"Chat model loading failed: {error}")
-            records = []
-        try:
-            app.after(0, lambda: update_models(records))
-        except Exception:
-            return
-
-    button_frame = ctk.CTkFrame(chat_window, fg_color="transparent")
-    button_frame.pack(fill="x", padx=25, pady=(0, 20))
-
-    def send_prompt():
-        model = selected_model["name"].strip()
-        prompt = input_box.get("1.0", "end").strip()
-        if not model or model in {"Loading...", "No models available"}:
-            append_text("Error: No Ollama model is available.")
-            return
-        if not prompt:
-            append_text("Please enter a prompt first.")
-            return
-
+    def prepare_chat_prompt_context(prompt, conversation_messages, debug_enabled=False):
         logger.info("Memory retrieval started")
         try:
             max_injection = max(1, int(settings.get("memory.max_injection", 5)))
@@ -1691,6 +1159,7 @@ def show_chat():
             min_importance=min_importance
         )
         logger.info(f"Memory matched: {len(matched_memories)}")
+
         matched_knowledge = []
         active_persona = None
         if settings.get("persona.enabled", True):
@@ -1699,6 +1168,7 @@ def show_chat():
             logger.info("Persona loaded timestamp updated")
         else:
             logger.info("Persona disabled")
+
         if settings.get("knowledge.enabled", True):
             logger.info("Knowledge search started")
             try:
@@ -1706,10 +1176,7 @@ def show_chat():
             except (TypeError, ValueError):
                 max_knowledge = 3
             knowledge_items = knowledge_store.list_items()
-            matched_knowledge = knowledge_store.retrieve(
-                prompt,
-                max_results=max_knowledge
-            )
+            matched_knowledge = knowledge_store.retrieve(prompt, max_results=max_knowledge)
             disabled_matches = retrieval_summary(
                 prompt,
                 knowledge_items,
@@ -1723,234 +1190,95 @@ def show_chat():
             if any(item.get("status") not in {"OK", "Missing File"} for item in disabled_matches):
                 logger.info("Knowledge skipped invalid file")
             logger.info(f"Knowledge matched: {len(matched_knowledge)}")
-        session.set_system_context(build_memory_context(matched_memories, matched_knowledge, active_persona))
+
         if matched_memories:
             logger.info("Memory injected")
         if matched_knowledge:
             logger.info("Knowledge injected")
 
-        if debug_context_var.get():
+        debug_text = ""
+        if debug_enabled:
             debug_text, warning, _tokens = build_context_debug_report(
-                build_context_sections(matched_memories, matched_knowledge, active_persona, session.snapshot()),
+                build_context_sections(matched_memories, matched_knowledge, active_persona, conversation_messages),
                 warning_tokens=settings.get("context.warning_tokens", 6000)
             )
             if warning:
                 logger.info("Context size warning")
-            append_text(debug_text)
 
-        append_text(f"You ({model}):\n{prompt}")
-        append_text("Aurora:")
-        input_box.delete("1.0", "end")
-        send_button.configure(state="disabled")
-        stop_button.configure(state="normal")
-        chat_status.configure(text=t("waiting_ollama_response"), text_color="gray")
-        logger.info(f"Streaming started: {model}")
-        stream_state["running"] = True
-        stream_state["stop_event"] = threading.Event()
+        return {
+            "system_context": build_memory_context(matched_memories, matched_knowledge, active_persona),
+            "debug_text": debug_text
+        }
 
-        def run_request():
+    def build_chat_context_preview(prompt, conversation_messages):
+        started_at = time.perf_counter()
+        try:
+            max_injection = max(1, int(settings.get("memory.max_injection", 5)))
+            min_importance = max(0, float(settings.get("memory.min_importance", 0)))
+        except (TypeError, ValueError):
+            max_injection, min_importance = 5, 0
+        memories = retrieve_memories(
+            prompt,
+            memory_store.list_memories(),
+            max_results=max_injection,
+            min_importance=min_importance
+        ) if prompt else []
+        active_persona = persona_store.load() if settings.get("persona.enabled", True) else None
+        if active_persona:
+            logger.info("Persona loaded timestamp updated")
+        knowledge_items = []
+        if prompt and settings.get("knowledge.enabled", True):
             try:
-                def append_chunk(chunk):
-                    try:
-                        app.after(0, lambda: append_stream_chunk(chunk))
-                    except Exception:
-                        return
-
-                result = stream_chat(
-                    model,
-                    prompt,
-                    session,
-                    append_chunk,
-                    stream_state["stop_event"]
-                )
-                error_message = None
-                logger.info(f"Chat request succeeded: {model}")
-            except ChatError as error:
-                result = "failed"
-                error_message = str(error)
-                logger.error(f"Chat request failed: {error_message}")
-            except Exception as error:
-                result = "failed"
-                error_message = "Unexpected chat error."
-                logger.error(f"Chat request failed: {error}")
-
-            def update_chat():
-                if not is_open():
-                    return
-                if error_message:
-                    append_text(f"Error: {error_message}")
-                    chat_status.configure(text=error_message, text_color="red")
-                elif result == "stopped":
-                    append_text("[Generation stopped]")
-                    chat_status.configure(text="Generation stopped.", text_color="orange")
-                else:
-                    chat_status.configure(text="Response received.", text_color="#32CD32")
-                stream_state["running"] = False
-                stream_state["stop_event"] = None
-                send_button.configure(state="normal")
-                stop_button.configure(state="disabled")
-                if not error_message:
-                    save_conversation(auto=True)
-
-            try:
-                app.after(0, update_chat)
-            except Exception:
-                return
-
-        threading.Thread(target=run_request, daemon=True).start()
-
-    def clear_chat():
-        if stream_state["running"]:
-            chat_status.configure(text="Please stop generation before clearing.", text_color="orange")
-            return
-        if not messagebox.askyesno("Clear Chat", "Clear current conversation?", parent=chat_window):
-            return
-        chat_display.configure(state="normal")
-        chat_display.delete("1.0", "end")
-        chat_display.configure(state="disabled")
-        input_box.delete("1.0", "end")
-        session.clear()
-        chat_status.configure(text="Conversation cleared.", text_color="gray")
-        logger.info("Conversation cleared")
-
-    def stop_generation():
-        if stream_state["running"] and stream_state["stop_event"] is not None:
-            stream_state["stop_event"].set()
-            logger.info("Generation stopped")
-            chat_status.configure(text=t("stopping_generation"), text_color="orange")
-            stop_button.configure(state="disabled")
-
-    def preview_chat_context():
-        prompt = input_box.get("1.0", "end").strip()
-        chat_status.configure(text="Building Context Inspector...", text_color="gray")
-        logger.info("Context preview opened")
-        logger.info("Context inspector opened")
-
-        def run_preview():
-            started_at = time.perf_counter()
-            try:
-                max_injection = max(1, int(settings.get("memory.max_injection", 5)))
-                min_importance = max(0, float(settings.get("memory.min_importance", 0)))
+                max_knowledge = max(0, int(settings.get("knowledge.max_results", 3)))
             except (TypeError, ValueError):
-                max_injection, min_importance = 5, 0
-            memories = retrieve_memories(
-                prompt,
-                memory_store.list_memories(),
-                max_results=max_injection,
-                min_importance=min_importance
-            ) if prompt else []
-            active_persona = persona_store.load() if settings.get("persona.enabled", True) else None
-            if active_persona:
-                logger.info("Persona loaded timestamp updated")
-            knowledge_items = []
-            if prompt and settings.get("knowledge.enabled", True):
-                try:
-                    max_knowledge = max(0, int(settings.get("knowledge.max_results", 3)))
-                except (TypeError, ValueError):
-                    max_knowledge = 3
-                knowledge_items = knowledge_store.retrieve(
-                    prompt,
-                    max_results=max_knowledge
-                )
-            duration_ms = int((time.perf_counter() - started_at) * 1000)
-            payload = build_context_inspector_payload(
-                prompt,
-                memories,
-                knowledge_items,
-                active_persona,
-                session.snapshot(),
-                build_duration_ms=duration_ms
-            )
+                max_knowledge = 3
+            knowledge_items = knowledge_store.retrieve(prompt, max_results=max_knowledge)
+        duration_ms = int((time.perf_counter() - started_at) * 1000)
+        return build_context_inspector_payload(
+            prompt,
+            memories,
+            knowledge_items,
+            active_persona,
+            conversation_messages,
+            build_duration_ms=duration_ms
+        )
 
-            def finish_preview():
-                if not is_open():
-                    return
-                show_context_inspector(payload, chat_window)
-                chat_status.configure(text="Context Inspector ready", text_color="#32CD32")
-                logger.info("Context generated")
-                logger.info("Context build duration recorded")
-                logger.info("Final prompt preview generated")
-                if payload.get("summary", {}).get("warning"):
-                    logger.info("Context size warning")
+    def set_active_conversation(value):
+        global active_conversation_id
+        active_conversation_id = value
 
-            try:
-                app.after(0, finish_preview)
-            except Exception:
-                return
+    def register_chat_load_callback(callback):
+        global chat_load_conversation_callback
+        chat_load_conversation_callback = callback
 
-        threading.Thread(target=run_preview, daemon=True).start()
-
-    def close_chat_window():
-        global chat_load_conversation_callback, chat_window
-        chat_window.destroy()
+    def clear_chat_window():
+        global chat_window
         chat_window = None
-        chat_load_conversation_callback = None
 
-    send_button = ctk.CTkButton(
-        button_frame,
-        text=TEXT["send"],
-        command=send_prompt
+    chat_window = ChatWindow(
+        app,
+        text=TEXT,
+        translate=t,
+        logger=logger,
+        settings=settings,
+        conversation_manager=ConversationManager(),
+        initial_context_provider=initial_chat_context,
+        model_records_provider=get_model_records,
+        model_capability_provider=infer_model_capability,
+        prepare_prompt_context_callback=prepare_chat_prompt_context,
+        stream_chat_callback=stream_chat,
+        context_preview_builder=build_chat_context_preview,
+        context_preview_callback=show_context_inspector,
+        get_active_conversation_id=lambda: active_conversation_id,
+        set_active_conversation_id=set_active_conversation,
+        register_load_callback=register_chat_load_callback,
+        on_close=clear_chat_window
     )
-    send_button.pack(side="left", expand=True, fill="x", padx=(0, 6))
 
-    ctk.CTkButton(
-        button_frame,
-        text=TEXT["new_chat"],
-        command=new_conversation
-    ).pack(side="left", expand=True, fill="x", padx=6)
-
-    ctk.CTkButton(
-        button_frame,
-        text=TEXT["save_chat"],
-        command=save_conversation
-    ).pack(side="left", expand=True, fill="x", padx=6)
-
-    ctk.CTkButton(
-        button_frame,
-        text=TEXT["rename_chat"],
-        command=rename_conversation
-    ).pack(side="left", expand=True, fill="x", padx=6)
-
-    stop_button = ctk.CTkButton(
-        button_frame,
-        text=TEXT["stop_generate"],
-        command=stop_generation,
-        state="disabled"
-    )
-    stop_button.pack(side="left", expand=True, fill="x", padx=6)
-
-    ctk.CTkButton(
-        button_frame,
-        text=TEXT["clear"],
-        command=clear_chat
-    ).pack(side="left", expand=True, fill="x", padx=6)
-
-    ctk.CTkButton(
-        button_frame,
-        text=TEXT["delete_chat"],
-        command=delete_conversation
-    ).pack(side="left", expand=True, fill="x", padx=6)
-
-    ctk.CTkButton(
-        button_frame,
-        text="Context Inspector",
-        command=preview_chat_context
-    ).pack(side="left", expand=True, fill="x", padx=6)
-
-    ctk.CTkButton(
-        button_frame,
-        text=TEXT["close"],
-        command=close_chat_window
-    ).pack(side="left", expand=True, fill="x", padx=(6, 0))
-
-    chat_window.protocol("WM_DELETE_WINDOW", close_chat_window)
-    refresh_conversations()
     if pending_conversation_id:
         pending_id = pending_conversation_id
         pending_conversation_id = None
-        chat_window.after(0, lambda: load_conversation_by_id(pending_id))
-    threading.Thread(target=load_models, daemon=True).start()
-
+        chat_window.after(0, lambda: chat_window.load_conversation_by_id(pending_id))
 
 def show_conversation_browser():
     global conversation_browser_window, pending_conversation_id, active_conversation_id
@@ -2310,180 +1638,18 @@ def health_check():
 
     logger.info("Open Health Dashboard")
 
-    health_window = ctk.CTkToplevel(app)
-    health_window.title(TEXT["health_dashboard"])
-    health_window.geometry("520x500")
-    health_window.resizable(False, False)
-    health_window.transient(app)
-
-    dashboard_title = ctk.CTkLabel(
-        health_window,
-        text=TEXT["health_dashboard"],
-        font=("Microsoft YaHei", 20, "bold")
-    )
-    dashboard_title.pack(anchor="w", padx=25, pady=(20, 15))
-
-    status_frame = ctk.CTkFrame(health_window)
-    status_frame.pack(fill="x", padx=25, pady=(0, 12))
-
-    health_labels = {}
-
-    health_items = [
-        ("Ollama", "ollama"),
-        ("Open WebUI", "webui"),
-        ("API 11434", "api")
-    ]
-
-    for name, key in health_items:
-        row = ctk.CTkFrame(status_frame, fg_color="transparent")
-        row.pack(fill="x", padx=15, pady=7)
-
-        ctk.CTkLabel(
-            row,
-            text=name,
-            anchor="w",
-            font=("Microsoft YaHei", 14)
-        ).pack(side="left")
-
-        state = ctk.CTkLabel(
-            row,
-            text=TEXT["checking"],
-            font=("Microsoft YaHei", 13),
-            text_color="gray"
-        )
-        state.pack(side="right")
-        health_labels[key] = state
-
-    system_frame = ctk.CTkFrame(health_window)
-    system_frame.pack(fill="x", padx=25, pady=(0, 12))
-
-    def add_information_row(label_text, initial_text):
-        row = ctk.CTkFrame(system_frame, fg_color="transparent")
-        row.pack(fill="x", padx=15, pady=7)
-
-        ctk.CTkLabel(
-            row,
-            text=label_text,
-            anchor="w",
-            font=("Microsoft YaHei", 14)
-        ).pack(side="left")
-
-        value = ctk.CTkLabel(
-            row,
-            text=initial_text,
-            font=("Microsoft YaHei", 13),
-            text_color="gray"
-        )
-        value.pack(side="right")
-        return value
-
-    add_information_row("Python Version", sys.version.split()[0])
-    add_information_row(
-        "CustomTkinter Version",
-        getattr(ctk, "__version__", "Unknown")
-    )
-    last_check_label = add_information_row("Last Check Time", "--")
-
-    check_state = {"running": False}
-
-    def update_status_label(label, online):
-        if online:
-            label.configure(text=TEXT["online"], text_color="#32CD32")
-        else:
-            label.configure(text=TEXT["offline"], text_color="red")
-
-    def refresh_dashboard():
-        if check_state["running"]:
-            return
-
-        check_state["running"] = True
-        refresh_button.configure(state="disabled", text=TEXT["checking"])
-
-        for label in health_labels.values():
-            label.configure(text=TEXT["checking"], text_color="gray")
-
-        logger.info("Health dashboard check started")
-
-        def run_check():
-            try:
-                status = check_all()
-                error_message = None
-            except Exception as error:
-                status = {
-                    "ollama": False,
-                    "webui": False,
-                    "api": False
-                }
-                error_message = str(error)
-
-            checked_at = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-
-            if error_message:
-                logger.error(
-                    f"Health dashboard check failed: {error_message}"
-                )
-            else:
-                logger.info("Health dashboard check completed")
-
-            def update_dashboard():
-                try:
-                    window_is_open = (
-                        health_window is not None
-                        and health_window == dashboard
-                        and health_window.winfo_exists()
-                    )
-                except Exception:
-                    window_is_open = False
-
-                if not window_is_open:
-                    return
-
-                for key, label in health_labels.items():
-                    update_status_label(label, status.get(key, False))
-
-                last_check_label.configure(
-                    text=checked_at,
-                    text_color="white"
-                )
-                check_state["running"] = False
-                refresh_button.configure(
-                    state="normal",
-                    text=TEXT["refresh"]
-                )
-
-            try:
-                app.after(0, update_dashboard)
-            except Exception:
-                pass
-
-        dashboard = health_window
-        threading.Thread(target=run_check, daemon=True).start()
-
-    def close_health_window():
+    def clear_health_window():
         global health_window
-        health_window.destroy()
         health_window = None
 
-    button_frame = ctk.CTkFrame(health_window, fg_color="transparent")
-    button_frame.pack(fill="x", padx=25, pady=(0, 20))
-
-    refresh_button = ctk.CTkButton(
-        button_frame,
-        text=TEXT["refresh"],
-        command=refresh_dashboard
+    health_window = HealthWindow(
+        app,
+        text=TEXT,
+        translate=t,
+        logger=logger,
+        system_self_check=system_self_check,
+        on_close=clear_health_window
     )
-    refresh_button.pack(side="left", expand=True, fill="x", padx=(0, 6))
-
-    close_button = ctk.CTkButton(
-        button_frame,
-        text=TEXT["close"],
-        command=close_health_window
-    )
-    close_button.pack(side="left", expand=True, fill="x", padx=(6, 0))
-
-    health_window.protocol("WM_DELETE_WINDOW", close_health_window)
-    refresh_dashboard()
-
 
 def show_about():
     messagebox.showinfo(
