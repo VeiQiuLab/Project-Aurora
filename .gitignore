@@ -54,6 +54,7 @@ data/temp/
 build/
 dist/
 *.spec
+!Project Aurora.spec
 __pycache__/
 **/__pycache__/
 *.pyc

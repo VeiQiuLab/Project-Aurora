@@ -170,10 +170,15 @@ from modules.search import search_memories, search_conversations
 from modules.memory_retrieval import format_memory_context, retrieve_memories
 from modules.retrieval import format_knowledge_context, search_knowledge, retrieval_summary
 from modules.service_manager import ServiceManager
+from widgets.chat_window import ChatWindow
 from widgets.conversation_browser import ConversationBrowserWindow
+from widgets.first_run_wizard import FirstRunWizard
+from widgets.health_window import HealthWindow
 from widgets.knowledge_window import KnowledgeWindow
 from widgets.memory_window import MemoryWindow
+from widgets.models_window import ModelsWindow
 from widgets.persona_window import PersonaWindow
+from widgets.remote_window import RemoteWindow, RemoteDiagnosticsWindow
 from widgets.settings_window import SettingsWindow
 
 def apply_language(language):
@@ -1537,6 +1542,134 @@ def test_settings_service_connection(target_window, service_name, url, callback)
 
     logger.info(f"Testing {service_name} connection...")
     threading.Thread(target=run_check, daemon=True).start()
+
+
+actions_frame = ctk.CTkScrollableFrame(app, height=250)
+actions_frame.pack(fill="x", padx=20, pady=(0, 8))
+
+
+action_title = ctk.CTkLabel(
+    actions_frame,
+    text=TEXT["quick_actions"],
+    font=FONT_HEADER
+)
+action_title.pack(anchor="w", padx=15, pady=(5, 10))
+
+
+btn1 = ui_button(
+    actions_frame,
+    text=TEXT["open_webui"],
+    command=launch_open_webui,
+    kind="primary"
+)
+btn1.pack(fill="x", padx=40, pady=8)
+
+
+btn_diagnostic = ui_button(
+    actions_frame,
+    text=t("runtime_environment_diagnostics"),
+    command=run_diagnostic
+)
+btn_diagnostic.pack(fill="x", padx=40, pady=8)
+
+
+btn_start_ollama = ui_button(
+    actions_frame,
+    text=t("start_ollama"),
+    command=start_ollama_manual,
+    kind="primary"
+)
+btn_start_ollama.pack(fill="x", padx=40, pady=8)
+
+
+btn_restart_webui = ui_button(
+    actions_frame,
+    text=t("restart_openwebui"),
+    command=restart_openwebui_manual
+)
+btn_restart_webui.pack(fill="x", padx=40, pady=8)
+
+
+btn_restart_container = ui_button(
+    actions_frame,
+    text=t("restart_container"),
+    command=restart_container_manual
+)
+btn_restart_container.pack(fill="x", padx=40, pady=8)
+
+
+btn_close_webui = ui_button(
+    actions_frame,
+    text=t("close_openwebui"),
+    command=close_open_webui,
+    kind="danger"
+)
+btn_close_webui.pack(fill="x", padx=40, pady=8)
+
+
+btn2 = ui_button(
+    actions_frame,
+    text=TEXT["models"],
+    command=show_models
+)
+btn2.pack(fill="x", padx=40, pady=8)
+
+
+btn_chat = ui_button(
+    actions_frame,
+    text=TEXT["chat"],
+    command=show_chat,
+    kind="primary"
+)
+btn_chat.pack(fill="x", padx=40, pady=8)
+
+
+btn_conversation_browser = ui_button(
+    actions_frame,
+    text=t("conversation_browser"),
+    command=show_conversation_browser
+)
+btn_conversation_browser.pack(fill="x", padx=40, pady=8)
+
+
+btn_memory = ui_button(
+    actions_frame,
+    text=TEXT["memory"],
+    command=show_memory
+)
+btn_memory.pack(fill="x", padx=40, pady=8)
+
+
+btn_persona = ui_button(
+    actions_frame,
+    text=TEXT["persona"],
+    command=show_persona
+)
+btn_persona.pack(fill="x", padx=40, pady=8)
+
+
+btn_knowledge = ui_button(
+    actions_frame,
+    text=t("knowledge_base"),
+    command=show_knowledge
+)
+btn_knowledge.pack(fill="x", padx=40, pady=8)
+
+
+btn_remote = ui_button(
+    actions_frame,
+    text=TEXT["remote_access"],
+    command=show_remote_access
+)
+btn_remote.pack(fill="x", padx=40, pady=8)
+
+
+btn_remote_diagnostics = ui_button(
+    actions_frame,
+    text=TEXT["remote_diagnostics"],
+    command=show_remote_diagnostics
+)
+btn_remote_diagnostics.pack(fill="x", padx=40, pady=8)
 
 
 def show_settings():
