@@ -1,11 +1,11 @@
 import customtkinter as ctk
 
 from modules.ui_theme import (
+    FORM_CONTROL_WIDTH,
     FONT_HEADER,
     FONT_NORMAL,
     FONT_NORMAL_BOLD,
     FONT_SMALL,
-    SPACING_LARGE,
     SPACING_MEDIUM,
     SPACING_SMALL,
     status_color
@@ -130,7 +130,7 @@ class HomePage(ctk.CTkFrame):
             text=self.t("home_advanced_hidden_note"),
             font=FONT_SMALL,
             text_color=status_color("disabled"),
-            wraplength=220,
+            wraplength=FORM_CONTROL_WIDTH,
             justify="left"
         )
         self.note_label.pack(fill="x", pady=(SPACING_MEDIUM, 0))
@@ -171,4 +171,3 @@ class HomePage(ctk.CTkFrame):
             "persona": {"status": "disabled", "text": "--", "detail": "--"},
             "remote": {"status": "disabled", "text": "--", "detail": "--"}
         }
-
