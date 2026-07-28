@@ -330,6 +330,8 @@ ENGLISH_TEXT = TextDict(_build_text("en_US"))
 
 
 def set_language(language):
-    source = ENGLISH_TEXT if normalize_language(language) == "en_US" else CHINESE_TEXT
+    normalized = normalize_language(language)
+    set_i18n_language(normalized)
+    source = ENGLISH_TEXT if normalized == "en_US" else CHINESE_TEXT
     TEXT.clear()
     TEXT.update(source)

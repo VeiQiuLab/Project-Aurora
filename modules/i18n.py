@@ -6,6 +6,7 @@ from pathlib import Path
 
 DEFAULT_LANGUAGE = "zh_CN"
 FALLBACK_LANGUAGE = "en_US"
+SUPPORTED_LANGUAGES = {"zh_CN", "en_US"}
 
 _LOCALE_DIR = Path(__file__).resolve().parent.parent / "locales"
 _language = DEFAULT_LANGUAGE
@@ -16,7 +17,7 @@ def normalize_language(language):
     value = str(language or "").strip().lower().replace("-", "_")
     if value in {"english", "en", "en_us"}:
         return "en_US"
-    if value in {"简体中文", "zh", "zh_cn", "chinese", "中文"}:
+    if value in {"zh", "zh_cn", "chinese", "\u4e2d\u6587", "\u7b80\u4f53\u4e2d\u6587"}:
         return "zh_CN"
     return DEFAULT_LANGUAGE
 
@@ -40,6 +41,10 @@ def set_language(language):
     _language = normalize_language(language)
     _load(_language)
     _load(FALLBACK_LANGUAGE)
+
+
+def get_language():
+    return _language
 
 
 def t(key, default=None):

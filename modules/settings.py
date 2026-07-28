@@ -13,7 +13,7 @@ class Settings:
             "app_name": "Project Aurora \u00b7 Xu",
             "theme": "System",
             "appearance": "System",
-            "language": "\u7b80\u4f53\u4e2d\u6587",
+            "language": "zh_CN",
             "first_run": {
                 "completed": False
             },
@@ -157,11 +157,32 @@ class Settings:
             changed = True
         if self._migrate_model_settings():
             changed = True
+        if self._migrate_language_settings():
+            changed = True
         if changed:
             try:
                 self.save()
             except OSError:
                 pass
+
+    def _migrate_language_settings(self):
+        if not isinstance(self.data, dict):
+            return False
+        current = str(self.data.get("language", "") or "").strip()
+        normalized = self.normalize_language(current)
+        if current != normalized:
+            self.data["language"] = normalized
+            return True
+        return False
+
+    @staticmethod
+    def normalize_language(language):
+        value = str(language or "").strip().lower().replace("-", "_")
+        if value in {"english", "en", "en_us"}:
+            return "en_US"
+        if value in {"zh", "zh_cn", "chinese", "\u4e2d\u6587", "\u7b80\u4f53\u4e2d\u6587"}:
+            return "zh_CN"
+        return "zh_CN"
 
     def _migrate_model_settings(self):
         changed = False
@@ -218,6 +239,18 @@ class Settings:
         return value
 
     def set(self, key, value):
+        self._set_value(key, value)
+        self.save()
+
+    def update_many(self, values, save=True):
+        if not isinstance(values, dict):
+            raise TypeError("Settings.update_many() expects a dict.")
+        for key, value in values.items():
+            self._set_value(key, value)
+        if save:
+            self.save()
+
+    def _set_value(self, key, value):
         keys = key.split(".")
         target = self.data
         for item in keys[:-1]:
@@ -225,7 +258,6 @@ class Settings:
                 target[item] = {}
             target = target[item]
         target[keys[-1]] = value
-        self.save()
 
 
 settings = Settings()

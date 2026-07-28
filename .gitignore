@@ -4,11 +4,15 @@
 
 # Chat history
 data/conversations/
+data/conversations/*
 
 # Personal memory
 data/memory/
+data/memory/*
 
 # Personal knowledge
+data/knowledge/
+data/knowledge/*
 data/knowledge/private/
 
 # Personal settings
@@ -16,6 +20,12 @@ config/settings.json
 
 # Personal remote configuration
 data/remote/remote.json
+data/remote/*.json
+!data/remote/*.example.json
+
+# Personal persona configuration
+data/persona/*.json
+!data/persona/*.example.json
 
 # Credentials and secrets
 data/credential/
@@ -34,6 +44,7 @@ data/log/
 data/runtime/
 data/cache/
 data/temp/
+.codex/
 
 # Local user files
 *.json.bak
@@ -44,4 +55,5 @@ build/
 dist/
 *.spec
 __pycache__/
+**/__pycache__/
 *.pyc
