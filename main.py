@@ -1575,7 +1575,7 @@ actions_frame.pack(fill="x", padx=20, pady=(0, 8))
 
 action_title = ctk.CTkLabel(
     actions_frame,
-    text=t("quick_actions"),
+    text=t("compatibility_tools"),
     font=FONT_HEADER
 )
 action_title.pack(anchor="w", padx=15, pady=(5, 10))
@@ -1749,7 +1749,7 @@ settings_button.pack(fill="x", padx=40, pady=8)
 def refresh_main_texts():
     status_title.configure(text=t("system_status"))
     startup_title.configure(text=t("startup_status"))
-    action_title.configure(text=t("quick_actions"))
+    action_title.configure(text=t("compatibility_tools"))
     btn1.configure(text=t("open_webui"))
     btn_diagnostic.configure(text=t("runtime_environment_diagnostics"))
     btn_start_ollama.configure(text=t("start_ollama"))
