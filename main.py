@@ -1001,8 +1001,18 @@ def show_context_inspector(payload, parent_window=None):
     if context_inspector_window is not None and context_inspector_window.winfo_exists():
         context_inspector_window.destroy()
 
+    def context_section_title(name):
+        key_map = {
+            "System Context": "context_section_system",
+            "Persona": "persona",
+            "Memory": "memory",
+            "Knowledge": "knowledge",
+            "Conversation Context": "context_section_conversation",
+        }
+        return t(key_map.get(str(name or ""), "context_sidebar_title"))
+
     context_inspector_window = ctk.CTkToplevel(parent_window or app)
-    context_inspector_window.title("Context Inspector")
+    context_inspector_window.title(t("chat_window_context_inspector"))
     context_inspector_window.geometry("980x760")
     context_inspector_window.minsize(760, 560)
     context_inspector_window.transient(parent_window or app)
@@ -1015,16 +1025,16 @@ def show_context_inspector(payload, parent_window=None):
     header.pack(fill="x", padx=25, pady=(20, 10))
     ctk.CTkLabel(
         header,
-        text="Final Chat Context",
+        text=t("context_inspector_final_chat_context"),
         font=("Microsoft YaHei", 22, "bold")
     ).pack(anchor="w")
     ctk.CTkLabel(
         header,
         text=(
-            f"Generated: {payload.get('generated_time', '')} | "
-            f"Build Time: {payload.get('build_duration_ms', 0)}ms | "
-            f"Total: {summary.get('total_characters', 0)} chars | "
-            f"Tokens: {summary.get('total_tokens', 0)}"
+            f"{t('context_inspector_generated')}: {payload.get('generated_time', '')} | "
+            f"{t('context_inspector_build_time')}: {payload.get('build_duration_ms', 0)}ms | "
+            f"{t('total_characters')}: {summary.get('total_characters', 0)} | "
+            f"{t('tokens')}: {summary.get('total_tokens', 0)}"
         ),
         font=("Microsoft YaHei", 12),
         text_color="gray"
@@ -1033,7 +1043,7 @@ def show_context_inspector(payload, parent_window=None):
     status_frame = ctk.CTkFrame(context_inspector_window)
     status_frame.pack(fill="x", padx=25, pady=(0, 10))
     status_line = "    ".join(
-        f"{item.get('name', 'Context')} {'ON' if item.get('enabled') else 'OFF'}"
+        f"{context_section_title(item.get('name', 'Context'))} {t('enabled') if item.get('enabled') else t('disabled')}"
         for item in sections
     )
     ctk.CTkLabel(
@@ -1048,7 +1058,7 @@ def show_context_inspector(payload, parent_window=None):
         warning_frame.pack(fill="x", padx=25, pady=(0, 10))
         ctk.CTkLabel(
             warning_frame,
-            text="Context size warning.\n" + "\n".join(summary.get("warning_reasons", [])),
+            text=t("context_size_warning") + "\n" + "\n".join(summary.get("warning_reasons", [])),
             font=("Microsoft YaHei", 12),
             text_color="#FFD27F",
             anchor="w",
@@ -1068,6 +1078,7 @@ def show_context_inspector(payload, parent_window=None):
 
     def add_section(record):
         name = record.get("name", "Context")
+        display_name = context_section_title(name)
         collapsed[name] = False
         outer = ctk.CTkFrame(content_frame)
         outer.pack(fill="x", padx=8, pady=8)
@@ -1077,7 +1088,7 @@ def show_context_inspector(payload, parent_window=None):
         def toggle():
             collapsed[name] = not collapsed[name]
             marker = "\u25b6" if collapsed[name] else "\u25bc"
-            title_button.configure(text=f"{marker} {name}")
+            title_button.configure(text=f"{marker} {display_name}")
             if collapsed[name]:
                 body.pack_forget()
             else:
@@ -1085,7 +1096,7 @@ def show_context_inspector(payload, parent_window=None):
 
         title_button = ui_button(
             outer,
-            text=f"\u25bc {name}",
+            text=f"\u25bc {display_name}",
             anchor="w",
             command=toggle
         )

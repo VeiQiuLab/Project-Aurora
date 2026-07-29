@@ -214,6 +214,8 @@ class ChatPage(ctk.CTkFrame):
             if not isinstance(record, dict):
                 continue
             title = str(record.get("title") or self.t("conversation"))
-            updated = str(record.get("updated_at") or "")
-            labels.append(f"{title}  {updated}".strip())
+            title = " ".join(title.split())
+            if len(title) > 24:
+                title = title[:24].rstrip() + "..."
+            labels.append(title)
         return labels

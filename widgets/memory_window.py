@@ -1,5 +1,5 @@
 import customtkinter as ctk
-from tkinter import messagebox
+from tkinter import Menu, messagebox
 
 from modules.ui_theme import (
     FORM_CONTROL_WIDTH,
@@ -32,8 +32,8 @@ class MemoryWindow(ctk.CTkToplevel):
         self.selected_id = {"value": None}
 
         self.title(self.t("memory"))
-        self.geometry("760x600")
-        self.minsize(620, 480)
+        self.geometry("1100x820")
+        self.minsize(980, 720)
         self.transient(parent)
         self.protocol("WM_DELETE_WINDOW", self.close)
         self.build()
@@ -79,12 +79,13 @@ class MemoryWindow(ctk.CTkToplevel):
         form_card.pack(fill="both", expand=True, padx=SPACING_LARGE + SPACING_SMALL, pady=(0, SPACING_MEDIUM))
         type_row = FormRow(form_card.body, self.t("type"))
         type_row.pack(fill="x", pady=SPACING_SMALL)
-        self.type_box = type_row.add_option(["preference", "fact", "project", "temporary"], "fact")
+        self.type_box = type_row.add_option(self.memory_type_options(), self.memory_type_label("fact"))
         self.content_box = ctk.CTkTextbox(form_card.body, height=120, wrap="word")
         self.content_box.pack(fill="both", expand=True, pady=(SPACING_SMALL, SPACING_MEDIUM))
+        self.attach_text_menu(self.content_box)
         importance_row = FormRow(form_card.body, self.t("memory_window_importance"))
         importance_row.pack(fill="x", pady=SPACING_SMALL)
-        self.importance_box = importance_row.add_option(["low", "normal", "high"], "normal")
+        self.importance_box = importance_row.add_option(self.importance_options(), self.importance_label("normal"))
         self.enabled_var = ctk.BooleanVar(value=True)
         ctk.CTkSwitch(
             form_card.body,
@@ -101,38 +102,123 @@ class MemoryWindow(ctk.CTkToplevel):
 
     def build_buttons(self):
         actions = [
-            (self.text["add"], self.clear_form, SecondaryButton),
-            (self.text["save"], self.save_memory, PrimaryButton),
-            (self.text["delete"], self.delete_memory, DangerButton),
+            (self.t("add"), self.clear_form, SecondaryButton),
+            (self.t("save"), self.save_memory, PrimaryButton),
+            (self.t("delete"), self.delete_memory, DangerButton),
             (self.t("export_memory"), self.export_memory_entry, SecondaryButton),
             (self.t("import_memory"), self.import_memory_entry, SecondaryButton),
-            (self.text["close"], self.close, SecondaryButton)
+            (self.t("close"), self.close, SecondaryButton)
         ]
         for index, (label, command, button_factory) in enumerate(actions):
-            button_factory(self.footer.buttons, text=label, command=command).pack(side="left", expand=True, fill="x", padx=SPACING_SMALL)
+            button_factory(self.footer.buttons, text=label, command=command).grid(
+                row=index // 3,
+                column=index % 3,
+                sticky="ew",
+                padx=SPACING_SMALL,
+                pady=SPACING_SMALL
+            )
+        for column in range(3):
+            self.footer.buttons.grid_columnconfigure(column, weight=1)
+
+    def attach_text_menu(self, widget):
+        menu = Menu(widget, tearoff=0)
+        menu.add_command(label=self.t("edit_cut"), command=lambda: widget.event_generate("<<Cut>>"))
+        menu.add_command(label=self.t("edit_copy"), command=lambda: widget.event_generate("<<Copy>>"))
+        menu.add_command(label=self.t("edit_paste"), command=lambda: widget.event_generate("<<Paste>>"))
+        menu.add_command(label=self.t("edit_delete"), command=lambda: self.delete_selection(widget))
+        menu.add_separator()
+        menu.add_command(label=self.t("edit_select_all"), command=lambda: self.select_all_text(widget))
+
+        def show_menu(event):
+            try:
+                widget.focus_set()
+                menu.tk_popup(event.x_root, event.y_root)
+            finally:
+                menu.grab_release()
+            return "break"
+
+        widget.bind("<Button-3>", show_menu)
+
+    @staticmethod
+    def delete_selection(widget):
+        try:
+            widget.delete("sel.first", "sel.last")
+        except Exception:
+            return
+
+    @staticmethod
+    def select_all_text(widget):
+        try:
+            widget.tag_add("sel", "1.0", "end")
+            widget.mark_set("insert", "end")
+        except Exception:
+            return
+        return "break"
+
+    def memory_type_labels(self):
+        return {
+            "preference": self.t("memory_type_preference"),
+            "fact": self.t("memory_type_fact"),
+            "instruction": self.t("memory_type_instruction"),
+            "project": self.t("memory_type_project"),
+            "temporary": self.t("memory_type_temporary")
+        }
+
+    def importance_labels(self):
+        return {
+            "low": self.t("memory_importance_low"),
+            "normal": self.t("memory_importance_normal"),
+            "high": self.t("memory_importance_high")
+        }
+
+    def memory_type_label(self, value):
+        return self.memory_type_labels().get(str(value or "fact"), str(value or "fact"))
+
+    def memory_type_value(self, label):
+        labels = self.memory_type_labels()
+        for value, text in labels.items():
+            if label == text:
+                return value
+        return str(label or "fact")
+
+    def importance_label(self, value):
+        return self.importance_labels().get(str(value or "normal"), str(value or "normal"))
+
+    def importance_value(self, label):
+        labels = self.importance_labels()
+        for value, text in labels.items():
+            if label == text:
+                return value
+        return str(label or "normal")
+
+    def memory_type_options(self):
+        return [self.memory_type_label(value) for value in ("preference", "fact", "instruction", "project", "temporary")]
+
+    def importance_options(self):
+        return [self.importance_label(value) for value in ("low", "normal", "high")]
 
     def type_filter_options(self):
-        return [self.t("memory_window_all_types"), "preference", "fact", "project", "temporary"]
+        return [self.t("memory_window_all_types")] + self.memory_type_options()
 
     def importance_filter_options(self):
-        return [self.t("memory_window_all_importance"), "low", "normal", "high"]
+        return [self.t("memory_window_all_importance")] + self.importance_options()
 
     def enabled_filter_options(self):
-        return [self.t("memory_window_all_status"), self.text["enabled"], self.text["disabled"]]
+        return [self.t("memory_window_all_status"), self.t("enabled"), self.t("disabled")]
 
     def selected_type_filter(self):
         selected = self.type_filter.get()
-        return None if selected == self.t("memory_window_all_types") else selected
+        return None if selected == self.t("memory_window_all_types") else self.memory_type_value(selected)
 
     def selected_importance_filter(self):
         selected = self.importance_filter.get()
-        return None if selected == self.t("memory_window_all_importance") else selected
+        return None if selected == self.t("memory_window_all_importance") else self.importance_value(selected)
 
     def selected_enabled_filter(self):
         selected = self.enabled_filter.get()
-        if selected == self.text["enabled"]:
+        if selected == self.t("enabled"):
             return True
-        if selected == self.text["disabled"]:
+        if selected == self.t("disabled"):
             return False
         return None
 
@@ -150,9 +236,9 @@ class MemoryWindow(ctk.CTkToplevel):
         )
         self.logger.info(f"Memory loaded: {len(self.records)}")
         labels = [
-            f"{item.get('type', 'fact')} | {item.get('content', '')[:45]} | "
-            f"{item.get('importance', 'normal')} | "
-            f"{self.text['enabled'] if item.get('enabled', True) else self.text['disabled']} | "
+            f"{self.memory_type_label(item.get('type', 'fact'))} | {item.get('content', '')[:45]} | "
+            f"{self.importance_label(item.get('importance', 'normal'))} | "
+            f"{self.t('enabled') if item.get('enabled', True) else self.t('disabled')} | "
             f"{item.get('updated_time', '').replace('T', ' ')}"
             for item in self.records
         ]
@@ -171,16 +257,16 @@ class MemoryWindow(ctk.CTkToplevel):
             return
         item = self.records[index]
         self.selected_id["value"] = item.get("id")
-        self.type_box.set(item.get("type", "fact"))
-        self.importance_box.set(item.get("importance", "normal"))
+        self.type_box.set(self.memory_type_label(item.get("type", "fact")))
+        self.importance_box.set(self.importance_label(item.get("importance", "normal")))
         self.enabled_var.set(bool(item.get("enabled", True)))
         self.content_box.delete("1.0", "end")
         self.content_box.insert("1.0", item.get("content", ""))
 
     def clear_form(self):
         self.selected_id["value"] = None
-        self.type_box.set("fact")
-        self.importance_box.set("normal")
+        self.type_box.set(self.memory_type_label("fact"))
+        self.importance_box.set(self.importance_label("normal"))
         self.enabled_var.set(True)
         self.content_box.delete("1.0", "end")
         self.status.set_status("disabled", "")
@@ -191,12 +277,21 @@ class MemoryWindow(ctk.CTkToplevel):
             self.status.set_status("warning", self.t("memory_window_enter_content"))
             return
         if self.selected_id["value"]:
-            self.memory_store.update(self.selected_id["value"], self.type_box.get(), content, self.importance_box.get())
+            self.memory_store.update(
+                self.selected_id["value"],
+                self.memory_type_value(self.type_box.get()),
+                content,
+                self.importance_value(self.importance_box.get())
+            )
             self.memory_store.set_enabled(self.selected_id["value"], self.enabled_var.get())
             self.logger.info("Memory updated")
             self.status.set_status("healthy", self.t("memory_window_updated"))
         else:
-            self.memory_store.create(self.type_box.get(), content, self.importance_box.get())
+            self.memory_store.create(
+                self.memory_type_value(self.type_box.get()),
+                content,
+                self.importance_value(self.importance_box.get())
+            )
             self.logger.info("Memory created")
             self.status.set_status("healthy", self.t("memory_window_created"))
         self.clear_form()
