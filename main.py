@@ -144,6 +144,7 @@ from modules.chat import (
     summarize_context_sections,
     stream_chat
 )
+from modules.context_builder import ContextBuilder
 from modules.conversation import ConversationManager
 from modules.memory import MemoryStore
 from modules.knowledge import KnowledgeStore
@@ -907,10 +908,7 @@ def show_models():
         on_close=clear_models_window
     )
 
-def build_context_sections(memories=None, knowledge_items=None, persona=None, conversation_messages=None):
-    memory_text = format_memory_context(memories)
-    knowledge_text = format_knowledge_context(knowledge_items)
-    persona_text = persona_store.build_context(persona) if persona else ""
+def build_conversation_context(conversation_messages=None):
     conversation_lines = []
     for message in conversation_messages or []:
         role = message.get("role", "")
@@ -919,39 +917,42 @@ def build_context_sections(memories=None, knowledge_items=None, persona=None, co
         content = str(message.get("content", "")).strip()
         if content:
             conversation_lines.append(f"{role}: {content}")
-    conversation_text = "\n\n".join(conversation_lines)
-    return [
-        {
-            "name": "System Context",
-            "enabled": True,
-            "content": DEFAULT_SYSTEM_CONTEXT
-        },
-        {
-            "name": "Persona",
-            "enabled": bool(persona_text),
-            "content": persona_text
-        },
-        {
-            "name": "Memory",
-            "enabled": bool(memory_text),
-            "content": memory_text
-        },
-        {
-            "name": "Knowledge",
-            "enabled": bool(knowledge_text),
-            "content": knowledge_text
-        },
-        {
-            "name": "Conversation Context",
-            "enabled": bool(conversation_text),
-            "content": conversation_text
-        }
-    ]
+    return "\n\n".join(conversation_lines)
+
+
+def context_warning_tokens():
+    try:
+        return max(1, int(settings.get("context.warning_tokens", 6000)))
+    except (TypeError, ValueError):
+        return 6000
+
+
+def build_context_package(memories=None, knowledge_items=None, persona=None, conversation_messages=None):
+    builder = ContextBuilder(
+        system_context=DEFAULT_SYSTEM_CONTEXT,
+        warning_tokens=context_warning_tokens()
+    )
+    return builder.build_from_formatted_context(
+        system_context=DEFAULT_SYSTEM_CONTEXT,
+        persona_text=persona_store.build_context(persona) if persona else "",
+        memory_text=format_memory_context(memories),
+        knowledge_text=format_knowledge_context(knowledge_items),
+        conversation_text=build_conversation_context(conversation_messages)
+    )
+
+
+def build_context_sections(memories=None, knowledge_items=None, persona=None, conversation_messages=None):
+    return build_context_package(
+        memories,
+        knowledge_items,
+        persona,
+        conversation_messages
+    )["sections"]
 
 
 def build_memory_context(memories=None, knowledge_items=None, persona=None):
     lines = []
-    for section in build_context_sections(memories, knowledge_items, persona)[:4]:
+    for section in build_context_package(memories, knowledge_items, persona)["sections"][:4]:
         content = section.get("content", "")
         if content:
             lines.append(content)
