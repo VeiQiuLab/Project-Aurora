@@ -7,7 +7,7 @@ save conversations, control UI, or call an LLM.
 
 from __future__ import annotations
 
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from typing import Any, TypedDict
 
 
@@ -44,36 +44,42 @@ class ContextBuilder:
         *,
         system_context: str | None = None,
         persona: str | dict[str, Any] | None = None,
+        persona_text: str | None = None,
         memory_items: list[dict[str, Any]] | None = None,
+        memory_text: str | None = None,
         knowledge_items: list[dict[str, Any]] | None = None,
+        knowledge_text: str | None = None,
         conversation_messages: list[dict[str, Any]] | None = None,
+        conversation_text: str | None = None,
         user_message: str = "",
+        include_user_message_section: bool = True,
     ) -> list[ContextSection]:
         """Return ordered context sections without performing retrieval."""
 
         system_text = self._clean_text(system_context or self.system_context)
-        persona_text = self._format_persona(persona)
-        memory_text = self._format_records(memory_items, fallback_name="Memory")
-        knowledge_text = self._format_records(knowledge_items, fallback_name="Knowledge")
-        conversation_text = self._format_conversation(conversation_messages)
+        resolved_persona_text = self._clean_text(persona_text) if persona_text is not None else self._format_persona(persona)
+        resolved_memory_text = self._clean_text(memory_text) if memory_text is not None else self._format_records(memory_items, fallback_name="Memory")
+        resolved_knowledge_text = self._clean_text(knowledge_text) if knowledge_text is not None else self._format_records(knowledge_items, fallback_name="Knowledge")
+        resolved_conversation_text = self._clean_text(conversation_text) if conversation_text is not None else self._format_conversation(conversation_messages)
         user_text = self._clean_text(user_message)
 
         sections: list[ContextSection] = [
             {"name": "System Context", "enabled": bool(system_text), "content": system_text},
-            {"name": "Persona", "enabled": bool(persona_text), "content": persona_text},
-            {"name": "Memory", "enabled": bool(memory_text), "content": memory_text},
-            {"name": "Knowledge", "enabled": bool(knowledge_text), "content": knowledge_text},
+            {"name": "Persona", "enabled": bool(resolved_persona_text), "content": resolved_persona_text},
+            {"name": "Memory", "enabled": bool(resolved_memory_text), "content": resolved_memory_text},
+            {"name": "Knowledge", "enabled": bool(resolved_knowledge_text), "content": resolved_knowledge_text},
             {
                 "name": "Conversation Context",
-                "enabled": bool(conversation_text),
-                "content": conversation_text,
+                "enabled": bool(resolved_conversation_text),
+                "content": resolved_conversation_text,
             },
-            {
+        ]
+        if include_user_message_section:
+            sections.append({
                 "name": "Current User Message",
                 "enabled": bool(user_text),
                 "content": user_text,
-            },
-        ]
+            })
         return sections
 
     def build_prompt_package(
@@ -81,9 +87,13 @@ class ContextBuilder:
         *,
         system_context: str | None = None,
         persona: str | dict[str, Any] | None = None,
+        persona_text: str | None = None,
         memory_items: list[dict[str, Any]] | None = None,
+        memory_text: str | None = None,
         knowledge_items: list[dict[str, Any]] | None = None,
+        knowledge_text: str | None = None,
         conversation_messages: list[dict[str, Any]] | None = None,
+        conversation_text: str | None = None,
         user_message: str = "",
     ) -> PromptPackage:
         """Return a complete prompt package for future chat integration."""
@@ -91,10 +101,15 @@ class ContextBuilder:
         sections = self.build_context_sections(
             system_context=system_context,
             persona=persona,
+            persona_text=persona_text,
             memory_items=memory_items,
+            memory_text=memory_text,
             knowledge_items=knowledge_items,
+            knowledge_text=knowledge_text,
             conversation_messages=conversation_messages,
+            conversation_text=conversation_text,
             user_message=user_message,
+            include_user_message_section=False,
         )
         final_prompt = self.assemble_final_prompt(sections)
         user_text = self._clean_text(user_message)
@@ -108,6 +123,63 @@ class ContextBuilder:
             "final_prompt": final_prompt,
             "diagnostics": self._build_diagnostics(sections),
             "source_refs": self._build_source_refs(memory_items, knowledge_items, conversation_messages),
+        }
+
+    def build_from_formatted_context(
+        self,
+        *,
+        system_context: str | None = None,
+        persona_text: str = "",
+        memory_text: str = "",
+        knowledge_text: str = "",
+        conversation_text: str = "",
+        user_message: str = "",
+    ) -> PromptPackage:
+        """Build a prompt package from already formatted v2.6 context text."""
+
+        return self.build_prompt_package(
+            system_context=system_context,
+            persona_text=persona_text,
+            memory_text=memory_text,
+            knowledge_text=knowledge_text,
+            conversation_text=conversation_text,
+            user_message=user_message,
+        )
+
+    def build_from_sections(
+        self,
+        sections: list[ContextSection],
+        *,
+        user_message: str = "",
+        source_refs: dict[str, list[str]] | None = None,
+    ) -> PromptPackage:
+        """Build a prompt package from caller-provided ordered sections."""
+
+        normalized_sections = [
+            {
+                "name": self._clean_text(section.get("name", "Context")),
+                "enabled": bool(section.get("enabled")),
+                "content": self._clean_text(section.get("content", "")),
+            }
+            for section in sections or []
+            if isinstance(section, dict)
+        ]
+        final_prompt = self.assemble_final_prompt(normalized_sections)
+        user_text = self._clean_text(user_message)
+        messages = [{"role": "system", "content": final_prompt or self.system_context}]
+        if user_text:
+            messages.append({"role": "user", "content": user_text})
+
+        return {
+            "messages": messages,
+            "sections": normalized_sections,
+            "final_prompt": final_prompt,
+            "diagnostics": self._build_diagnostics(normalized_sections),
+            "source_refs": source_refs or {
+                "memory_ids": [],
+                "knowledge_ids": [],
+                "conversation_message_ids": [],
+            },
         }
 
     @classmethod

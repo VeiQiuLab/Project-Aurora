@@ -45,7 +45,7 @@ class ContextBuilderTests(unittest.TestCase):
 
         package = builder.build_prompt_package()
 
-        self.assertEqual(len(package["sections"]), 6)
+        self.assertEqual(len(package["sections"]), 5)
         self.assertEqual(package["sections"][0]["name"], "System Context")
         self.assertTrue(package["sections"][0]["enabled"])
         for section in package["sections"][1:]:
@@ -70,6 +70,36 @@ class ContextBuilderTests(unittest.TestCase):
         self.assertIsInstance(package["diagnostics"], dict)
         self.assertIsInstance(package["source_refs"], dict)
         self.assertEqual(package["messages"][-1], {"role": "user", "content": "Hello"})
+        self.assertNotIn("Hello", package["messages"][0]["content"])
+
+    def test_formatted_context_keeps_v26_text_unchanged(self):
+        builder = ContextBuilder()
+
+        package = builder.build_from_formatted_context(
+            system_context="System rules",
+            persona_text="Persona text",
+            memory_text="- Memory text",
+            knowledge_text="- Knowledge text",
+            conversation_text="user: Previous request",
+            user_message="Current request",
+        )
+
+        self.assertEqual(
+            [section["name"] for section in package["sections"]],
+            [
+                "System Context",
+                "Persona",
+                "Memory",
+                "Knowledge",
+                "Conversation Context",
+            ],
+        )
+        self.assertEqual(package["sections"][1]["content"], "Persona text")
+        self.assertEqual(package["sections"][2]["content"], "- Memory text")
+        self.assertEqual(package["sections"][3]["content"], "- Knowledge text")
+        self.assertEqual(package["sections"][4]["content"], "user: Previous request")
+        self.assertNotIn("Current request", package["final_prompt"])
+        self.assertEqual(package["messages"][-1], {"role": "user", "content": "Current request"})
 
     def test_metadata_and_source_refs_do_not_break_structure(self):
         builder = ContextBuilder(warning_tokens=1)
