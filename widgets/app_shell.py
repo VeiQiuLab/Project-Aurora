@@ -35,6 +35,7 @@ class AppShell(ctk.CTkFrame):
         nav_items=None,
         page_builders=None,
         on_page_change=None,
+        on_shutdown=None,
         **kwargs
     ):
         kwargs.setdefault("fg_color", "transparent")
@@ -45,6 +46,7 @@ class AppShell(ctk.CTkFrame):
         self.on_page_change = on_page_change
         self.current_page = None
         self.page_builders = dict(page_builders or {})
+        self.on_shutdown = on_shutdown
         self.page_frames = {}
         self.nav_buttons = {}
 
@@ -94,6 +96,21 @@ class AppShell(ctk.CTkFrame):
             )
             button.pack(fill="x", padx=SPACING_MEDIUM, pady=SPACING_SMALL)
             self.nav_buttons[page_id] = button
+
+        self.exit_button = SecondaryButton(
+            self.sidebar,
+            text=self.t("exit_aurora"),
+            command=self._request_shutdown,
+            anchor="w"
+        )
+        self.exit_button.pack(side="bottom", fill="x", padx=SPACING_MEDIUM, pady=(SPACING_SMALL, SPACING_LARGE))
+
+    def _request_shutdown(self):
+        if callable(self.on_shutdown):
+            try:
+                self.on_shutdown("app_shell_exit")
+            except TypeError:
+                self.on_shutdown()
 
     def _build_content_header(self):
         self.page_header = ctk.CTkFrame(self.content_area, fg_color="transparent")
@@ -153,7 +170,12 @@ class AppShell(ctk.CTkFrame):
     def _create_page(self, page_id):
         builder = self.page_builders.get(page_id)
         if callable(builder):
-            return builder(self.page_container)
+            try:
+                return builder(self.page_container)
+            except Exception:
+                import traceback
+                traceback.print_exc()
+                raise
         return self._placeholder_page(page_id)
 
     def _placeholder_page(self, page_id):

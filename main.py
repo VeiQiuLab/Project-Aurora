@@ -175,6 +175,7 @@ from modules.search import search_memories, search_conversations
 from modules.memory_retrieval import format_memory_context, retrieve_memories
 from modules.retrieval import format_knowledge_context, search_knowledge, retrieval_summary
 from modules.service_manager import ServiceManager
+from modules.shutdown_manager import ShutdownManager
 from widgets.app_shell import AppShell
 from widgets.chat_window import ChatWindow
 from widgets.conversation_browser import ConversationBrowserWindow
@@ -411,7 +412,33 @@ remote_manager = RemoteAccessManager()
 authentication_manager = AuthenticationManager()
 credential_storage_provider = CredentialStorageProvider()
 service_manager = ServiceManager()
+shutdown_manager = ShutdownManager(logger=logger)
 lan_status_server = LANStatusPageServer()
+service_lifecycle = {
+    "ollama_started_by_app": False,
+    "openwebui_started_by_app": False,
+    "openwebui_process_started_by_app": False
+}
+
+
+def schedule_after(delay_ms, callback, *args):
+    if shutdown_manager.shutting_down:
+        return None
+    return shutdown_manager.register_after(app.after(delay_ms, callback, *args))
+
+
+def mark_service_started_by_app(service_name):
+    if service_name == "ollama":
+        service_lifecycle["ollama_started_by_app"] = True
+        metadata = service_manager.service_process_metadata("ollama")
+        logger.info(
+            "Ollama started by Aurora: "
+            f"pid={metadata.get('pid')}, executable={metadata.get('executable_path')}"
+        )
+    elif service_name == "openwebui":
+        service_lifecycle["openwebui_started_by_app"] = True
+    elif service_name == "openwebui_process":
+        service_lifecycle["openwebui_process_started_by_app"] = True
 
 
 def get_mobile_chat_model():
@@ -794,10 +821,28 @@ def run_diagnostic():
 
 def start_ollama_manual():
     logger.info("Starting Ollama")
+    def ollama_manual_event(event):
+        if isinstance(event, dict):
+            if event.get("event") == "ollama_snapshot_before_start":
+                logger.info(f"[OLLAMA SNAPSHOT BEFORE START] {event.get('processes')}")
+            elif event.get("event") == "ollama_root_started":
+                logger.info(
+                    f"Ollama root started: pid={event.get('pid')}, "
+                    f"executable={event.get('executable')}, args={event.get('args')}"
+                )
+            elif event.get("event") == "ollama_snapshot_after_start":
+                logger.info(f"[OLLAMA SNAPSHOT AFTER START] {event.get('processes')}")
+            elif event.get("event") == "ollama_owned_processes":
+                logger.info(f"[OLLAMA OWNERSHIP RESULT] {event.get('processes')}")
+            return
+        if event == "started":
+            mark_service_started_by_app("ollama")
+            logger.info("Ollama started")
+
     service_manager.start_ollama(
         settings.get("services.ollama.command", "ollama serve"),
         settings.get("ollama.host", "http://127.0.0.1:11434"),
-        callback=lambda event: logger.info("Ollama started") if event == "started" else None
+        callback=ollama_manual_event
     )
 
 
@@ -831,9 +876,12 @@ def launch_open_webui():
             logger.info("Docker Engine ready")
         elif name in {"starting_container", "container_started"}:
             logger.info("Starting Open WebUI")
+            if name == "container_started":
+                mark_service_started_by_app("openwebui")
         elif name in {"started", "online"}:
             logger.info("Open WebUI started")
-            app.after(0, open_webui)
+            if not shutdown_manager.shutting_down:
+                app.after(0, open_webui)
         elif name == "engine_timeout":
             logger.error("Docker Engine timeout")
         elif name in {"docker_unavailable", "command_not_found", "docker_start_failed", "path_not_found", "container_not_found", "container_start_failed", "timeout"}:
@@ -1156,16 +1204,7 @@ def show_context_inspector(payload, parent_window=None):
     context_inspector_window.protocol("WM_DELETE_WINDOW", close_context_inspector)
 
 
-def show_chat():
-    global active_conversation_id, chat_load_conversation_callback, chat_window, pending_conversation_id
-
-    if chat_window is not None and chat_window.winfo_exists():
-        chat_window.focus()
-        chat_window.lift()
-        return
-
-    logger.info("Chat started")
-
+def build_chat_runtime_callbacks():
     def initial_chat_context():
         initial_persona = persona_store.load() if settings.get("persona.enabled", True) else None
         if initial_persona:
@@ -1281,6 +1320,32 @@ def show_chat():
         global chat_load_conversation_callback
         chat_load_conversation_callback = callback
 
+    return {
+        "initial_context_provider": initial_chat_context,
+        "model_records_provider": get_model_records,
+        "model_capability_provider": infer_model_capability,
+        "prepare_prompt_context_callback": prepare_chat_prompt_context,
+        "stream_chat_callback": stream_chat,
+        "context_preview_builder": build_chat_context_preview,
+        "context_preview_callback": show_context_inspector,
+        "get_active_conversation_id": lambda: active_conversation_id,
+        "set_active_conversation_id": set_active_conversation,
+        "register_load_callback": register_chat_load_callback
+    }
+
+
+def show_chat():
+    global active_conversation_id, chat_load_conversation_callback, chat_window, pending_conversation_id
+
+    if chat_window is not None and chat_window.winfo_exists():
+        chat_window.focus()
+        chat_window.lift()
+        return
+
+    logger.info("Chat started")
+
+    runtime = build_chat_runtime_callbacks()
+
     def clear_chat_window():
         global chat_window
         chat_window = None
@@ -1292,16 +1357,16 @@ def show_chat():
         logger=logger,
         settings=settings,
         conversation_manager=ConversationManager(),
-        initial_context_provider=initial_chat_context,
-        model_records_provider=get_model_records,
-        model_capability_provider=infer_model_capability,
-        prepare_prompt_context_callback=prepare_chat_prompt_context,
-        stream_chat_callback=stream_chat,
-        context_preview_builder=build_chat_context_preview,
-        context_preview_callback=show_context_inspector,
-        get_active_conversation_id=lambda: active_conversation_id,
-        set_active_conversation_id=set_active_conversation,
-        register_load_callback=register_chat_load_callback,
+        initial_context_provider=runtime["initial_context_provider"],
+        model_records_provider=runtime["model_records_provider"],
+        model_capability_provider=runtime["model_capability_provider"],
+        prepare_prompt_context_callback=runtime["prepare_prompt_context_callback"],
+        stream_chat_callback=runtime["stream_chat_callback"],
+        context_preview_builder=runtime["context_preview_builder"],
+        context_preview_callback=runtime["context_preview_callback"],
+        get_active_conversation_id=runtime["get_active_conversation_id"],
+        set_active_conversation_id=runtime["set_active_conversation_id"],
+        register_load_callback=runtime["register_load_callback"],
         on_close=clear_chat_window
     )
 
@@ -1827,13 +1892,138 @@ def show_about():
     )
 
 
-def shutdown_app():
+def active_chat_surfaces():
+    surfaces = []
+    if chat_window is not None:
+        try:
+            if chat_window.winfo_exists():
+                surfaces.append(chat_window)
+        except Exception:
+            pass
+    if app_shell is not None:
+        try:
+            chat_page = app_shell.page_frames.get("chat")
+            if chat_page is not None and chat_page.winfo_exists():
+                surfaces.append(chat_page)
+        except Exception:
+            pass
+    return surfaces
+
+
+def cleanup_chat_surfaces():
+    for surface in active_chat_surfaces():
+        try:
+            if surface.stream_state.get("running"):
+                surface.stop_generation()
+        except Exception as error:
+            logger.error(f"Chat streaming shutdown failed: {error}")
+        try:
+            if len(surface.session.snapshot()) > 1:
+                surface.save_conversation(auto=True)
+        except Exception as error:
+            logger.error(f"Chat save on shutdown failed: {error}")
+
+
+def cleanup_callbacks():
+    global chat_load_conversation_callback
+    chat_load_conversation_callback = None
+    if chat_window is not None:
+        try:
+            chat_window.register_load_callback(None)
+        except Exception:
+            pass
+
+
+def cleanup_lan_services():
     if lan_status_server.is_running():
         result = lan_status_server.stop()
         if result.get("released"):
             logger.info("LAN server port released")
         logger.info("LAN status page stopped")
         logger.info("Mobile chat stopped")
+
+
+def terminate_tracked_process(service_name):
+    metadata = service_manager.service_process_metadata(service_name)
+    logger.info(
+        f"{service_name} shutdown ownership: "
+        f"pid={metadata.get('pid')}, executable={metadata.get('executable_path')}"
+    )
+    try:
+        result = service_manager.stop_tracked_process_tree(service_name)
+    except Exception as error:
+        logger.error(f"{service_name} process shutdown failed: {error}")
+        return
+    logger.info(
+        f"{service_name} shutdown result: "
+        f"state={result.get('state')}, root={result.get('pid')}, "
+        f"children={result.get('children')}, killed={result.get('killed')}"
+    )
+    if result.get("still_running"):
+        logger.error(f"{service_name} residual processes: {result.get('still_running')}")
+    elif result.get("pid"):
+        logger.info(f"{service_name} process tree stopped")
+
+
+def cleanup_started_services():
+    if service_lifecycle.get("ollama_started_by_app"):
+        logger.info("Ollama cleanup callback started")
+        logger.info("[OLLAMA SHUTDOWN BEGIN]")
+        result = service_manager.stop_ollama_owned_processes(allow_image_fallback=True)
+        logger.info(f"[OLLAMA SHUTDOWN BEGIN] {result.get('shutdown_begin')}")
+        logger.info(f"Ollama shutdown owned PID list: {result.get('owned')}")
+        for item in result.get("terminated", []):
+            logger.info(
+                f"Terminate Ollama PID: {item.get('pid')}, "
+                f"terminated={item.get('terminated')}, killed={item.get('killed')}, taskkill={item.get('taskkill')}"
+            )
+        for item in result.get("image_fallback", []):
+            logger.info(
+                f"taskkill result: image={item.get('image')}, returncode={item.get('returncode')}"
+            )
+        logger.info(f"[OLLAMA TERMINATE RESULT] {result.get('terminated')}")
+        logger.info(f"[OLLAMA SNAPSHOT AFTER SHUTDOWN] {result.get('remaining')}")
+        logger.info(f"Remaining Ollama processes: {result.get('remaining')}")
+        if not result.get("ok"):
+            logger.error(f"Ollama shutdown incomplete: {result.get('remaining_owned_candidates')}")
+        logger.info("Ollama cleanup callback finished")
+    if service_lifecycle.get("openwebui_process_started_by_app"):
+        terminate_tracked_process("openwebui")
+    if service_lifecycle.get("openwebui_started_by_app"):
+        thread = service_manager.stop_open_webui_docker(
+            settings.get("openwebui.container_name", "open-webui"),
+            callback=lambda event: logger.info("Open WebUI stopped") if event == "stopped" else None
+        )
+        try:
+            thread.join(timeout=8)
+        except Exception:
+            pass
+
+
+def cleanup_settings():
+    try:
+        settings.save()
+        logger.info("Settings saved")
+    except Exception as error:
+        logger.error(f"Settings save failed: {error}")
+
+
+shutdown_manager.register_cleanup(cleanup_settings, "settings")
+shutdown_manager.register_cleanup(cleanup_started_services, "started_services")
+shutdown_manager.register_cleanup(cleanup_lan_services, "lan_mobile")
+shutdown_manager.register_cleanup(cleanup_callbacks, "callbacks")
+shutdown_manager.register_cleanup(cleanup_chat_surfaces, "chat_surfaces")
+
+
+def shutdown_app(source="unknown"):
+    first_shutdown = not shutdown_manager.shutting_down
+    logger.info(f"shutdown_app() requested: source={source}, first_shutdown={first_shutdown}")
+    shutdown_manager.cancel_after_timers(app)
+    if first_shutdown:
+        logger.info("Application shutdown started")
+        shutdown_manager.shutdown()
+        logger.info("Application shutdown finished")
+    logger.info("root.destroy() before")
     app.destroy()
 
 
@@ -1856,7 +2046,7 @@ btn4.pack(fill="x", padx=40, pady=8)
 btn5 = ui_button(
     actions_frame,
     text=t("exit"),
-    command=shutdown_app,
+    command=lambda: shutdown_app("legacy_dashboard_exit"),
     kind="danger"
 )
 btn5.pack(fill="x", padx=40, pady=8)
@@ -1879,6 +2069,8 @@ recent_log_box.configure(state="disabled")
 
 
 def refresh_recent_logs():
+    if shutdown_manager.shutting_down:
+        return
 
     recent_log_box.configure(state="normal")
     recent_log_box.delete("1.0", "end")
@@ -1888,7 +2080,7 @@ def refresh_recent_logs():
     )
     recent_log_box.configure(state="disabled")
 
-    app.after(1000, refresh_recent_logs)
+    schedule_after(1000, refresh_recent_logs)
 
 
 status_check_running = False
@@ -1896,6 +2088,8 @@ status_check_running = False
 
 def refresh_status():
     global status_check_running
+    if shutdown_manager.shutting_down:
+        return
     if status_check_running:
         return
     status_check_running = True
@@ -1923,7 +2117,8 @@ def refresh_status():
             status_check_running = False
             apply_status(result)
 
-        app.after(0, finish_check)
+        if not shutdown_manager.shutting_down:
+            app.after(0, finish_check)
 
     threading.Thread(target=run_check, daemon=True).start()
 
@@ -2003,7 +2198,7 @@ def apply_status(status):
     except (TypeError, ValueError):
         refresh_interval = 3
 
-    app.after(int(refresh_interval * 1000), refresh_status)
+    schedule_after(int(refresh_interval * 1000), refresh_status)
 
 
 def startup_check():
@@ -2052,11 +2247,26 @@ def startup_check():
             logger.info("Ollama unavailable")
             if settings.get("ollama.auto_start", False):
                 def ollama_event(event):
+                    if isinstance(event, dict):
+                        if event.get("event") == "ollama_snapshot_before_start":
+                            logger.info(f"[OLLAMA SNAPSHOT BEFORE START] {event.get('processes')}")
+                        elif event.get("event") == "ollama_root_started":
+                            logger.info(
+                                f"Ollama root started: pid={event.get('pid')}, "
+                                f"executable={event.get('executable')}, args={event.get('args')}"
+                            )
+                        elif event.get("event") == "ollama_snapshot_after_start":
+                            logger.info(f"[OLLAMA SNAPSHOT AFTER START] {event.get('processes')}")
+                        elif event.get("event") == "ollama_owned_processes":
+                            logger.info(f"[OLLAMA OWNERSHIP RESULT] {event.get('processes')}")
+                        return
                     if event == "starting":
                         logger.info("Starting Ollama")
                     elif event == "started":
+                        mark_service_started_by_app("ollama")
                         logger.info("Ollama started")
-                        app.after(0, refresh_status)
+                        if not shutdown_manager.shutting_down:
+                            app.after(0, refresh_status)
                     elif event == "command_not_found":
                         logger.error("Ollama start failed: command not found")
                     elif event == "failed":
@@ -2079,9 +2289,13 @@ def startup_check():
                     elif event == "starting_container":
                         logger.info("Starting Open WebUI container")
                     elif event == "started":
+                        if settings.get("openwebui.type", "docker") != "docker":
+                            mark_service_started_by_app("openwebui_process")
                         logger.info("Open WebUI started")
-                        app.after(0, refresh_status)
+                        if not shutdown_manager.shutting_down:
+                            app.after(0, refresh_status)
                     elif event == "container_started":
+                        mark_service_started_by_app("openwebui")
                         logger.info("Open WebUI container started")
                     elif event == "docker_unavailable":
                         logger.error("Open WebUI start failed: Docker Desktop unavailable")
@@ -2307,12 +2521,12 @@ def create_app_shell():
         ),
         "chat": lambda parent: ChatPage(
             parent,
+            text=TEXT,
             translate=t,
-            open_chat_callback=show_chat,
-            new_chat_callback=show_chat,
-            conversation_provider=app_shell_conversation_provider,
-            model_provider=lambda: settings.get("chat_model", ""),
-            logger=logger
+            logger=logger,
+            settings=settings,
+            conversation_manager=ConversationManager(),
+            **build_chat_runtime_callbacks()
         ),
         "library": lambda parent: LibraryPage(
             parent,
@@ -2362,7 +2576,8 @@ def create_app_shell():
         app_name=APP_NAME,
         translate=t,
         page_builders=page_builders,
-        on_page_change=lambda page_name: logger.info(f"AppShell page opened: {page_name}")
+        on_page_change=lambda page_name: logger.info(f"AppShell page opened: {page_name}"),
+        on_shutdown=shutdown_app
     )
     app_shell.pack(fill="both", expand=True)
     logger.info("AppShell initialized")
@@ -2371,12 +2586,12 @@ def create_app_shell():
 
 logger.info("Application started")
 
-app.protocol("WM_DELETE_WINDOW", shutdown_app)
+app.protocol("WM_DELETE_WINDOW", lambda: shutdown_app("wm_delete_window"))
 
 create_app_shell()
 
 if first_run_required:
-    app.after(100, show_first_run_wizard)
+    schedule_after(100, show_first_run_wizard)
 else:
     startup_check()
     refresh_recent_logs()
