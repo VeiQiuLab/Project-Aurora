@@ -21,6 +21,8 @@ from widgets.ui_components import (
     SectionCard,
     StatusLabel
 )
+from widgets.components.workspace_header import WorkspaceHeader
+from widgets.components.workspace_empty_state import WorkspaceEmptyState
 
 
 class ChatPanel(ctk.CTkFrame):
@@ -74,23 +76,15 @@ class ChatPanel(ctk.CTkFrame):
         self.grid_columnconfigure(0, weight=1)
         self.grid_rowconfigure(1, weight=1)
 
-        header = ctk.CTkFrame(self, fg_color="transparent")
-        header.grid(
-            row=0,
-            column=0,
-            sticky="ew",
-            padx=SPACING_LARGE + SPACING_SMALL,
-            pady=(SPACING_LARGE, SPACING_MEDIUM)
-        )
-        header.grid_columnconfigure(0, weight=1)
-        ctk.CTkLabel(header, text="Aurora Chat", font=FONT_TITLE).grid(row=0, column=0, sticky="w")
-        self.header_model_label = StatusLabel(
-            header,
+        self.workspace_header = WorkspaceHeader(
+            self,
+            title="Aurora Chat",
+            description=self.t("workspace_chat_description"),
             status="disabled",
-            text=self.t("chat_window_loading_models"),
-            anchor="e",
-            justify="right"
+            status_text=self.t("chat_window_loading_models")
         )
+        self.workspace_header.grid_with_workspace_padding()
+        self.header_model_label = self.workspace_header.status_label
 
         body = ctk.CTkFrame(self, fg_color="transparent")
         body.grid(
@@ -240,6 +234,14 @@ class ChatPanel(ctk.CTkFrame):
         self.chat_display.grid(row=0, column=0, sticky="nsew")
         self.configure_chat_tags()
         self.chat_display.configure(state="disabled")
+        self.empty_state = WorkspaceEmptyState(
+            chat_card.body,
+            title=self.t("workspace_empty_chat_title"),
+            description=self.t("workspace_empty_chat_description"),
+            action_text=self.t("new_chat"),
+            action_callback=self.new_conversation_callback
+        )
+        self.empty_state.grid(row=0, column=0, sticky="nsew")
 
         input_card = SectionCard(center_panel, self.t("input_box"))
         input_card.grid(row=2, column=0, sticky="ew")
@@ -350,13 +352,26 @@ class ChatPanel(ctk.CTkFrame):
     def render_messages(self, messages):
         self.chat_display.configure(state="normal")
         self.chat_display.delete("1.0", "end")
+        visible_count = 0
         for message in messages or []:
             if not isinstance(message, dict) or message.get("role") == "system":
                 continue
             role = "user" if message.get("role") == "user" else "assistant"
             self.insert_message(role, message.get("content", ""))
+            visible_count += 1
         self.chat_display.see("end")
         self.chat_display.configure(state="disabled")
+        if visible_count:
+            self.hide_empty_state()
+        else:
+            self.show_empty_state()
+
+    def show_empty_state(self):
+        self.empty_state.grid()
+        self.empty_state.lift()
+
+    def hide_empty_state(self):
+        self.empty_state.grid_remove()
 
     def focus_input(self):
         try:
@@ -394,12 +409,14 @@ class ChatPanel(ctk.CTkFrame):
             self.chat_display.insert("end", f"{self.display_text(content)}\n\n", "message_body")
 
     def append_message(self, role, content):
+        self.hide_empty_state()
         self.chat_display.configure(state="normal")
         self.insert_message(role, content)
         self.chat_display.see("end")
         self.chat_display.configure(state="disabled")
 
     def append_assistant_header(self):
+        self.hide_empty_state()
         self.chat_display.configure(state="normal")
         self.insert_message("assistant")
         self.chat_display.see("end")
@@ -412,12 +429,14 @@ class ChatPanel(ctk.CTkFrame):
         self.chat_display.configure(state="disabled")
 
     def append_text(self, text):
+        self.hide_empty_state()
         self.chat_display.configure(state="normal")
         self.chat_display.insert("end", self.display_text(text) + "\n\n", "role_notice")
         self.chat_display.see("end")
         self.chat_display.configure(state="disabled")
 
     def append_stream_chunk(self, chunk):
+        self.hide_empty_state()
         auto_scroll = self.text_at_bottom(self.chat_display)
         self.chat_display.configure(state="normal")
         self.chat_display.insert("end", self.display_text(chunk), "message_body")
@@ -429,6 +448,7 @@ class ChatPanel(ctk.CTkFrame):
         self.chat_display.configure(state="normal")
         self.chat_display.delete("1.0", "end")
         self.chat_display.configure(state="disabled")
+        self.show_empty_state()
 
     def handle_input_return(self, _event=None):
         self.send_prompt_callback()

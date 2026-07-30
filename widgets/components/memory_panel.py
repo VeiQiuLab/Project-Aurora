@@ -17,6 +17,8 @@ from widgets.ui_components import (
     SectionCard,
     StatusLabel
 )
+from widgets.components.workspace_header import WorkspaceHeader
+from widgets.components.workspace_empty_state import WorkspaceEmptyState
 
 
 class MemoryPanel(ctk.CTkFrame):
@@ -51,14 +53,14 @@ class MemoryPanel(ctk.CTkFrame):
         self.refresh_memory_list()
 
     def build(self):
-        ctk.CTkLabel(self, text=self.t("memory"), font=FONT_TITLE).grid(
-            row=0,
-            column=0,
-            columnspan=2,
-            sticky="w",
-            padx=SPACING_LARGE + SPACING_SMALL,
-            pady=(SPACING_LARGE, SPACING_MEDIUM)
+        self.workspace_header = WorkspaceHeader(
+            self,
+            title=self.t("memory"),
+            description=self.t("workspace_memory_description"),
+            status="healthy",
+            status_text=self.t("ready")
         )
+        self.workspace_header.grid_with_workspace_padding(columnspan=2)
 
         left_panel = ctk.CTkFrame(self, fg_color="transparent")
         left_panel.grid(row=1, column=0, sticky="nsew", padx=(SPACING_LARGE + SPACING_SMALL, SPACING_MEDIUM), pady=(0, SPACING_MEDIUM))
@@ -95,6 +97,14 @@ class MemoryPanel(ctk.CTkFrame):
         self.list_box = ctk.CTkOptionMenu(list_card.body, values=[self.t("memory_window_no_memories")])
         self.list_box.grid(row=0, column=0, sticky="ew", pady=SPACING_SMALL)
         self.list_box.configure(command=self.select_memory)
+        self.list_empty_state = WorkspaceEmptyState(
+            list_card.body,
+            title=self.t("workspace_empty_memory_title"),
+            description=self.t("workspace_empty_memory_description"),
+            action_text=self.t("add"),
+            action_callback=self.clear_form
+        )
+        self.list_empty_state.grid(row=1, column=0, sticky="ew", pady=SPACING_MEDIUM)
 
         right_panel = ctk.CTkFrame(self, fg_color="transparent")
         right_panel.grid(row=1, column=1, sticky="nsew", padx=(0, SPACING_LARGE + SPACING_SMALL), pady=(0, SPACING_MEDIUM))
@@ -123,6 +133,12 @@ class MemoryPanel(ctk.CTkFrame):
         ).grid(row=3, column=0, sticky="w", pady=(0, SPACING_MEDIUM))
         self.status = StatusLabel(form_card.body, status="disabled", text="")
         self.status.grid(row=4, column=0, sticky="w", pady=(0, SPACING_SMALL))
+        self.detail_empty_state = WorkspaceEmptyState(
+            form_card.body,
+            title=self.t("workspace_memory_no_selection_title"),
+            description=self.t("workspace_memory_no_selection_description")
+        )
+        self.detail_empty_state.grid(row=5, column=0, sticky="ew", pady=SPACING_MEDIUM)
 
         self.footer = FixedFooter(self)
         self.footer.grid(row=2, column=0, columnspan=2, sticky="ew", padx=SPACING_LARGE + SPACING_SMALL, pady=(0, SPACING_LARGE))
@@ -274,6 +290,12 @@ class MemoryPanel(ctk.CTkFrame):
         empty_label = self.t("memory_window_no_memories")
         self.list_box.configure(values=labels or [empty_label])
         self.list_box.set(labels[0] if labels else empty_label)
+        if labels:
+            self.list_empty_state.grid_remove()
+            self.workspace_header.set_status("ready", self.t("ready"))
+        else:
+            self.list_empty_state.grid()
+            self.workspace_header.set_status("ready", self.t("memory_window_no_memories"))
 
     def apply_memory_filters(self, _value=None):
         self.refresh_memory_list(self.memory_search_entry.get())
@@ -283,9 +305,11 @@ class MemoryPanel(ctk.CTkFrame):
         index = values.index(value) if value in values else -1
         if index < 0 or index >= len(self.records):
             self.selected_id["value"] = None
+            self.detail_empty_state.grid()
             return
         item = self.records[index]
         self.selected_id["value"] = item.get("id")
+        self.detail_empty_state.grid_remove()
         self.type_box.set(self.memory_type_label(item.get("type", "fact")))
         self.importance_box.set(self.importance_label(item.get("importance", "normal")))
         self.enabled_var.set(bool(item.get("enabled", True)))

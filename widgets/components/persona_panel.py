@@ -19,6 +19,7 @@ from widgets.ui_components import (
     SectionCard,
     StatusLabel
 )
+from widgets.components.workspace_header import WorkspaceHeader
 
 
 class PersonaPanel(ctk.CTkFrame):
@@ -51,30 +52,24 @@ class PersonaPanel(ctk.CTkFrame):
         }
 
         self.grid_columnconfigure(0, weight=1)
-        self.grid_rowconfigure(2, weight=1)
+        self.grid_rowconfigure(1, weight=1)
         self.build()
         self.update_persona_status()
 
     def build(self):
-        ctk.CTkLabel(self, text=self.t("persona_page_title"), font=FONT_TITLE).grid(
-            row=0,
-            column=0,
-            sticky="w",
-            padx=SPACING_LARGE + SPACING_SMALL,
-            pady=(SPACING_LARGE, SPACING_MEDIUM)
+        self.workspace_header = WorkspaceHeader(
+            self,
+            title=self.t("persona_page_title"),
+            description=self.t("workspace_persona_description"),
+            status="disabled",
+            status_text=self.t("persona_page_status_unknown")
         )
-        self.persona_status_label = StatusLabel(self, status="disabled", text="", anchor="w", justify="left")
-        self.persona_status_label.grid(
-            row=1,
-            column=0,
-            sticky="w",
-            padx=SPACING_LARGE + SPACING_SMALL,
-            pady=(0, SPACING_SMALL)
-        )
+        self.workspace_header.grid_with_workspace_padding()
+        self.persona_status_label = self.workspace_header.status_label
 
         self.content = ctk.CTkScrollableFrame(self)
         self.content.grid(
-            row=2,
+            row=1,
             column=0,
             sticky="nsew",
             padx=SPACING_LARGE + SPACING_SMALL,
@@ -116,7 +111,7 @@ class PersonaPanel(ctk.CTkFrame):
 
         self.status_label = StatusLabel(self, status="disabled", text="", anchor="w", justify="left")
         self.status_label.grid(
-            row=3,
+            row=2,
             column=0,
             sticky="w",
             padx=SPACING_LARGE + SPACING_SMALL,
@@ -125,7 +120,7 @@ class PersonaPanel(ctk.CTkFrame):
 
         self.footer = FixedFooter(self)
         self.footer.grid(
-            row=4,
+            row=3,
             column=0,
             sticky="ew",
             padx=SPACING_LARGE + SPACING_SMALL,

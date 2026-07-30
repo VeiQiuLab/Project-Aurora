@@ -23,6 +23,8 @@ from widgets.ui_components import (
     SectionCard,
     StatusLabel
 )
+from widgets.components.workspace_header import WorkspaceHeader
+from widgets.components.workspace_empty_state import WorkspaceEmptyState
 
 
 class KnowledgePanel(ctk.CTkFrame):
@@ -67,15 +69,14 @@ class KnowledgePanel(ctk.CTkFrame):
         self.refresh_knowledge_list()
 
     def build(self):
-        ctk.CTkLabel(
+        self.workspace_header = WorkspaceHeader(
             self,
-            text=self.t("knowledge_base"),
-            font=FONT_TITLE
-        ).pack(
-            anchor="w",
-            padx=SPACING_LARGE + SPACING_SMALL,
-            pady=(SPACING_LARGE, SPACING_MEDIUM)
+            title=self.t("knowledge_base"),
+            description=self.t("workspace_knowledge_description"),
+            status="disabled",
+            status_text=self.t("knowledge_window_loading_files")
         )
+        self.workspace_header.pack_with_workspace_padding()
 
         search_card = SectionCard(self, self.t("search_knowledge"))
         search_card.pack(fill="x", padx=SPACING_LARGE + SPACING_SMALL, pady=(0, SPACING_MEDIUM))
@@ -140,6 +141,12 @@ class KnowledgePanel(ctk.CTkFrame):
         self.detail_box = ctk.CTkTextbox(detail_card.body, height=250, wrap="word")
         self.detail_box.pack(fill="both", expand=True)
         self.detail_box.configure(state="disabled")
+        self.detail_empty_state = WorkspaceEmptyState(
+            detail_card.body,
+            title=self.t("workspace_knowledge_no_selection_title"),
+            description=self.t("workspace_knowledge_no_selection_description")
+        )
+        self.detail_empty_state.pack(fill="x", pady=SPACING_MEDIUM)
 
         preview_row = FormRow(detail_card.body, self.t("search_in_preview"))
         preview_row.pack(fill="x", pady=(SPACING_SMALL, 0))
@@ -319,6 +326,7 @@ class KnowledgePanel(ctk.CTkFrame):
         )
 
     def set_detail(self, text):
+        self.detail_empty_state.pack_forget()
         self.detail_box.configure(state="normal")
         self.detail_box.delete("1.0", "end")
         self.detail_box.insert("end", text)
@@ -327,7 +335,10 @@ class KnowledgePanel(ctk.CTkFrame):
     def show_detail(self, record):
         if not record:
             self.selected_record["record"] = None
-            self.set_detail(self.t("knowledge_window_no_file_selected"))
+            self.detail_box.configure(state="normal")
+            self.detail_box.delete("1.0", "end")
+            self.detail_box.configure(state="disabled")
+            self.detail_empty_state.pack(fill="x", pady=SPACING_MEDIUM)
             return
         self.selected_record["record"] = record
         enabled_text = self.yes_no(record.get("enabled", True))
@@ -424,7 +435,7 @@ class KnowledgePanel(ctk.CTkFrame):
         return sorted(records, key=sort_key, reverse=reverse)
 
     def refresh_knowledge_list(self):
-        self.set_detail(self.t("knowledge_window_loading_files"))
+        self.workspace_header.set_status("loading", self.t("knowledge_window_loading_files"))
 
         def load_records():
             try:
@@ -440,6 +451,7 @@ class KnowledgePanel(ctk.CTkFrame):
                 if not self.winfo_exists():
                     return
                 if error_message:
+                    self.workspace_header.set_status("error", self.t("knowledge_window_load_failed"))
                     self.set_detail(f"{self.t('knowledge_window_load_failed')}: {error_message}")
                     self.logger.error(f"Knowledge load failed: {error_message}")
                     return
@@ -459,6 +471,12 @@ class KnowledgePanel(ctk.CTkFrame):
                     text_color=status_color("disabled")
                 )
                 self.show_detail(self.visible_records[0] if self.visible_records else None)
+                if self.visible_records:
+                    self.workspace_header.set_status("ready", self.t("ready"))
+                elif self.knowledge_records:
+                    self.workspace_header.set_status("ready", self.t("workspace_knowledge_no_results_title"))
+                else:
+                    self.workspace_header.set_status("ready", self.t("knowledge_window_no_files"))
                 self.logger.info(f"Knowledge loaded: {len(self.knowledge_records)}")
 
             self.after(0, update_records)
@@ -507,6 +525,7 @@ class KnowledgePanel(ctk.CTkFrame):
         if not file_path:
             return
         self.set_detail(self.t("knowledge_window_adding_file"))
+        self.workspace_header.set_status("processing", self.t("knowledge_window_adding_file"))
         self.run_store_action(
             lambda: self.knowledge_store.add_file(file_path),
             lambda _result: (self.refresh_knowledge_list(), self.logger.info("Knowledge added")),
@@ -579,6 +598,7 @@ class KnowledgePanel(ctk.CTkFrame):
 
     def create_knowledge_backup(self):
         self.set_detail(self.t("knowledge_window_creating_backup"))
+        self.workspace_header.set_status("processing", self.t("knowledge_window_creating_backup"))
         self.run_store_action(
             lambda: self.knowledge_store.create_backup(
                 self.backup_directory(),
@@ -627,6 +647,7 @@ class KnowledgePanel(ctk.CTkFrame):
         if not messagebox.askyesno(self.t("knowledge_window_restore_backup"), self.t("knowledge_window_restore_backup_confirm"), parent=self.winfo_toplevel()):
             return
         self.set_detail(self.t("knowledge_window_restoring_backup"))
+        self.workspace_header.set_status("processing", self.t("knowledge_window_restoring_backup"))
 
         def action():
             result = self.knowledge_store.import_backup(record["path"], current_version=self.version)
@@ -763,6 +784,7 @@ class KnowledgePanel(ctk.CTkFrame):
         if not messagebox.askyesno(self.t("library_page_rebuild_index"), self.t("knowledge_window_rebuild_index_confirm"), parent=self.winfo_toplevel()):
             return
         self.set_detail(self.t("knowledge_window_rebuilding_index"))
+        self.workspace_header.set_status("processing", self.t("knowledge_window_rebuilding_index"))
 
         def action():
             result = self.knowledge_store.build_vector_index()
@@ -786,6 +808,7 @@ class KnowledgePanel(ctk.CTkFrame):
 
     def repair_knowledge_metadata(self):
         self.set_detail(self.t("knowledge_window_repairing_metadata"))
+        self.workspace_header.set_status("processing", self.t("knowledge_window_repairing_metadata"))
         self.run_store_action(
             self.knowledge_store.repair_metadata,
             lambda result: (self.refresh_knowledge_list(), self.set_detail(f"{self.t('knowledge_window_metadata_repaired')}\n\n{self.t('records_repaired')}: {result.get('repaired', 0)}\n{self.t('errors')}: {len(result.get('errors', []))}"), self.logger.info("Knowledge metadata repaired"), self.logger.info("Knowledge repair completed")),
@@ -798,6 +821,7 @@ class KnowledgePanel(ctk.CTkFrame):
             self.set_detail(self.t("knowledge_window_no_file_selected"))
             return
         self.set_detail(self.t("knowledge_window_loading_preview"))
+        self.workspace_header.set_status("loading", self.t("knowledge_window_loading_preview"))
         self.run_store_action(
             lambda: self.knowledge_store.preview_details(record["id"], limit=self.settings.get("knowledge.preview_limit", 5000)),
             self.finish_preview,
@@ -863,6 +887,7 @@ class KnowledgePanel(ctk.CTkFrame):
             self.set_detail(self.t("knowledge_window_enter_prompt"))
             return
         self.set_detail(self.t("knowledge_window_testing_retrieval"))
+        self.workspace_header.set_status("processing", self.t("knowledge_window_testing_retrieval"))
 
         def action():
             try:
@@ -930,10 +955,12 @@ class KnowledgePanel(ctk.CTkFrame):
                 if not self.winfo_exists():
                     return
                 if error_message:
+                    self.workspace_header.set_status("error", error_prefix)
                     self.set_detail(f"{error_prefix}: {error_message}")
                     self.logger.error(f"{error_prefix}: {error_message}")
                     return
                 on_success(result)
+                self.workspace_header.set_status("ready", self.t("ready"))
 
             self.after(0, finish)
 
