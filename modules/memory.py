@@ -264,8 +264,15 @@ class MemoryStore:
         self._write(memories)
         return added
 
-    def extract_candidates(self, messages_or_text, min_score=0.75):
-        return MemoryExtractor(min_score=min_score).extract(messages_or_text)
+    def extract_candidates(self, messages_or_text, min_score=0.75, source="chat"):
+        base_candidates = MemoryExtractor(min_score=min_score).extract(messages_or_text)
+        from modules.memory_intelligence import analyze_memory_candidates
+        return analyze_memory_candidates(
+            messages_or_text,
+            base_candidates=base_candidates,
+            min_score=min_score,
+            source=source
+        )
 
     def retrieve(self, prompt, max_results=5, min_importance=0):
         from modules.memory_retrieval import retrieve_memories
@@ -325,8 +332,13 @@ class MemoryStore:
             normalized["type"] = "fact"
         if normalized["status"] not in {"pending", "approved", "rejected"}:
             normalized["status"] = "pending"
-        _quality, importance = self.score_candidate(normalized)
-        normalized["importance"] = importance
+        has_intelligence_importance = (
+            "importance_score" in normalized
+            and str(normalized.get("importance", "")).casefold() in {"low", "normal", "high"}
+        )
+        if not has_intelligence_importance:
+            _quality, importance = self.score_candidate(normalized)
+            normalized["importance"] = importance
         return normalized
 
     def list_candidates(self, status=None):
@@ -344,7 +356,7 @@ class MemoryStore:
         return candidates
 
     def queue_candidates(self, messages_or_text, source="chat", min_score=0.75):
-        extracted = self.extract_candidates(messages_or_text, min_score=min_score)
+        extracted = self.extract_candidates(messages_or_text, min_score=min_score, source=source)
         if not extracted:
             return []
         memories = {
@@ -372,8 +384,17 @@ class MemoryStore:
                 continue
             if any(self._is_similar(content, existing) for existing in memory_content + queued_content):
                 continue
-            quality, importance = self.score_candidate(item)
-            candidate = self._normalize_candidate({
+            has_intelligence_importance = (
+                "importance_score" in item
+                and str(item.get("importance", "")).casefold() in {"low", "normal", "high"}
+            )
+            if has_intelligence_importance:
+                quality = self._importance_value(item.get("importance_score", 0))
+                importance = item.get("importance", "normal")
+            else:
+                quality, importance = self.score_candidate(item)
+            candidate_data = dict(item)
+            candidate_data.update({
                 "type": item.get("type", "fact"),
                 "content": content,
                 "score": item.get("score", 0),
@@ -383,7 +404,8 @@ class MemoryStore:
                 "created_time": now,
                 "updated_time": now
             })
-            if quality < 2:
+            candidate = self._normalize_candidate(candidate_data)
+            if not has_intelligence_importance and quality < 2:
                 candidate["importance"] = "low"
             candidates.append(candidate)
             queued.add(key)
