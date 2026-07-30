@@ -2537,17 +2537,18 @@ def create_app_shell():
         ),
         "memory": lambda parent: MemoryPage(
             parent,
+            memory_store=memory_store,
+            search_memories=search_memories,
             translate=t,
-            open_memory_callback=show_memory,
-            memory_status_provider=app_shell_memory_status_provider,
             logger=logger
         ),
         "persona": lambda parent: PersonaPage(
             parent,
+            persona_store=persona_store,
+            settings=settings,
             translate=t,
-            open_persona_callback=show_persona,
-            persona_status_provider=app_shell_persona_status_provider,
-            logger=logger
+            logger=logger,
+            final_prompt_preview_callback=build_persona_final_prompt_preview
         ),
         "remote": lambda parent: RemotePage(
             parent,
