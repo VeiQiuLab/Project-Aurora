@@ -2530,10 +2530,13 @@ def create_app_shell():
         ),
         "library": lambda parent: LibraryPage(
             parent,
+            knowledge_store=knowledge_store,
+            settings=settings,
+            text=TEXT,
             translate=t,
-            open_knowledge_callback=show_knowledge,
-            knowledge_status_provider=app_shell_library_status_provider,
-            logger=logger
+            logger=logger,
+            version=VERSION,
+            retrieval_summary=retrieval_summary
         ),
         "memory": lambda parent: MemoryPage(
             parent,
