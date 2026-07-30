@@ -111,23 +111,26 @@ class KnowledgePanel(ctk.CTkFrame):
 
         search_card = SectionCard(left_panel, self.t("knowledge_search_documents"))
         search_card.grid(row=0, column=0, sticky="ew", pady=(0, SPACING_MEDIUM))
-        search_row = FormRow(search_card.body, self.t("search_knowledge"))
-        search_row.pack(fill="x", pady=SPACING_SMALL)
-        self.search_entry = search_row.add_entry("")
+        search_controls = ctk.CTkFrame(search_card.body, fg_color="transparent")
+        search_controls.pack(fill="x", pady=SPACING_SMALL)
+        search_controls.grid_columnconfigure(0, weight=1)
+        search_controls.grid_columnconfigure(1, weight=0)
+        self.search_entry = ctk.CTkEntry(search_controls, width=FORM_CONTROL_WIDTH)
+        self.search_entry.grid(row=0, column=0, sticky="ew", padx=(0, SPACING_SMALL))
         self.search_button = PrimaryButton(
-            search_row.control_frame,
+            search_controls,
             text=self.t("knowledge_window_search"),
-            width=FORM_CONTROL_WIDTH // 3,
+            width=88,
             command=self.search_knowledge_list
         )
-        self.search_button.pack(side="left", padx=(SPACING_SMALL, SPACING_SMALL))
+        self.search_button.grid(row=0, column=1, sticky="e")
         self.clear_search_button = SecondaryButton(
-            search_row.control_frame,
+            search_controls,
             text=self.t("knowledge_window_clear_search"),
-            width=FORM_CONTROL_WIDTH // 2,
+            width=112,
             command=self.clear_search
         )
-        self.clear_search_button.pack(side="left")
+        self.clear_search_button.grid(row=1, column=0, columnspan=2, sticky="e", pady=(SPACING_SMALL, 0))
 
         filter_row = FormRow(search_card.body, self.t("filter"))
         filter_row.pack(fill="x", pady=SPACING_SMALL)
@@ -170,44 +173,18 @@ class KnowledgePanel(ctk.CTkFrame):
         self.stats_label.pack(fill="x")
         self.index_status_label = StatusLabel(status_card.body, status="disabled", text="", wraplength=300, justify="left", anchor="w")
         self.index_status_label.pack(fill="x", pady=(SPACING_SMALL, 0))
+        status_card.grid_remove()
 
-        detail_card = SectionCard(right_panel, self.t("knowledge_document_detail"))
-        detail_card.grid(row=0, column=0, sticky="nsew", pady=(0, SPACING_MEDIUM))
-        detail_card.body.grid_columnconfigure(0, weight=1)
-        detail_card.body.grid_rowconfigure(0, weight=1)
-        self.detail_box = ctk.CTkTextbox(detail_card.body, height=420, wrap="word")
-        self.detail_box.grid(row=0, column=0, sticky="nsew")
-        self.detail_box.configure(state="disabled")
+        self.right_panel = right_panel
+        self.detail_card = None
+        self.detail_box = None
+        self.preview_row = None
         self.detail_empty_state = WorkspaceEmptyState(
-            detail_card.body,
+            right_panel,
             title=self.t("workspace_knowledge_no_selection_title"),
             description=self.t("workspace_knowledge_no_selection_description")
         )
         self.detail_empty_state.grid(row=0, column=0, sticky="new", pady=SPACING_MEDIUM)
-
-        preview_row = FormRow(detail_card.body, self.t("search_in_preview"))
-        preview_row.grid(row=1, column=0, sticky="ew", pady=(SPACING_SMALL, 0))
-        self.preview_search_entry = preview_row.add_entry("")
-        self.preview_search_label = StatusLabel(preview_row.control_frame, status="disabled", text=self.matches_text(0))
-        self.preview_search_label.pack(side="left", padx=(SPACING_SMALL, SPACING_SMALL))
-        PrimaryButton(
-            preview_row.control_frame,
-            text=self.t("knowledge_window_search"),
-            width=FORM_CONTROL_WIDTH // 3,
-            command=self.search_preview_content
-        ).pack(side="left", padx=(0, SPACING_SMALL))
-        SecondaryButton(
-            preview_row.control_frame,
-            text=self.t("knowledge_window_next_match"),
-            width=FORM_CONTROL_WIDTH // 2,
-            command=self.next_preview_match
-        ).pack(side="left", padx=(0, SPACING_SMALL))
-        SecondaryButton(
-            preview_row.control_frame,
-            text=self.t("clear"),
-            width=FORM_CONTROL_WIDTH // 3,
-            command=self.clear_preview_search
-        ).pack(side="left")
 
         self.retrieval_card = SectionCard(right_panel, self.t("knowledge_window_retrieval_test"))
         self.retrieval_card.grid(row=1, column=0, sticky="ew", pady=(0, SPACING_MEDIUM))
@@ -274,10 +251,13 @@ class KnowledgePanel(ctk.CTkFrame):
             width=FORM_CONTROL_WIDTH // 2,
             command=self.delete_knowledge_backup
         ).pack(side="left")
+        self.retrieval_card.grid_remove()
+        self.advanced_card.grid_remove()
 
         self.footer = FixedFooter(self)
         self.footer.grid(row=2, column=0, sticky="ew", padx=SPACING_LARGE + SPACING_SMALL, pady=(0, SPACING_LARGE))
         self.build_buttons()
+        self._show_empty_detail()
 
     def build_buttons(self):
         actions = [
@@ -301,6 +281,9 @@ class KnowledgePanel(ctk.CTkFrame):
         self.more_actions_menu.add_command(label=self.t("knowledge_window_toggle_enabled"), command=self.toggle_knowledge_enabled)
         self.more_actions_menu.add_command(label=self.t("knowledge_window_preview"), command=self.preview_knowledge)
         self.more_actions_menu.add_command(label=self.t("refresh"), command=self.refresh_knowledge_list)
+        self.more_actions_menu.add_separator()
+        self.more_actions_menu.add_command(label=self.t("knowledge_window_retrieval_test"), command=self.open_retrieval_tools)
+        self.more_actions_menu.add_command(label=self.t("advanced_tools"), command=self.open_advanced_tools)
         self.more_actions_menu.add_separator()
         self.more_actions_menu.add_command(label=self.t("knowledge_window_create_backup"), command=self.create_knowledge_backup)
         self.more_actions_menu.add_command(label=self.t("knowledge_window_export"), command=self.export_knowledge)
@@ -332,6 +315,11 @@ class KnowledgePanel(ctk.CTkFrame):
             self.retrieval_body.pack_forget()
             self.retrieval_toggle_button.configure(text=self.t("expand"))
 
+    def open_retrieval_tools(self):
+        self.retrieval_card.grid()
+        if not self.retrieval_expanded:
+            self.toggle_retrieval_section()
+
     def toggle_advanced_section(self):
         self.advanced_expanded = not self.advanced_expanded
         if self.advanced_expanded:
@@ -340,6 +328,11 @@ class KnowledgePanel(ctk.CTkFrame):
         else:
             self.advanced_body.pack_forget()
             self.advanced_toggle_button.configure(text=self.t("expand"))
+
+    def open_advanced_tools(self):
+        self.advanced_card.grid()
+        if not self.advanced_expanded:
+            self.toggle_advanced_section()
 
     def yes_no(self, value):
         return self.text["yes"] if value else self.text["no"]
@@ -491,19 +484,68 @@ class KnowledgePanel(ctk.CTkFrame):
         )
 
     def set_detail(self, text):
-        self.detail_empty_state.grid_remove()
+        self._show_detail_content()
         self.detail_box.configure(state="normal")
         self.detail_box.delete("1.0", "end")
         self.detail_box.insert("end", text)
         self.detail_box.configure(state="disabled")
 
-    def show_detail(self, record):
-        if not record:
-            self.selected_record["record"] = None
+    def _ensure_detail_workspace(self):
+        if self.detail_card is not None:
+            return
+        self.detail_card = SectionCard(self.right_panel, self.t("knowledge_document_detail"))
+        self.detail_card.grid(row=0, column=0, sticky="nsew", pady=(0, SPACING_MEDIUM))
+        self.detail_card.body.grid_columnconfigure(0, weight=1)
+        self.detail_card.body.grid_rowconfigure(0, weight=1)
+        self.detail_box = ctk.CTkTextbox(self.detail_card.body, height=420, wrap="word")
+        self.detail_box.grid(row=0, column=0, sticky="nsew")
+        self.detail_box.configure(state="disabled")
+
+        self.preview_row = FormRow(self.detail_card.body, self.t("search_in_preview"))
+        self.preview_row.grid(row=1, column=0, sticky="ew", pady=(SPACING_SMALL, 0))
+        self.preview_search_entry = self.preview_row.add_entry("")
+        self.preview_search_label = StatusLabel(
+            self.preview_row.control_frame,
+            status="disabled",
+            text=self.matches_text(0)
+        )
+        self.preview_search_label.pack(side="left", padx=(SPACING_SMALL, SPACING_SMALL))
+        PrimaryButton(
+            self.preview_row.control_frame,
+            text=self.t("knowledge_window_search"),
+            width=FORM_CONTROL_WIDTH // 3,
+            command=self.search_preview_content
+        ).pack(side="left", padx=(0, SPACING_SMALL))
+        SecondaryButton(
+            self.preview_row.control_frame,
+            text=self.t("knowledge_window_next_match"),
+            width=FORM_CONTROL_WIDTH // 2,
+            command=self.next_preview_match
+        ).pack(side="left", padx=(0, SPACING_SMALL))
+        SecondaryButton(
+            self.preview_row.control_frame,
+            text=self.t("clear"),
+            width=FORM_CONTROL_WIDTH // 3,
+            command=self.clear_preview_search
+        ).pack(side="left")
+
+    def _show_detail_content(self):
+        self._ensure_detail_workspace()
+        self.detail_empty_state.grid_remove()
+        self.detail_card.grid()
+
+    def _show_empty_detail(self):
+        if self.detail_card is not None:
             self.detail_box.configure(state="normal")
             self.detail_box.delete("1.0", "end")
             self.detail_box.configure(state="disabled")
-            self.detail_empty_state.grid(row=0, column=0, sticky="new", pady=SPACING_MEDIUM)
+            self.detail_card.grid_remove()
+        self.detail_empty_state.grid(row=0, column=0, sticky="new", pady=SPACING_MEDIUM)
+
+    def show_detail(self, record):
+        if not record:
+            self.selected_record["record"] = None
+            self._show_empty_detail()
             return
         self.selected_record["record"] = record
         enabled_text = self.yes_no(record.get("enabled", True))
@@ -622,7 +664,7 @@ class KnowledgePanel(ctk.CTkFrame):
                 labels = [self.knowledge_label(item) for item in self.visible_records]
                 empty_label = self.t("knowledge_window_no_files")
                 self.list_box.configure(values=labels or [empty_label])
-                self.list_box.set(labels[0] if labels else empty_label)
+                self.list_box.set(self.t("knowledge_select_document") if labels else empty_label)
                 self.update_stats()
                 search_text = self.current_keyword["value"] or self.none_text()
                 self.search_result_label.configure(
@@ -632,7 +674,7 @@ class KnowledgePanel(ctk.CTkFrame):
                     ),
                     text_color=status_color("disabled")
                 )
-                self.show_detail(self.visible_records[0] if self.visible_records else None)
+                self.show_detail(None)
                 if self.visible_records:
                     self.workspace_header.set_status("ready", self.t("available"))
                 elif self.knowledge_records:

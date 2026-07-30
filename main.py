@@ -187,6 +187,7 @@ from widgets.models_window import ModelsWindow
 from widgets.persona_window import PersonaWindow
 from widgets.pages.chat_page import ChatPage
 from widgets.pages.home_page import HomePage
+from widgets.pages.learning_center_page import LearningCenterPage
 from widgets.pages.library_page import LibraryPage
 from widgets.pages.memory_page import MemoryPage
 from widgets.pages.persona_page import PersonaPage
@@ -1414,52 +1415,10 @@ def show_conversation_browser():
     )
 
 def show_memory():
-    global memory_window
-    if memory_window is not None and memory_window.winfo_exists():
-        memory_window.focus()
-        memory_window.lift()
-        return
-
-    logger.info("Memory window opened")
-
-    def clear_memory_window():
-        global memory_window
-        memory_window = None
-
-    memory_window = MemoryWindow(
-        app,
-        memory_store=memory_store,
-        search_memories=search_memories,
-        text=TEXT,
-        translate=t,
-        logger=logger,
-        on_close=clear_memory_window
-    )
+    open_learning_center_tab("memory")
 
 def show_knowledge():
-    global knowledge_window
-    if knowledge_window is not None and knowledge_window.winfo_exists():
-        knowledge_window.focus()
-        knowledge_window.lift()
-        return
-
-    logger.info("Knowledge loaded")
-
-    def clear_knowledge_window():
-        global knowledge_window
-        knowledge_window = None
-
-    knowledge_window = KnowledgeWindow(
-        app,
-        knowledge_store=knowledge_store,
-        settings=settings,
-        text=TEXT,
-        translate=t,
-        logger=logger,
-        version=VERSION,
-        retrieval_summary=retrieval_summary,
-        on_close=clear_knowledge_window
-    )
+    open_learning_center_tab("knowledge")
 
 def build_persona_final_prompt_preview(prompt, persona_data):
     try:
@@ -1492,29 +1451,7 @@ def build_persona_final_prompt_preview(prompt, persona_data):
 
 
 def show_persona():
-    global persona_window
-    if persona_window is not None and persona_window.winfo_exists():
-        persona_window.focus()
-        persona_window.lift()
-        return
-
-    logger.info("Persona loaded")
-    logger.info("Persona loaded timestamp updated")
-
-    def clear_persona_window():
-        global persona_window
-        persona_window = None
-
-    persona_window = PersonaWindow(
-        app,
-        persona_store=persona_store,
-        settings=settings,
-        text=TEXT,
-        translate=t,
-        logger=logger,
-        final_prompt_preview_callback=build_persona_final_prompt_preview,
-        on_close=clear_persona_window
-    )
+    open_learning_center_tab("persona")
 
 def show_remote_access():
     global remote_window
@@ -2365,8 +2302,28 @@ def startup_check():
 
 
 def navigate_app_shell(page_name):
+    learning_routes = {
+        "library": "knowledge",
+        "memory": "memory",
+        "persona": "persona"
+    }
+    if page_name in learning_routes:
+        open_learning_center_tab(learning_routes[page_name])
+        return
     if app_shell is not None:
         app_shell.navigate(page_name)
+
+
+def open_learning_center_tab(panel_id):
+    shell = create_app_shell()
+    learning_page = shell.page_frames.get("learning")
+    if learning_page is not None:
+        logger.info(f"Learning Center legacy route reused: {panel_id}")
+    shell.navigate("learning")
+    learning_page = shell.page_frames.get("learning")
+    if learning_page is not None:
+        learning_page.show_tab(panel_id)
+        logger.info(f"Learning Center opened: {panel_id}")
 
 
 def app_shell_home_status_provider():
@@ -2514,7 +2471,7 @@ def create_app_shell():
             status_provider=app_shell_home_status_provider,
             quick_actions={
                 "new_chat": lambda: navigate_app_shell("chat"),
-                "open_library": lambda: navigate_app_shell("library"),
+                "open_library": lambda: navigate_app_shell("learning"),
                 "settings": lambda: navigate_app_shell("settings")
             },
             logger=logger
@@ -2527,6 +2484,20 @@ def create_app_shell():
             settings=settings,
             conversation_manager=ConversationManager(),
             **build_chat_runtime_callbacks()
+        ),
+        "learning": lambda parent: LearningCenterPage(
+            parent,
+            knowledge_store=knowledge_store,
+            memory_store=memory_store,
+            persona_store=persona_store,
+            search_memories=search_memories,
+            settings=settings,
+            text=TEXT,
+            translate=t,
+            logger=logger,
+            version=VERSION,
+            retrieval_summary=retrieval_summary,
+            final_prompt_preview_callback=build_persona_final_prompt_preview
         ),
         "library": lambda parent: LibraryPage(
             parent,

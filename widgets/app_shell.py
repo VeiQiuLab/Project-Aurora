@@ -19,9 +19,7 @@ class AppShell(ctk.CTkFrame):
     DEFAULT_NAV_ITEMS = [
         ("home", "nav_home"),
         ("chat", "nav_chat"),
-        ("library", "nav_library"),
-        ("memory", "nav_memory"),
-        ("persona", "nav_persona"),
+        ("learning", "nav_learning"),
         ("remote", "nav_remote"),
         ("settings", "nav_settings")
     ]
@@ -158,6 +156,10 @@ class AppShell(ctk.CTkFrame):
         self.current_page = page_id
         self._refresh_nav_state()
         self._refresh_header(page_id)
+
+        on_show = getattr(frame, "on_show", None)
+        if callable(on_show):
+            on_show()
 
         if callable(self.on_page_change):
             self.on_page_change(page_id)

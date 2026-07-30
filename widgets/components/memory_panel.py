@@ -46,6 +46,7 @@ class MemoryPanel(ctk.CTkFrame):
         self.show_header_title = show_header_title
         self.records = []
         self.selected_id = {"value": None}
+        self.is_creating_memory = False
 
         self.grid_columnconfigure(0, weight=0, minsize=330)
         self.grid_columnconfigure(1, weight=1)
@@ -105,15 +106,6 @@ class MemoryPanel(ctk.CTkFrame):
         self.list_box = ctk.CTkOptionMenu(list_card.body, values=[self.t("memory_window_no_memories")])
         self.list_box.grid(row=0, column=0, sticky="ew", pady=SPACING_SMALL)
         self.list_box.configure(command=self.select_memory)
-        self.list_empty_state = WorkspaceEmptyState(
-            list_card.body,
-            title=self.t("workspace_empty_memory_title"),
-            description=self.t("workspace_empty_memory_description"),
-            action_text=self.t("add"),
-            action_callback=self.clear_form
-        )
-        self.list_empty_state.grid(row=1, column=0, sticky="ew", pady=SPACING_MEDIUM)
-
         right_panel = ctk.CTkFrame(self, fg_color="transparent")
         right_panel.grid(row=1, column=1, sticky="nsew", padx=(0, SPACING_LARGE + SPACING_SMALL), pady=(0, SPACING_MEDIUM))
         right_panel.grid_columnconfigure(0, weight=1)
@@ -123,30 +115,41 @@ class MemoryPanel(ctk.CTkFrame):
         form_card.grid(row=0, column=0, sticky="nsew")
         form_card.body.grid_columnconfigure(0, weight=1)
         form_card.body.grid_rowconfigure(1, weight=1)
-        type_row = FormRow(form_card.body, self.t("type"))
-        type_row.grid(row=0, column=0, sticky="ew", pady=SPACING_SMALL)
-        self.type_box = type_row.add_option(self.memory_type_options(), self.memory_type_label("fact"))
+        self.type_row = FormRow(form_card.body, self.t("type"))
+        self.type_row.grid(row=0, column=0, sticky="ew", pady=SPACING_SMALL)
+        self.type_box = self.type_row.add_option(self.memory_type_options(), self.memory_type_label("fact"))
         self.content_box = ctk.CTkTextbox(form_card.body, height=120, wrap="word")
         self.content_box.grid(row=1, column=0, sticky="nsew", pady=(SPACING_SMALL, SPACING_MEDIUM))
         self.attach_text_menu(self.content_box)
-        importance_row = FormRow(form_card.body, self.t("memory_window_importance"))
-        importance_row.grid(row=2, column=0, sticky="ew", pady=SPACING_SMALL)
-        self.importance_box = importance_row.add_option(self.importance_options(), self.importance_label("normal"))
+        self.importance_row = FormRow(form_card.body, self.t("memory_window_importance"))
+        self.importance_row.grid(row=2, column=0, sticky="ew", pady=SPACING_SMALL)
+        self.importance_box = self.importance_row.add_option(self.importance_options(), self.importance_label("normal"))
         self.enabled_var = ctk.BooleanVar(value=True)
-        ctk.CTkSwitch(
+        self.enabled_switch = ctk.CTkSwitch(
             form_card.body,
             text=self.t("memory_window_enable_memory"),
             variable=self.enabled_var,
             command=self.toggle_memory
-        ).grid(row=3, column=0, sticky="w", pady=(0, SPACING_MEDIUM))
+        )
+        self.enabled_switch.grid(row=3, column=0, sticky="w", pady=(0, SPACING_MEDIUM))
         self.status = StatusLabel(form_card.body, status="disabled", text="")
         self.status.grid(row=4, column=0, sticky="w", pady=(0, SPACING_SMALL))
         self.detail_empty_state = WorkspaceEmptyState(
             form_card.body,
             title=self.t("workspace_memory_no_selection_title"),
-            description=self.t("workspace_memory_no_selection_description")
+            description=self.t("workspace_memory_no_selection_description"),
+            action_text=self.t("add"),
+            action_callback=self.clear_form
         )
-        self.detail_empty_state.grid(row=5, column=0, sticky="ew", pady=SPACING_MEDIUM)
+        self.detail_empty_state.grid(row=0, column=0, rowspan=5, sticky="nsew", pady=SPACING_MEDIUM)
+        self.detail_editor_widgets = [
+            self.type_row,
+            self.content_box,
+            self.importance_row,
+            self.enabled_switch,
+            self.status
+        ]
+        self.hide_detail_editor()
 
         self.footer = FixedFooter(self)
         self.footer.grid(row=2, column=0, columnspan=2, sticky="ew", padx=SPACING_LARGE + SPACING_SMALL, pady=(0, SPACING_LARGE))
@@ -312,12 +315,7 @@ class MemoryPanel(ctk.CTkFrame):
         ]
         empty_label = self.t("memory_window_no_memories")
         self.list_box.configure(values=labels or [empty_label])
-        self.list_box.set(labels[0] if labels else empty_label)
-        if labels:
-            self.list_empty_state.grid_remove()
-        else:
-            self.list_empty_state.grid()
-
+        self.list_box.set(self.t("memory_select_memory") if labels else empty_label)
     def apply_memory_filters(self, _value=None):
         self.refresh_memory_list(self.memory_search_entry.get())
 
@@ -326,11 +324,13 @@ class MemoryPanel(ctk.CTkFrame):
         index = values.index(value) if value in values else -1
         if index < 0 or index >= len(self.records):
             self.selected_id["value"] = None
-            self.detail_empty_state.grid()
+            self.is_creating_memory = False
+            self.hide_detail_editor()
             return
         item = self.records[index]
         self.selected_id["value"] = item.get("id")
-        self.detail_empty_state.grid_remove()
+        self.is_creating_memory = False
+        self.show_detail_editor()
         self.type_box.set(self.memory_type_label(item.get("type", "fact")))
         self.importance_box.set(self.importance_label(item.get("importance", "normal")))
         self.enabled_var.set(bool(item.get("enabled", True)))
@@ -339,11 +339,23 @@ class MemoryPanel(ctk.CTkFrame):
 
     def clear_form(self):
         self.selected_id["value"] = None
+        self.is_creating_memory = True
+        self.show_detail_editor()
         self.type_box.set(self.memory_type_label("fact"))
         self.importance_box.set(self.importance_label("normal"))
         self.enabled_var.set(True)
         self.content_box.delete("1.0", "end")
         self.status.set_status("disabled", "")
+
+    def hide_detail_editor(self):
+        for widget in self.detail_editor_widgets:
+            widget.grid_remove()
+        self.detail_empty_state.grid()
+
+    def show_detail_editor(self):
+        self.detail_empty_state.grid_remove()
+        for widget in self.detail_editor_widgets:
+            widget.grid()
 
     def save_memory(self):
         content = self.content_box.get("1.0", "end").strip()

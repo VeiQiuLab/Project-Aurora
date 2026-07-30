@@ -97,7 +97,7 @@ class PersonaPanel(ctk.CTkFrame):
             column=0,
             sticky="nsew",
             padx=SPACING_LARGE + SPACING_SMALL,
-            pady=(0, SPACING_MEDIUM)
+            pady=(0, SPACING_SMALL)
         )
         self.basic_tab = self.tabs.add(self.t("persona_tab_basic"))
         self.rules_tab = self.tabs.add(self.t("persona_tab_rules"))
@@ -173,7 +173,7 @@ class PersonaPanel(ctk.CTkFrame):
             column=0,
             sticky="w",
             padx=SPACING_LARGE + SPACING_SMALL,
-            pady=(0, SPACING_SMALL)
+            pady=(0, 0)
         )
 
         self.footer = FixedFooter(self)
@@ -182,7 +182,7 @@ class PersonaPanel(ctk.CTkFrame):
             column=0,
             sticky="ew",
             padx=SPACING_LARGE + SPACING_SMALL,
-            pady=(0, SPACING_LARGE)
+            pady=(SPACING_SMALL, SPACING_MEDIUM)
         )
         self.build_buttons()
         if self.persona_load_error:
