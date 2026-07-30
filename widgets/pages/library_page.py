@@ -36,7 +36,8 @@ class LibraryPage(ctk.CTkFrame):
             logger=logger,
             version=version,
             retrieval_summary=retrieval_summary,
-            show_close_button=False
+            show_close_button=False,
+            show_header_title=False
         )
         self.panel.grid(row=0, column=0, sticky="nsew")
 

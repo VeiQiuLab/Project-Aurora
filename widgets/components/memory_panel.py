@@ -33,7 +33,8 @@ class MemoryPanel(ctk.CTkFrame):
         translate,
         logger,
         close_callback=None,
-        show_close_button=True
+        show_close_button=True,
+        show_header_title=True
     ):
         super().__init__(parent, fg_color="transparent")
         self.memory_store = memory_store
@@ -42,6 +43,7 @@ class MemoryPanel(ctk.CTkFrame):
         self.logger = logger
         self.close_callback = close_callback
         self.show_close_button = show_close_button
+        self.show_header_title = show_header_title
         self.records = []
         self.selected_id = {"value": None}
 
@@ -58,7 +60,9 @@ class MemoryPanel(ctk.CTkFrame):
             title=self.t("memory"),
             description=self.t("workspace_memory_description"),
             status="healthy",
-            status_text=self.t("ready")
+            status_text="",
+            show_status=False,
+            show_title=self.show_header_title
         )
         self.workspace_header.grid_with_workspace_padding(columnspan=2)
 
@@ -81,16 +85,20 @@ class MemoryPanel(ctk.CTkFrame):
 
         filter_card = SectionCard(left_panel, self.t("memory_window_filters"))
         filter_card.grid(row=1, column=0, sticky="ew", pady=(0, SPACING_MEDIUM))
-        filter_row = FormRow(filter_card.body, self.t("filter"))
-        filter_row.pack(fill="x", pady=SPACING_SMALL)
-        self.type_filter = filter_row.add_option(self.type_filter_options(), self.t("memory_window_all_types"), width=FORM_CONTROL_WIDTH // 2 + SPACING_LARGE)
-        self.importance_filter = filter_row.add_option(self.importance_filter_options(), self.t("memory_window_all_importance"), width=FORM_CONTROL_WIDTH // 2 + SPACING_LARGE)
-        self.enabled_filter = filter_row.add_option(self.enabled_filter_options(), self.t("memory_window_all_status"), width=FORM_CONTROL_WIDTH // 2)
+        type_filter_row = FormRow(filter_card.body, self.t("type"))
+        type_filter_row.pack(fill="x", pady=SPACING_SMALL)
+        self.type_filter = type_filter_row.add_option(self.type_filter_options(), self.t("memory_window_all_types"), width=FORM_CONTROL_WIDTH)
+        importance_filter_row = FormRow(filter_card.body, self.t("memory_window_importance"))
+        importance_filter_row.pack(fill="x", pady=SPACING_SMALL)
+        self.importance_filter = importance_filter_row.add_option(self.importance_filter_options(), self.t("memory_window_all_importance"), width=FORM_CONTROL_WIDTH)
+        enabled_filter_row = FormRow(filter_card.body, self.t("status"))
+        enabled_filter_row.pack(fill="x", pady=SPACING_SMALL)
+        self.enabled_filter = enabled_filter_row.add_option(self.enabled_filter_options(), self.t("memory_window_all_status"), width=FORM_CONTROL_WIDTH)
         self.type_filter.configure(command=self.apply_memory_filters)
         self.importance_filter.configure(command=self.apply_memory_filters)
         self.enabled_filter.configure(command=self.apply_memory_filters)
 
-        list_card = SectionCard(left_panel, self.t("memory"))
+        list_card = SectionCard(left_panel, self.t("memory_list"))
         list_card.grid(row=2, column=0, sticky="nsew")
         list_card.body.grid_columnconfigure(0, weight=1)
         list_card.body.grid_rowconfigure(0, weight=1)
@@ -111,7 +119,7 @@ class MemoryPanel(ctk.CTkFrame):
         right_panel.grid_columnconfigure(0, weight=1)
         right_panel.grid_rowconfigure(0, weight=1)
 
-        form_card = SectionCard(right_panel, self.t("memory_window_detail"))
+        form_card = SectionCard(right_panel, self.t("detail"))
         form_card.grid(row=0, column=0, sticky="nsew")
         form_card.body.grid_columnconfigure(0, weight=1)
         form_card.body.grid_rowconfigure(1, weight=1)
@@ -148,22 +156,37 @@ class MemoryPanel(ctk.CTkFrame):
         actions = [
             (self.t("add"), self.clear_form, SecondaryButton),
             (self.t("save"), self.save_memory, PrimaryButton),
-            (self.t("delete"), self.delete_memory, DangerButton),
-            (self.t("export_memory"), self.export_memory_entry, SecondaryButton),
-            (self.t("import_memory"), self.import_memory_entry, SecondaryButton)
+            (self.t("more_actions"), self.show_more_actions_menu, SecondaryButton)
         ]
         if self.show_close_button:
             actions.append((self.t("close"), self.close, SecondaryButton))
         for index, (label, command, button_factory) in enumerate(actions):
             button_factory(self.footer.buttons, text=label, command=command).grid(
-                row=index // 3,
-                column=index % 3,
+                row=0,
+                column=index,
                 sticky="ew",
                 padx=SPACING_SMALL,
                 pady=SPACING_SMALL
             )
-        for column in range(3):
+        for column in range(len(actions)):
             self.footer.buttons.grid_columnconfigure(column, weight=1)
+        self.more_actions_menu = Menu(self, tearoff=0)
+        self.more_actions_menu.add_command(label=self.t("delete"), command=self.delete_memory)
+        self.more_actions_menu.add_separator()
+        self.more_actions_menu.add_command(label=self.t("export_memory"), command=self.export_memory_entry)
+        self.more_actions_menu.add_command(label=self.t("import_memory"), command=self.import_memory_entry)
+
+    def show_more_actions_menu(self):
+        try:
+            button = next(
+                widget for widget in self.footer.buttons.winfo_children()
+                if getattr(widget, "cget", lambda _key: None)("text") == self.t("more_actions")
+            )
+            x = button.winfo_rootx()
+            y = button.winfo_rooty() + button.winfo_height()
+            self.more_actions_menu.tk_popup(x, y)
+        finally:
+            self.more_actions_menu.grab_release()
 
     def attach_text_menu(self, widget):
         menu = Menu(widget, tearoff=0)
@@ -292,10 +315,8 @@ class MemoryPanel(ctk.CTkFrame):
         self.list_box.set(labels[0] if labels else empty_label)
         if labels:
             self.list_empty_state.grid_remove()
-            self.workspace_header.set_status("ready", self.t("ready"))
         else:
             self.list_empty_state.grid()
-            self.workspace_header.set_status("ready", self.t("memory_window_no_memories"))
 
     def apply_memory_filters(self, _value=None):
         self.refresh_memory_list(self.memory_search_entry.get())

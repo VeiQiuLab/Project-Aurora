@@ -43,13 +43,12 @@ class RemotePage(ctk.CTkFrame):
         self.advanced_visible = False
 
         self.grid_columnconfigure(0, weight=1)
-        self.grid_rowconfigure(1, weight=1)
+        self.grid_rowconfigure(0, weight=1)
 
         self._build()
         self.refresh()
 
     def _build(self):
-        self._build_header()
         self._build_summary_grid()
         self._build_action_area()
 
@@ -75,11 +74,20 @@ class RemotePage(ctk.CTkFrame):
 
     def _build_summary_grid(self):
         body = ctk.CTkFrame(self, fg_color="transparent")
-        body.grid(row=1, column=0, sticky="nsew")
+        body.grid(row=0, column=0, sticky="nsew")
         body.grid_columnconfigure((0, 1), weight=1)
 
         self.status_card = SectionCard(body, self.t("remote_page_status"))
         self.status_card.grid(row=0, column=0, sticky="nsew", padx=(0, SPACING_MEDIUM), pady=(0, SPACING_MEDIUM))
+
+        self.remote_status = StatusLabel(
+            self.status_card.body,
+            status="disabled",
+            text=self.t("remote_page_status_unknown"),
+            anchor="w",
+            justify="left"
+        )
+        self.remote_status.pack(fill="x", pady=(0, SPACING_SMALL))
 
         ctk.CTkLabel(
             self.status_card.body,
@@ -149,7 +157,7 @@ class RemotePage(ctk.CTkFrame):
 
     def _build_action_area(self):
         footer = ctk.CTkFrame(self, fg_color="transparent")
-        footer.grid(row=2, column=0, sticky="ew", pady=(SPACING_MEDIUM, 0))
+        footer.grid(row=1, column=0, sticky="ew", pady=(SPACING_MEDIUM, 0))
         footer.grid_columnconfigure(0, weight=1)
 
         ctk.CTkLabel(

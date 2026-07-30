@@ -81,11 +81,10 @@ class AppShell(ctk.CTkFrame):
         self.shell_status = StatusLabel(
             self.sidebar,
             status="disabled",
-            text=self.t("app_shell_ready"),
+            text="",
             anchor="w",
             justify="left"
         )
-        self.shell_status.pack(fill="x", padx=SPACING_LARGE, pady=(0, SPACING_LARGE))
 
         for page_id, label_key in self.nav_items:
             button = SecondaryButton(
@@ -126,10 +125,9 @@ class AppShell(ctk.CTkFrame):
         self.page_status = StatusLabel(
             self.page_header,
             status="disabled",
-            text=self.t("status"),
+            text="",
             anchor="e"
         )
-        self.page_status.pack(side="right")
 
         self.page_container = ctk.CTkFrame(self.content_area, fg_color="transparent")
         self.page_container.grid(row=1, column=0, sticky="nsew", padx=SPACING_LARGE, pady=(0, SPACING_LARGE))
@@ -165,6 +163,11 @@ class AppShell(ctk.CTkFrame):
             self.on_page_change(page_id)
 
     def set_shell_status(self, status, text=None):
+        if text:
+            if not self.shell_status.winfo_ismapped():
+                self.shell_status.pack(fill="x", padx=SPACING_LARGE, pady=(0, SPACING_LARGE))
+        else:
+            self.shell_status.pack_forget()
         self.shell_status.set_status(status, text=text)
 
     def _create_page(self, page_id):
@@ -197,7 +200,7 @@ class AppShell(ctk.CTkFrame):
     def _refresh_header(self, page_id):
         label_key = dict(self.nav_items).get(page_id, page_id)
         self.page_title.configure(text=self.t(label_key))
-        self.page_status.set_status("disabled", self.t("app_shell_ready"))
+        self.page_status.pack_forget()
 
     def _refresh_nav_state(self):
         for page_id, button in self.nav_buttons.items():

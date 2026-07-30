@@ -30,7 +30,8 @@ class MemoryPage(ctk.CTkFrame):
             search_memories=search_memories,
             translate=translate,
             logger=logger,
-            show_close_button=False
+            show_close_button=False,
+            show_header_title=False
         )
         self.panel.grid(row=0, column=0, sticky="nsew")
 

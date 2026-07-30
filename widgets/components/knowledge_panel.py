@@ -1,6 +1,6 @@
 import threading
 from pathlib import Path
-from tkinter import filedialog, messagebox
+from tkinter import Menu, filedialog, messagebox
 
 import customtkinter as ctk
 
@@ -28,9 +28,9 @@ from widgets.components.workspace_empty_state import WorkspaceEmptyState
 
 
 class KnowledgePanel(ctk.CTkFrame):
-    FILTER_OPTIONS = ["All", "Enabled", "Disabled", "Error"]
-    SORT_FIELDS = ["Updated Time", "File Name", "File Type", "File Size", "Added Time", "Characters", "Enabled"]
-    SORT_DIRECTIONS = ["Descending", "Ascending"]
+    FILTER_VALUES = ["All", "Enabled", "Disabled", "Error"]
+    SORT_FIELD_VALUES = ["Updated Time", "File Name", "File Type", "File Size", "Added Time", "Characters", "Enabled"]
+    SORT_DIRECTION_VALUES = ["Descending", "Ascending"]
 
     def __init__(
         self,
@@ -44,7 +44,8 @@ class KnowledgePanel(ctk.CTkFrame):
         version,
         retrieval_summary,
         close_callback=None,
-        show_close_button=True
+        show_close_button=True,
+        show_header_title=True
     ):
         super().__init__(parent, fg_color="transparent")
         self.knowledge_store = knowledge_store
@@ -56,6 +57,7 @@ class KnowledgePanel(ctk.CTkFrame):
         self.retrieval_summary = retrieval_summary
         self.close_callback = close_callback
         self.show_close_button = show_close_button
+        self.show_header_title = show_header_title
         self.knowledge_records = []
         self.visible_records = []
         self.backup_records = []
@@ -63,27 +65,55 @@ class KnowledgePanel(ctk.CTkFrame):
         self.selected_backup = {"record": None}
         self.current_keyword = {"value": ""}
         self.preview_state = {"content": "", "matches": [], "current": -1, "keyword": ""}
+        self.retrieval_expanded = False
+        self.advanced_expanded = False
 
         self.build()
         self.refresh_backup_history()
         self.refresh_knowledge_list()
 
     def build(self):
+        self.grid_columnconfigure(0, weight=1)
+        self.grid_rowconfigure(1, weight=1)
         self.workspace_header = WorkspaceHeader(
             self,
             title=self.t("knowledge_base"),
             description=self.t("workspace_knowledge_description"),
             status="disabled",
-            status_text=self.t("knowledge_window_loading_files")
+            status_text=self.t("knowledge_window_loading_files"),
+            show_status=False,
+            show_title=self.show_header_title
         )
-        self.workspace_header.pack_with_workspace_padding()
+        self.workspace_header.grid_with_workspace_padding()
 
-        search_card = SectionCard(self, self.t("search_knowledge"))
-        search_card.pack(fill="x", padx=SPACING_LARGE + SPACING_SMALL, pady=(0, SPACING_MEDIUM))
+        main_area = ctk.CTkFrame(self, fg_color="transparent")
+        main_area.grid(
+            row=1,
+            column=0,
+            sticky="nsew",
+            padx=SPACING_LARGE + SPACING_SMALL,
+            pady=(0, SPACING_MEDIUM)
+        )
+        main_area.grid_columnconfigure(0, weight=0, minsize=330)
+        main_area.grid_columnconfigure(1, weight=1)
+        main_area.grid_rowconfigure(0, weight=1)
+
+        left_panel = ctk.CTkFrame(main_area, width=330, fg_color="transparent")
+        left_panel.grid(row=0, column=0, sticky="nsew", padx=(0, SPACING_MEDIUM))
+        left_panel.grid_propagate(False)
+        left_panel.grid_columnconfigure(0, weight=1)
+        left_panel.grid_rowconfigure(1, weight=1)
+
+        right_panel = ctk.CTkFrame(main_area, fg_color="transparent")
+        right_panel.grid(row=0, column=1, sticky="nsew")
+        right_panel.grid_columnconfigure(0, weight=1)
+        right_panel.grid_rowconfigure(0, weight=1)
+
+        search_card = SectionCard(left_panel, self.t("knowledge_search_documents"))
+        search_card.grid(row=0, column=0, sticky="ew", pady=(0, SPACING_MEDIUM))
         search_row = FormRow(search_card.body, self.t("search_knowledge"))
         search_row.pack(fill="x", pady=SPACING_SMALL)
         self.search_entry = search_row.add_entry("")
-        self.enabled_filter = search_row.add_option(self.FILTER_OPTIONS, self.stored_filter(), width=FORM_CONTROL_WIDTH // 2)
         self.search_button = PrimaryButton(
             search_row.control_frame,
             text=self.t("knowledge_window_search"),
@@ -98,58 +128,65 @@ class KnowledgePanel(ctk.CTkFrame):
             command=self.clear_search
         )
         self.clear_search_button.pack(side="left")
-        self.enabled_filter.configure(command=self.change_enabled_filter)
 
-        sort_card = SectionCard(self, self.t("knowledge_window_sort"))
-        sort_card.pack(fill="x", padx=SPACING_LARGE + SPACING_SMALL, pady=(0, SPACING_SMALL))
-        sort_row = FormRow(sort_card.body, self.t("knowledge_window_sort"))
-        sort_row.pack(fill="x", pady=SPACING_SMALL)
-        self.sort_field = sort_row.add_option(
-            self.SORT_FIELDS,
-            self.settings.get("knowledge.sort_field", "Updated Time"),
-            width=FORM_CONTROL_WIDTH // 2 + SPACING_LARGE
+        filter_row = FormRow(search_card.body, self.t("filter"))
+        filter_row.pack(fill="x", pady=SPACING_SMALL)
+        self.enabled_filter = filter_row.add_option(self.filter_options(), self.filter_label(self.stored_filter()), width=FORM_CONTROL_WIDTH)
+        self.enabled_filter.configure(command=self.change_enabled_filter)
+        sort_field_row = FormRow(search_card.body, self.t("knowledge_window_sort"))
+        sort_field_row.pack(fill="x", pady=SPACING_SMALL)
+        self.sort_field = sort_field_row.add_option(
+            self.sort_field_options(),
+            self.sort_field_label(self.settings.get("knowledge.sort_field", "Updated Time")),
+            width=FORM_CONTROL_WIDTH
         )
-        self.sort_direction = sort_row.add_option(
-            self.SORT_DIRECTIONS,
-            self.settings.get("knowledge.sort_direction", "Descending"),
-            width=FORM_CONTROL_WIDTH // 2
+        sort_direction_row = FormRow(search_card.body, self.t("sort_direction"))
+        sort_direction_row.pack(fill="x", pady=SPACING_SMALL)
+        self.sort_direction = sort_direction_row.add_option(
+            self.sort_direction_options(),
+            self.sort_direction_label(self.settings.get("knowledge.sort_direction", "Descending")),
+            width=FORM_CONTROL_WIDTH
         )
-        self.search_result_label = StatusLabel(sort_row.control_frame, status="disabled", text="")
-        self.search_result_label.pack(side="left", padx=(SPACING_SMALL, 0))
+        self.search_result_label = StatusLabel(search_card.body, status="disabled", text="", anchor="w", justify="left")
+        self.search_result_label.pack(fill="x", pady=(SPACING_SMALL, 0))
         self.sort_field.configure(command=self.sort_knowledge_list)
         self.sort_direction.configure(command=self.sort_knowledge_list)
 
-        status_card = SectionCard(self, self.t("knowledge_status"))
-        status_card.pack(fill="x", padx=SPACING_LARGE + SPACING_SMALL, pady=(0, SPACING_SMALL))
-        self.stats_label = StatusLabel(status_card.body, status="disabled", text="", wraplength=FORM_LABEL_WRAP * 2, justify="left", anchor="w")
-        self.stats_label.pack(anchor="w")
-        self.index_status_label = StatusLabel(status_card.body, status="disabled", text="", wraplength=FORM_LABEL_WRAP * 2, justify="left", anchor="w")
-        self.index_status_label.pack(anchor="w", pady=(SPACING_SMALL, 0))
-
-        list_card = SectionCard(self, self.t("knowledge_documents"))
-        list_card.pack(fill="x", padx=SPACING_LARGE + SPACING_SMALL, pady=(0, SPACING_MEDIUM))
+        list_card = SectionCard(left_panel, self.t("knowledge_document_list"))
+        list_card.grid(row=1, column=0, sticky="nsew", pady=(0, SPACING_MEDIUM))
+        list_card.body.grid_columnconfigure(0, weight=1)
         self.list_box = ctk.CTkOptionMenu(
             list_card.body,
             values=[self.t("knowledge_window_no_files")],
-            width=FORM_CONTROL_WIDTH * 2 + FORM_CONTROL_WIDTH // 2
+            width=FORM_CONTROL_WIDTH
         )
         self.list_box.pack(fill="x", pady=SPACING_SMALL)
         self.list_box.configure(command=self.select_knowledge)
 
-        detail_card = SectionCard(self, self.t("knowledge_window_preview"))
-        detail_card.pack(fill="both", expand=True, padx=SPACING_LARGE + SPACING_SMALL, pady=(0, SPACING_MEDIUM))
-        self.detail_box = ctk.CTkTextbox(detail_card.body, height=250, wrap="word")
-        self.detail_box.pack(fill="both", expand=True)
+        status_card = SectionCard(left_panel, self.t("knowledge_index_status"))
+        status_card.grid(row=2, column=0, sticky="ew")
+        status_card.body.grid_columnconfigure(0, weight=1)
+        self.stats_label = StatusLabel(status_card.body, status="disabled", text="", wraplength=300, justify="left", anchor="w")
+        self.stats_label.pack(fill="x")
+        self.index_status_label = StatusLabel(status_card.body, status="disabled", text="", wraplength=300, justify="left", anchor="w")
+        self.index_status_label.pack(fill="x", pady=(SPACING_SMALL, 0))
+
+        detail_card = SectionCard(right_panel, self.t("knowledge_document_detail"))
+        detail_card.grid(row=0, column=0, sticky="nsew", pady=(0, SPACING_MEDIUM))
+        detail_card.body.grid_columnconfigure(0, weight=1)
+        detail_card.body.grid_rowconfigure(0, weight=1)
+        self.detail_box = ctk.CTkTextbox(detail_card.body, height=420, wrap="word")
+        self.detail_box.grid(row=0, column=0, sticky="nsew")
         self.detail_box.configure(state="disabled")
         self.detail_empty_state = WorkspaceEmptyState(
             detail_card.body,
             title=self.t("workspace_knowledge_no_selection_title"),
             description=self.t("workspace_knowledge_no_selection_description")
         )
-        self.detail_empty_state.pack(fill="x", pady=SPACING_MEDIUM)
+        self.detail_empty_state.grid(row=0, column=0, sticky="new", pady=SPACING_MEDIUM)
 
         preview_row = FormRow(detail_card.body, self.t("search_in_preview"))
-        preview_row.pack(fill="x", pady=(SPACING_SMALL, 0))
+        preview_row.grid(row=1, column=0, sticky="ew", pady=(SPACING_SMALL, 0))
         self.preview_search_entry = preview_row.add_entry("")
         self.preview_search_label = StatusLabel(preview_row.control_frame, status="disabled", text=self.matches_text(0))
         self.preview_search_label.pack(side="left", padx=(SPACING_SMALL, SPACING_SMALL))
@@ -172,9 +209,25 @@ class KnowledgePanel(ctk.CTkFrame):
             command=self.clear_preview_search
         ).pack(side="left")
 
-        retrieval_card = SectionCard(self, self.t("knowledge_window_retrieval_test"))
-        retrieval_card.pack(fill="x", padx=SPACING_LARGE + SPACING_SMALL, pady=(0, SPACING_MEDIUM))
-        retrieval_row = FormRow(retrieval_card.body, self.t("knowledge_test_prompt"))
+        self.retrieval_card = SectionCard(right_panel, self.t("knowledge_window_retrieval_test"))
+        self.retrieval_card.grid(row=1, column=0, sticky="ew", pady=(0, SPACING_MEDIUM))
+        retrieval_header = ctk.CTkFrame(self.retrieval_card.body, fg_color="transparent")
+        retrieval_header.pack(fill="x")
+        retrieval_header.grid_columnconfigure(0, weight=1)
+        ctk.CTkLabel(
+            retrieval_header,
+            text=self.t("knowledge_retrieval_collapsed_hint"),
+            anchor="w",
+            justify="left"
+        ).grid(row=0, column=0, sticky="ew", padx=(0, SPACING_SMALL))
+        self.retrieval_toggle_button = SecondaryButton(
+            retrieval_header,
+            text=self.t("expand"),
+            command=self.toggle_retrieval_section
+        )
+        self.retrieval_toggle_button.grid(row=0, column=1, sticky="e")
+        self.retrieval_body = ctk.CTkFrame(self.retrieval_card.body, fg_color="transparent")
+        retrieval_row = FormRow(self.retrieval_body, self.t("knowledge_test_prompt"))
         retrieval_row.pack(fill="x", pady=SPACING_SMALL)
         self.retrieval_entry = retrieval_row.add_entry("")
         PrimaryButton(
@@ -184,59 +237,109 @@ class KnowledgePanel(ctk.CTkFrame):
             command=self.test_retrieval
         ).pack(side="left", padx=(SPACING_SMALL, 0))
 
-        backup_card = SectionCard(self, self.t("knowledge_window_backup"))
-        backup_card.pack(fill="x", padx=SPACING_LARGE + SPACING_SMALL, pady=(0, SPACING_MEDIUM))
+        self.advanced_card = SectionCard(right_panel, self.t("advanced_tools"))
+        self.advanced_card.grid(row=2, column=0, sticky="ew")
+        advanced_header = ctk.CTkFrame(self.advanced_card.body, fg_color="transparent")
+        advanced_header.pack(fill="x")
+        advanced_header.grid_columnconfigure(0, weight=1)
+        ctk.CTkLabel(
+            advanced_header,
+            text=self.t("knowledge_advanced_collapsed_hint"),
+            anchor="w",
+            justify="left"
+        ).grid(row=0, column=0, sticky="ew", padx=(0, SPACING_SMALL))
+        self.advanced_toggle_button = SecondaryButton(
+            advanced_header,
+            text=self.t("expand"),
+            command=self.toggle_advanced_section
+        )
+        self.advanced_toggle_button.grid(row=0, column=1, sticky="e")
+        self.advanced_body = ctk.CTkFrame(self.advanced_card.body, fg_color="transparent")
         self.backup_selector = ctk.CTkOptionMenu(
-            backup_card.body,
+            self.advanced_body,
             values=[self.t("knowledge_window_no_backups")],
             width=FORM_CONTROL_WIDTH * 2,
             command=self.select_backup
         )
         self.backup_selector.pack(side="left", fill="x", expand=True, padx=(0, SPACING_SMALL))
         SecondaryButton(
-            backup_card.body,
+            self.advanced_body,
             text=self.t("knowledge_window_restore_backup"),
             width=FORM_CONTROL_WIDTH // 2,
             command=self.restore_knowledge_backup
         ).pack(side="left", padx=(0, SPACING_SMALL))
         DangerButton(
-            backup_card.body,
+            self.advanced_body,
             text=self.t("knowledge_window_delete_backup"),
             width=FORM_CONTROL_WIDTH // 2,
             command=self.delete_knowledge_backup
         ).pack(side="left")
 
         self.footer = FixedFooter(self)
-        self.footer.pack(fill="x", padx=SPACING_LARGE + SPACING_SMALL, pady=(0, SPACING_LARGE))
+        self.footer.grid(row=2, column=0, sticky="ew", padx=SPACING_LARGE + SPACING_SMALL, pady=(0, SPACING_LARGE))
         self.build_buttons()
 
     def build_buttons(self):
-        for column in range(3):
-            self.footer.buttons.grid_columnconfigure(column, weight=1)
         actions = [
             (self.t("knowledge_window_add_knowledge"), self.add_knowledge, PrimaryButton),
-            (self.t("knowledge_window_delete_knowledge"), self.delete_knowledge, DangerButton),
-            (self.t("knowledge_window_toggle_enabled"), self.toggle_knowledge_enabled, SecondaryButton),
-            (self.t("knowledge_window_preview"), self.preview_knowledge, SecondaryButton),
-            (self.t("refresh"), self.refresh_knowledge_list, SecondaryButton),
-            (self.t("knowledge_window_create_backup"), self.create_knowledge_backup, SecondaryButton),
-            (self.t("knowledge_window_export"), self.export_knowledge, SecondaryButton),
-            (self.t("knowledge_window_import"), self.import_knowledge, SecondaryButton),
-            (self.t("health_check"), self.health_check_knowledge, PrimaryButton),
-            (self.t("library_page_metadata_repair"), self.repair_knowledge_metadata, SecondaryButton),
-            (self.t("knowledge_window_index_status"), self.show_index_status, SecondaryButton),
-            (self.t("library_page_rebuild_index"), self.rebuild_vector_index, PrimaryButton)
+            (self.t("more_actions"), self.show_more_actions_menu, SecondaryButton)
         ]
         if self.show_close_button:
             actions.append((self.text["close"], self.close, SecondaryButton))
         for index, (label_text, command, button_factory) in enumerate(actions):
             button_factory(self.footer.buttons, text=label_text, command=command).grid(
-                row=index // 3,
-                column=index % 3,
+                row=0,
+                column=index,
                 sticky="ew",
                 padx=SPACING_SMALL,
                 pady=SPACING_SMALL
             )
+        for column in range(len(actions)):
+            self.footer.buttons.grid_columnconfigure(column, weight=1)
+        self.more_actions_menu = Menu(self, tearoff=0)
+        self.more_actions_menu.add_command(label=self.t("knowledge_window_delete_knowledge"), command=self.delete_knowledge)
+        self.more_actions_menu.add_command(label=self.t("knowledge_window_toggle_enabled"), command=self.toggle_knowledge_enabled)
+        self.more_actions_menu.add_command(label=self.t("knowledge_window_preview"), command=self.preview_knowledge)
+        self.more_actions_menu.add_command(label=self.t("refresh"), command=self.refresh_knowledge_list)
+        self.more_actions_menu.add_separator()
+        self.more_actions_menu.add_command(label=self.t("knowledge_window_create_backup"), command=self.create_knowledge_backup)
+        self.more_actions_menu.add_command(label=self.t("knowledge_window_export"), command=self.export_knowledge)
+        self.more_actions_menu.add_command(label=self.t("knowledge_window_import"), command=self.import_knowledge)
+        self.more_actions_menu.add_separator()
+        self.more_actions_menu.add_command(label=self.t("health_check"), command=self.health_check_knowledge)
+        self.more_actions_menu.add_command(label=self.t("library_page_metadata_repair"), command=self.repair_knowledge_metadata)
+        self.more_actions_menu.add_command(label=self.t("knowledge_window_index_status"), command=self.show_index_status)
+        self.more_actions_menu.add_command(label=self.t("library_page_rebuild_index"), command=self.rebuild_vector_index)
+
+    def show_more_actions_menu(self):
+        try:
+            button = next(
+                widget for widget in self.footer.buttons.winfo_children()
+                if getattr(widget, "cget", lambda _key: None)("text") == self.t("more_actions")
+            )
+            x = button.winfo_rootx()
+            y = button.winfo_rooty() + button.winfo_height()
+            self.more_actions_menu.tk_popup(x, y)
+        finally:
+            self.more_actions_menu.grab_release()
+
+    def toggle_retrieval_section(self):
+        self.retrieval_expanded = not self.retrieval_expanded
+        if self.retrieval_expanded:
+            self.retrieval_body.pack(fill="x", pady=(SPACING_SMALL, 0))
+            self.retrieval_toggle_button.configure(text=self.t("collapse"))
+        else:
+            self.retrieval_body.pack_forget()
+            self.retrieval_toggle_button.configure(text=self.t("expand"))
+
+    def toggle_advanced_section(self):
+        self.advanced_expanded = not self.advanced_expanded
+        if self.advanced_expanded:
+            self.advanced_body.pack(fill="x", pady=(SPACING_SMALL, 0))
+            self.advanced_toggle_button.configure(text=self.t("collapse"))
+        else:
+            self.advanced_body.pack_forget()
+            self.advanced_toggle_button.configure(text=self.t("expand"))
 
     def yes_no(self, value):
         return self.text["yes"] if value else self.text["no"]
@@ -260,8 +363,69 @@ class KnowledgePanel(ctk.CTkFrame):
             "Invalid Knowledge File": self.t("knowledge_window_status_invalid_file"),
             "Read Error": self.t("knowledge_window_status_read_error"),
             "Not Indexed": self.t("knowledge_window_not_indexed"),
-            "Ready": self.t("knowledge_window_ready")
+            "Indexed": self.t("knowledge_window_ready")
         }.get(str(status), str(status))
+
+    def filter_labels(self):
+        return {
+            "All": self.t("all"),
+            "Enabled": self.t("enabled"),
+            "Disabled": self.t("disabled"),
+            "Error": self.t("error")
+        }
+
+    def sort_field_labels(self):
+        return {
+            "Updated Time": self.t("knowledge_sort_updated_time"),
+            "File Name": self.t("knowledge_sort_file_name"),
+            "File Type": self.t("knowledge_sort_file_type"),
+            "File Size": self.t("knowledge_sort_file_size"),
+            "Added Time": self.t("knowledge_sort_added_time"),
+            "Characters": self.t("characters"),
+            "Enabled": self.t("enabled")
+        }
+
+    def sort_direction_labels(self):
+        return {
+            "Descending": self.t("sort_descending"),
+            "Ascending": self.t("sort_ascending")
+        }
+
+    def filter_label(self, value):
+        return self.filter_labels().get(str(value or "All"), str(value or "All"))
+
+    def filter_value(self, label):
+        for value, text in self.filter_labels().items():
+            if label == text:
+                return value
+        return str(label or "All")
+
+    def sort_field_label(self, value):
+        return self.sort_field_labels().get(str(value or "Updated Time"), str(value or "Updated Time"))
+
+    def sort_field_value(self, label):
+        for value, text in self.sort_field_labels().items():
+            if label == text:
+                return value
+        return str(label or "Updated Time")
+
+    def sort_direction_label(self, value):
+        return self.sort_direction_labels().get(str(value or "Descending"), str(value or "Descending"))
+
+    def sort_direction_value(self, label):
+        for value, text in self.sort_direction_labels().items():
+            if label == text:
+                return value
+        return str(label or "Descending")
+
+    def filter_options(self):
+        return [self.filter_label(value) for value in self.FILTER_VALUES]
+
+    def sort_field_options(self):
+        return [self.sort_field_label(value) for value in self.SORT_FIELD_VALUES]
+
+    def sort_direction_options(self):
+        return [self.sort_direction_label(value) for value in self.SORT_DIRECTION_VALUES]
 
     def matches_text(self, count, current=None, total=None, position=None):
         if current is None:
@@ -279,6 +443,7 @@ class KnowledgePanel(ctk.CTkFrame):
             stored_filter = "Enabled"
         elif stored_filter == "Disabled Only":
             stored_filter = "Disabled"
+        stored_filter = self.filter_value(stored_filter)
         if stored_filter not in {"All", "Enabled", "Disabled", "Error"}:
             stored_filter = "All"
         return stored_filter
@@ -304,7 +469,7 @@ class KnowledgePanel(ctk.CTkFrame):
         enabled_text = self.status_text(status) if status != "OK" else (self.text["enabled"] if record.get("enabled", True) else self.text["disabled"])
         embedding_state = self.knowledge_store.embedding_state(record)
         embedding_text = embedding_state.get("status", record.get("embedding_status", "Not Indexed"))
-        vector_text = self.status_text("Ready") if embedding_state.get("has_embedding") and not embedding_state.get("stale") else self.status_text(embedding_text)
+        vector_text = self.status_text("Indexed") if embedding_state.get("has_embedding") and not embedding_state.get("stale") else self.status_text(embedding_text)
         return (
             f"{record.get('file_name', self.unknown_text())}\n"
             f"{record.get('file_type', '').upper()} | "
@@ -326,7 +491,7 @@ class KnowledgePanel(ctk.CTkFrame):
         )
 
     def set_detail(self, text):
-        self.detail_empty_state.pack_forget()
+        self.detail_empty_state.grid_remove()
         self.detail_box.configure(state="normal")
         self.detail_box.delete("1.0", "end")
         self.detail_box.insert("end", text)
@@ -338,12 +503,12 @@ class KnowledgePanel(ctk.CTkFrame):
             self.detail_box.configure(state="normal")
             self.detail_box.delete("1.0", "end")
             self.detail_box.configure(state="disabled")
-            self.detail_empty_state.pack(fill="x", pady=SPACING_MEDIUM)
+            self.detail_empty_state.grid(row=0, column=0, sticky="new", pady=SPACING_MEDIUM)
             return
         self.selected_record["record"] = record
         enabled_text = self.yes_no(record.get("enabled", True))
         embedding_state = self.knowledge_store.embedding_state(record)
-        vector_text = self.status_text("Ready") if embedding_state.get("has_embedding") and not embedding_state.get("stale") else self.status_text(embedding_state.get("status", "Not Indexed"))
+        vector_text = self.status_text("Indexed") if embedding_state.get("has_embedding") and not embedding_state.get("stale") else self.status_text(embedding_state.get("status", "Not Indexed"))
         self.set_detail(
             f"{self.t('knowledge_window_file')}: {record.get('file_name', '')}\n"
             f"{self.t('type')}: {record.get('file_type', '')}\n"
@@ -371,11 +536,9 @@ class KnowledgePanel(ctk.CTkFrame):
         index_health = stats.get("vector_index", {})
         self.stats_label.configure(
             text=(
-                f"{self.t('knowledge_status')}: {self.text['enabled'] if self.settings.get('knowledge.enabled', True) else self.text['disabled']}\n"
-                f"{self.t('documents')}: {stats['total']} | TXT: {stats['txt']} | Markdown: {stats['md']} | PDF: {stats['pdf']}\n"
-                f"{self.text['enabled']}: {stats['enabled']} | {self.text['disabled']}: {stats['disabled']} | {self.t('knowledge_window_retrievable')}: {stats['retrievable']}\n"
+                f"{self.t('documents')}: {stats['total']}\n"
+                f"{self.text['enabled']}: {stats['enabled']} | {self.text['disabled']}: {stats['disabled']}\n"
                 f"{self.t('indexed')}: {stats.get('embedding_indexed', 0)} | "
-                f"{self.t('knowledge_window_stale')}: {stats.get('embedding_stale', 0)} | "
                 f"{self.t('knowledge_window_needs_reindex')}: {stats.get('embedding_needs_reindex', 0)}"
             ),
             text_color=status_color("disabled")
@@ -383,17 +546,16 @@ class KnowledgePanel(ctk.CTkFrame):
         self.index_status_label.configure(
             text=(
                 f"{self.t('vector_status')}: {self.t('present') if index_health.get('exists') else self.t('missing')}\n"
-                f"{self.t('entries')}: {index_health.get('entries', 0)} | {self.t('indexed')}: {index_health.get('indexed', 0)} | "
-                f"{self.t('missing')}: {index_health.get('missing', 0)} | {self.t('invalid')}: {index_health.get('invalid', 0)} | "
-                f"{self.t('orphaned')}: {index_health.get('orphaned', 0)} | "
-                f"{self.t('knowledge_window_updated')}: {index_health.get('updated_time', '') or self.never_text()}"
+                f"{self.t('entries')}: {index_health.get('entries', 0)} | "
+                f"{self.t('invalid')}: {index_health.get('invalid', 0)} | "
+                f"{self.t('orphaned')}: {index_health.get('orphaned', 0)}"
             ),
             text_color=status_color("disabled")
         )
 
     def filter_records(self, records, keyword):
         keyword = keyword.strip().casefold()
-        selected_filter = self.enabled_filter.get()
+        selected_filter = self.filter_value(self.enabled_filter.get())
         filtered = []
         for item in records:
             enabled = bool(item.get("enabled", True))
@@ -414,8 +576,8 @@ class KnowledgePanel(ctk.CTkFrame):
         return filtered
 
     def sort_records(self, records):
-        field = self.sort_field.get()
-        reverse = self.sort_direction.get() == "Descending"
+        field = self.sort_field_value(self.sort_field.get())
+        reverse = self.sort_direction_value(self.sort_direction.get()) == "Descending"
 
         def sort_key(item):
             if field == "File Name":
@@ -472,7 +634,7 @@ class KnowledgePanel(ctk.CTkFrame):
                 )
                 self.show_detail(self.visible_records[0] if self.visible_records else None)
                 if self.visible_records:
-                    self.workspace_header.set_status("ready", self.t("ready"))
+                    self.workspace_header.set_status("ready", self.t("available"))
                 elif self.knowledge_records:
                     self.workspace_header.set_status("ready", self.t("workspace_knowledge_no_results_title"))
                 else:
@@ -489,25 +651,25 @@ class KnowledgePanel(ctk.CTkFrame):
 
     def search_knowledge_list(self):
         self.current_keyword["value"] = self.search_entry.get().strip()
-        self.settings.set("knowledge.enabled_filter", self.enabled_filter.get())
+        self.settings.set("knowledge.enabled_filter", self.filter_value(self.enabled_filter.get()))
         self.refresh_knowledge_list()
         self.logger.info("Knowledge searched")
 
     def clear_search(self):
         self.search_entry.delete(0, "end")
         self.current_keyword["value"] = ""
-        self.enabled_filter.set("All")
+        self.enabled_filter.set(self.filter_label("All"))
         self.settings.set("knowledge.enabled_filter", "All")
         self.refresh_knowledge_list()
         self.logger.info("Knowledge search cleared")
 
     def change_enabled_filter(self, _value):
-        self.settings.set("knowledge.enabled_filter", self.enabled_filter.get())
+        self.settings.set("knowledge.enabled_filter", self.filter_value(self.enabled_filter.get()))
         self.refresh_knowledge_list()
 
     def sort_knowledge_list(self, _value=None):
-        self.settings.set("knowledge.sort_field", self.sort_field.get())
-        self.settings.set("knowledge.sort_direction", self.sort_direction.get())
+        self.settings.set("knowledge.sort_field", self.sort_field_value(self.sort_field.get()))
+        self.settings.set("knowledge.sort_direction", self.sort_direction_value(self.sort_direction.get()))
         self.refresh_knowledge_list()
         self.logger.info("Knowledge list sorted")
 
@@ -960,7 +1122,7 @@ class KnowledgePanel(ctk.CTkFrame):
                     self.logger.error(f"{error_prefix}: {error_message}")
                     return
                 on_success(result)
-                self.workspace_header.set_status("ready", self.t("ready"))
+                self.workspace_header.set_status("ready", self.t("available"))
 
             self.after(0, finish)
 

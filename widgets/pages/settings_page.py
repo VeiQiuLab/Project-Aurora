@@ -57,13 +57,6 @@ class SettingsPage(ctk.CTkFrame):
         self.sidebar.grid(row=0, column=0, sticky="nsw", padx=(0, SPACING_MEDIUM))
         self.sidebar.grid_propagate(False)
 
-        ctk.CTkLabel(
-            self.sidebar,
-            text=self.t("settings"),
-            font=FONT_HEADER,
-            anchor="w"
-        ).pack(fill="x", padx=SPACING_MEDIUM, pady=(SPACING_LARGE, SPACING_MEDIUM))
-
         for category_id, label_key in self.CATEGORIES:
             button = SecondaryButton(
                 self.sidebar,
@@ -78,7 +71,7 @@ class SettingsPage(ctk.CTkFrame):
         self.content.grid(row=0, column=1, sticky="nsew")
         self.content.grid_columnconfigure(0, weight=1)
 
-        self.summary_card = SectionCard(self.content, self.t("settings"))
+        self.summary_card = SectionCard(self.content, self.t("settings_page_category"))
         self.summary_card.grid(row=0, column=0, sticky="ew", pady=(0, SPACING_MEDIUM))
 
         self.category_title = ctk.CTkLabel(

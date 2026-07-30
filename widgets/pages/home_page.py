@@ -44,33 +44,14 @@ class HomePage(ctk.CTkFrame):
         self.detail_labels = {}
 
         self.grid_columnconfigure(0, weight=1)
-        self.grid_rowconfigure(1, weight=1)
+        self.grid_rowconfigure(0, weight=1)
 
         self._build()
         self.refresh()
 
     def _build(self):
-        header = ctk.CTkFrame(self, fg_color="transparent")
-        header.grid(row=0, column=0, sticky="ew", pady=(0, SPACING_MEDIUM))
-        header.grid_columnconfigure(0, weight=1)
-
-        ctk.CTkLabel(
-            header,
-            text=self.t("home_title"),
-            font=FONT_HEADER,
-            anchor="w"
-        ).grid(row=0, column=0, sticky="w")
-
-        self.summary_label = StatusLabel(
-            header,
-            status="disabled",
-            text=self.t("app_shell_ready"),
-            anchor="e"
-        )
-        self.summary_label.grid(row=0, column=1, sticky="e")
-
         content = ctk.CTkFrame(self, fg_color="transparent")
-        content.grid(row=1, column=0, sticky="nsew")
+        content.grid(row=0, column=0, sticky="nsew")
         content.grid_columnconfigure(0, weight=1)
         content.grid_columnconfigure(1, weight=0)
         content.grid_rowconfigure(0, weight=1)
@@ -137,8 +118,6 @@ class HomePage(ctk.CTkFrame):
 
     def refresh(self):
         status = self._load_status()
-        overall = status.get("overall", "disabled")
-        self.summary_label.set_status(overall, status.get("summary", self.t("app_shell_ready")))
 
         for status_id, _label_key in self.STATUS_ITEMS:
             record = status.get(status_id, {})
@@ -164,7 +143,7 @@ class HomePage(ctk.CTkFrame):
                     self.logger.error(f"Home page status failed: {error}")
         return {
             "overall": "disabled",
-            "summary": self.t("app_shell_ready"),
+            "summary": "",
             "ai_runtime": {"status": "disabled", "text": "--", "detail": "--"},
             "memory": {"status": "disabled", "text": "--", "detail": "--"},
             "knowledge": {"status": "disabled", "text": "--", "detail": "--"},

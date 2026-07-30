@@ -47,6 +47,7 @@ class ChatPanel(ctk.CTkFrame):
         stop_generation_callback,
         preview_context_callback,
         clear_chat_callback,
+        show_header_title=True,
         **kwargs
     ):
         kwargs.setdefault("fg_color", "transparent")
@@ -66,6 +67,7 @@ class ChatPanel(ctk.CTkFrame):
         self.stop_generation_callback = stop_generation_callback
         self.preview_context_callback = preview_context_callback
         self.clear_chat_callback = clear_chat_callback
+        self.show_header_title = show_header_title
         self.buttons = {}
         self.input_default_height = 72
         self.input_line_height = 24
@@ -81,7 +83,9 @@ class ChatPanel(ctk.CTkFrame):
             title="Aurora Chat",
             description=self.t("workspace_chat_description"),
             status="disabled",
-            status_text=self.t("chat_window_loading_models")
+            status_text=self.t("chat_window_loading_models"),
+            show_status=False,
+            show_title=self.show_header_title
         )
         self.workspace_header.grid_with_workspace_padding()
         self.header_model_label = self.workspace_header.status_label
@@ -103,7 +107,7 @@ class ChatPanel(ctk.CTkFrame):
         left_panel.grid_propagate(False)
         left_panel.grid_columnconfigure(0, weight=1)
         left_panel.grid_rowconfigure(5, weight=1)
-        ctk.CTkLabel(left_panel, text=self.t("conversation"), font=FONT_HEADER).grid(
+        ctk.CTkLabel(left_panel, text=self.t("conversation_list"), font=FONT_HEADER).grid(
             row=0,
             column=0,
             sticky="w",
@@ -226,7 +230,7 @@ class ChatPanel(ctk.CTkFrame):
         self.context_knowledge_status = self.sidebar_knowledge_status
         self.debug_switch = None
 
-        chat_card = SectionCard(center_panel, self.t("chat"))
+        chat_card = SectionCard(center_panel, self.t("chat_messages"))
         chat_card.grid(row=1, column=0, sticky="nsew", pady=(0, SPACING_MEDIUM))
         chat_card.body.grid_rowconfigure(0, weight=1)
         chat_card.body.grid_columnconfigure(0, weight=1)
@@ -340,7 +344,6 @@ class ChatPanel(ctk.CTkFrame):
     def set_model_display(self, model_name, status="healthy"):
         text = model_name or self.t("chat_page_model_unknown")
         header_text = f"{text} \u25cf {self.t('local_model_status')}" if model_name else text
-        self.header_model_label.set_status(status, text=header_text)
         self.model_inline_label.configure(text=text)
         self.context_model_status.set_status(status, text=text)
         self.sidebar_model_status.set_status(status, text=f"{self.t('model')}: {text}")

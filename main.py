@@ -2395,20 +2395,20 @@ def app_shell_home_status_provider():
     chat_model = settings.get("chat_model", "")
     return {
         "overall": "healthy",
-        "summary": t("app_shell_ready"),
+        "summary": "",
         "ai_runtime": {
             "status": "healthy" if chat_model else "warning",
-            "text": t("ready") if chat_model else t("missing"),
+            "text": t("available") if chat_model else t("missing"),
             "detail": chat_model or "--"
         },
         "memory": {
             "status": "healthy",
-            "text": t("ready"),
+            "text": t("available"),
             "detail": f"{t('memory_count')}: {memory_count}"
         },
         "knowledge": {
             "status": "healthy",
-            "text": t("ready"),
+            "text": t("available"),
             "detail": f"{t('knowledge_documents')}: {knowledge_count}"
         },
         "persona": {
@@ -2433,7 +2433,7 @@ def app_shell_library_status_provider():
             "status": "healthy" if settings.get("knowledge.enabled", True) else "disabled",
             "text": t("enabled") if settings.get("knowledge.enabled", True) else t("disabled"),
             "documents": health.get("total", 0),
-            "retrieval": t("ready") if settings.get("knowledge.enabled", True) else t("disabled"),
+            "retrieval": t("enabled") if settings.get("knowledge.enabled", True) else t("disabled"),
             "retrieval_state": "healthy" if settings.get("knowledge.enabled", True) else "disabled",
             "index": t("available") if index_exists else t("missing"),
             "index_state": "healthy" if index_exists else "warning"

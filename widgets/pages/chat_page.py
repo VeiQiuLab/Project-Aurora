@@ -97,7 +97,8 @@ class ChatPage(ctk.CTkFrame):
             send_prompt_callback=self.send_prompt,
             stop_generation_callback=self.stop_generation,
             preview_context_callback=self.preview_chat_context,
-            clear_chat_callback=self.clear_chat
+            clear_chat_callback=self.clear_chat,
+            show_header_title=False
         )
         self.panel.grid(row=0, column=0, sticky="nsew")
         self._bind_panel_widgets()
@@ -537,7 +538,7 @@ class ChatPage(ctk.CTkFrame):
                     return
                 if callable(self.context_preview_callback):
                     self.context_preview_callback(payload, self.winfo_toplevel())
-                self.set_status(self.t("chat_window_context_inspector_ready"), "healthy")
+                self.set_status(self.t("chat_window_context_inspector_generated"), "healthy")
                 self.logger.info("Context generated")
                 self.logger.info("Context build duration recorded")
                 self.logger.info("Final prompt preview generated")
@@ -552,5 +553,5 @@ class ChatPage(ctk.CTkFrame):
         threading.Thread(target=run_preview, daemon=True).start()
 
     def close(self):
-        self.set_status(self.t("app_shell_ready"), "disabled")
+        self.set_status("", "disabled")
         self.focus_input()
