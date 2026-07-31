@@ -9,6 +9,15 @@ from pathlib import Path
 
 
 MEMORY_TYPES = {"preference", "fact", "instruction"}
+MEMORY_METADATA_FIELDS = {
+    "category",
+    "confidence",
+    "importance_score",
+    "risk",
+    "explanation",
+    "source_detail",
+    "analysis_version"
+}
 SENSITIVE_PATTERNS = [
     r"\b\d{3}[- ]?\d{2}[- ]?\d{4}\b",
     r"\b(?:\d[ -]*?){13,19}\b",
@@ -202,7 +211,7 @@ class MemoryStore:
             self._write(normalized)
         return normalized
 
-    def create(self, memory_type, content, importance="normal"):
+    def create(self, memory_type, content, importance="normal", metadata=None):
         now = self._now()
         item = {
             "id": uuid.uuid4().hex,
@@ -213,6 +222,8 @@ class MemoryStore:
             "importance": importance or "normal",
             "enabled": True
         }
+        if isinstance(metadata, dict) and metadata:
+            item["metadata"] = dict(metadata)
         memories = self.list_memories()
         memories.append(item)
         self._write(memories)
@@ -310,8 +321,20 @@ class MemoryStore:
                 continue
             if any(self._is_similar(content, existing_item) for existing_item in existing_content):
                 continue
-            _quality, importance = self.score_candidate(candidate)
-            saved.append(self.create(memory_type, content, importance))
+            has_intelligence_importance = (
+                "importance_score" in candidate
+                and str(candidate.get("importance", "")).casefold() in {"low", "normal", "high"}
+            )
+            if has_intelligence_importance:
+                importance = candidate.get("importance", "normal")
+            else:
+                _quality, importance = self.score_candidate(candidate)
+            metadata = {
+                key: candidate[key]
+                for key in MEMORY_METADATA_FIELDS
+                if key in candidate
+            }
+            saved.append(self.create(memory_type, content, importance, metadata=metadata))
             existing.add(key)
             existing_content.append(content)
         return saved
