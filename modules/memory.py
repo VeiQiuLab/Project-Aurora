@@ -233,10 +233,20 @@ class MemoryStore:
         memories = self.list_memories()
         for item in memories:
             if item.get("id") == memory_id:
+                next_type = memory_type or "fact"
+                next_content = content.strip()
+                content_changed = str(item.get("content", "")) != next_content
+                type_changed = str(item.get("type", "fact")) != next_type
+                now = self._now()
+                metadata = item.get("metadata")
+                if isinstance(metadata, dict) and (content_changed or type_changed):
+                    metadata["stale"] = True
+                    metadata["stale_reason"] = "memory_updated"
+                    metadata["stale_time"] = now
                 item.update({
-                    "type": memory_type or "fact",
-                    "content": content.strip(),
-                    "updated_time": self._now(),
+                    "type": next_type,
+                    "content": next_content,
+                    "updated_time": now,
                     "importance": importance or "normal"
                 })
                 self._write(memories)

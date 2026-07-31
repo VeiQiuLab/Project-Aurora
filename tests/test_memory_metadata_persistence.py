@@ -73,7 +73,11 @@ class MemoryMetadataPersistenceTests(unittest.TestCase):
 
         self.assertEqual(updated["content"], "User prefers concise answers.")
         self.assertEqual(updated["importance"], "normal")
-        self.assertEqual(updated["metadata"], metadata)
+        self.assertEqual(updated["metadata"]["category"], metadata["category"])
+        self.assertEqual(updated["metadata"]["confidence"], metadata["confidence"])
+        self.assertEqual(updated["metadata"]["risk"], metadata["risk"])
+        self.assertTrue(updated["metadata"]["stale"])
+        self.assertEqual(updated["metadata"]["stale_reason"], "memory_updated")
 
     def test_intelligence_importance_is_not_overwritten_on_approve(self):
         store = self.make_store()
