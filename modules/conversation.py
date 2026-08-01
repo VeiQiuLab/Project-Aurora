@@ -3,6 +3,7 @@
 import json
 import threading
 import uuid
+from copy import deepcopy
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -19,6 +20,14 @@ class ConversationManager:
     @staticmethod
     def _now():
         return datetime.now(timezone.utc).isoformat(timespec="seconds")
+
+    @staticmethod
+    def _metadata_with_namespace(metadata, namespace, payload):
+        base = deepcopy(metadata) if isinstance(metadata, dict) else {}
+        if not namespace:
+            return base
+        base[str(namespace)] = deepcopy(payload) if isinstance(payload, dict) else {}
+        return base
 
     def _normalize(self, data, fallback_id):
         now = self._now()
@@ -98,6 +107,19 @@ class ConversationManager:
         path = self.directory / f"{conversation_id}.json"
         data = self._normalize(json.loads(path.read_text(encoding="utf-8")), conversation_id)
         return data
+
+    def save_metadata(self, conversation_id, namespace, payload):
+        path = self.directory / f"{conversation_id}.json"
+        with self._lock:
+            data = self._normalize(json.loads(path.read_text(encoding="utf-8")), conversation_id)
+            data["metadata"] = self._metadata_with_namespace(data.get("metadata", {}), namespace, payload)
+            data["updated_at"] = self._now()
+            data["updated_time"] = data["updated_at"]
+            path.write_text(json.dumps(data, ensure_ascii=False, indent=2), encoding="utf-8")
+        return self._normalize(data, conversation_id)
+
+    def save_conversation_intelligence(self, conversation_id, analysis):
+        return self.save_metadata(conversation_id, "conversation_intelligence", analysis)
 
     def rename(self, conversation_id, title):
         path = self.directory / f"{conversation_id}.json"
