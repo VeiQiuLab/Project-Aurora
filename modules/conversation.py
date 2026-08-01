@@ -135,3 +135,50 @@ class ConversationManager:
         path = self.directory / f"{conversation_id}.json"
         with self._lock:
             path.unlink(missing_ok=True)
+
+
+def schedule_conversation_intelligence(
+    conversation_manager,
+    conversation_id,
+    messages,
+    *,
+    expected_updated_time=None,
+    logger=None,
+    analyzer=None,
+    thread_factory=None
+):
+    captured_messages = deepcopy(messages or [])
+    expected_message_count = len(captured_messages)
+    thread_factory = thread_factory or threading.Thread
+
+    def log_error(message):
+        if logger:
+            try:
+                logger.error(message)
+            except Exception:
+                pass
+
+    def run_analysis():
+        try:
+            if analyzer is None:
+                from modules.conversation_intelligence import analyze_conversation
+                analysis = analyze_conversation(captured_messages)
+            else:
+                analysis = analyzer(captured_messages)
+        except Exception as error:
+            log_error(f"Conversation intelligence analysis failed: {error}")
+            return
+
+        try:
+            current = conversation_manager.load(conversation_id)
+            if len(current.get("messages", [])) != expected_message_count:
+                return
+            if expected_updated_time and current.get("updated_time") != expected_updated_time:
+                return
+            conversation_manager.save_conversation_intelligence(conversation_id, analysis)
+        except Exception as error:
+            log_error(f"Conversation intelligence metadata save failed: {error}")
+
+    thread = thread_factory(target=run_analysis, daemon=True)
+    thread.start()
+    return thread

@@ -5,7 +5,7 @@ from tkinter import messagebox
 import customtkinter as ctk
 
 from modules.chat import ChatError, ChatSession
-from modules.conversation import ConversationManager
+from modules.conversation import ConversationManager, schedule_conversation_intelligence
 from modules.search import search_conversations
 from widgets.components.chat_panel import ChatPanel
 
@@ -359,6 +359,13 @@ class ChatPage(ctk.CTkFrame):
             "healthy"
         )
         self.logger.info("Conversation auto saved" if auto else "Conversation saved")
+        schedule_conversation_intelligence(
+            self.conversation_manager,
+            data["id"],
+            messages,
+            expected_updated_time=data.get("updated_time"),
+            logger=self.logger
+        )
 
     def delete_conversation(self):
         selected = self.conversation_selector.get()
