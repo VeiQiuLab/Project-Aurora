@@ -3,7 +3,7 @@
 from copy import deepcopy
 
 
-_SCORE_DETAIL_KEYS = ("vector", "keyword", "importance", "final")
+_SCORE_DETAIL_KEYS = ("method", "vector", "keyword", "matched_terms", "importance", "final")
 
 
 def _source_kind(result, source, source_kind):
@@ -25,22 +25,44 @@ def normalize_result(result, *, source_kind=None, retrieval_method=None):
     kind = _source_kind(source_result, source, source_kind)
 
     source["kind"] = kind
+    if "name" not in source:
+        source["name"] = source_result.get("name") or source_result.get("file_name", "")
+    if "path" not in source:
+        source["path"] = source_result.get("path") or source_result.get("source_path", "")
+    if "id" not in source:
+        source["id"] = source_result.get("id", "")
     if "file_name" not in source:
         source["file_name"] = source_result.get("file_name", "")
     if "source_path" not in source:
         source["source_path"] = source_result.get("source_path", "")
     if "memory_id" not in source:
         source["memory_id"] = source_result.get("memory_id", "")
+    if kind == "memory" and not source["memory_id"]:
+        source["memory_id"] = source_result.get("id", "")
     if "chunk_id" not in source:
         source["chunk_id"] = source_result.get("chunk_id")
+    if "content_hash" not in source:
+        source["content_hash"] = source_result.get("content_hash", "")
+    if "timestamp" not in source:
+        source["timestamp"] = (
+            source_result.get("timestamp")
+            or source_result.get("updated_time")
+            or source_result.get("created_time", "")
+        )
+    if "embedding_updated_time" in source_result and "embedding_updated_time" not in source:
+        source["embedding_updated_time"] = source_result["embedding_updated_time"]
 
     metadata = source_result.get("metadata")
     metadata = deepcopy(metadata) if isinstance(metadata, dict) else {}
 
     score_details = source_result.get("score_details")
     score_details = deepcopy(score_details) if isinstance(score_details, dict) else {}
-    for key in _SCORE_DETAIL_KEYS:
-        score_details.setdefault(key, None)
+    score_details.setdefault("method", source_result.get("retrieval_method", ""))
+    score_details.setdefault("vector", None)
+    score_details.setdefault("keyword", None)
+    score_details.setdefault("matched_terms", [])
+    score_details.setdefault("importance", None)
+    score_details.setdefault("final", None)
 
     normalized = source_result
     normalized.update({
