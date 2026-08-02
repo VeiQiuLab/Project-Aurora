@@ -146,6 +146,7 @@ from modules.chat import (
 )
 from modules.context_builder import ContextBuilder
 from modules.conversation import ConversationManager
+from modules.rag_integration import run_rag_pipeline_with_fallback
 from modules.memory import MemoryStore
 from modules.knowledge import KnowledgeStore
 from modules.persona import PersonaStore
@@ -976,7 +977,14 @@ def context_warning_tokens():
         return 6000
 
 
-def build_context_package(memories=None, knowledge_items=None, persona=None, conversation_messages=None):
+def build_context_package(
+    memories=None,
+    knowledge_items=None,
+    persona=None,
+    conversation_messages=None,
+    memory_text=None,
+    knowledge_text=None,
+):
     builder = ContextBuilder(
         system_context=DEFAULT_SYSTEM_CONTEXT,
         warning_tokens=context_warning_tokens()
@@ -984,24 +992,39 @@ def build_context_package(memories=None, knowledge_items=None, persona=None, con
     return builder.build_from_formatted_context(
         system_context=DEFAULT_SYSTEM_CONTEXT,
         persona_text=persona_store.build_context(persona) if persona else "",
-        memory_text=format_memory_context(memories),
-        knowledge_text=format_knowledge_context(knowledge_items),
+        memory_text=(format_memory_context(memories) if memory_text is None else memory_text),
+        knowledge_text=(format_knowledge_context(knowledge_items) if knowledge_text is None else knowledge_text),
         conversation_text=build_conversation_context(conversation_messages)
     )
 
 
-def build_context_sections(memories=None, knowledge_items=None, persona=None, conversation_messages=None):
+def build_context_sections(
+    memories=None,
+    knowledge_items=None,
+    persona=None,
+    conversation_messages=None,
+    memory_text=None,
+    knowledge_text=None,
+):
     return build_context_package(
         memories,
         knowledge_items,
         persona,
-        conversation_messages
+        conversation_messages,
+        memory_text=memory_text,
+        knowledge_text=knowledge_text,
     )["sections"]
 
 
-def build_memory_context(memories=None, knowledge_items=None, persona=None):
+def build_memory_context(memories=None, knowledge_items=None, persona=None, memory_text=None, knowledge_text=None):
     lines = []
-    for section in build_context_package(memories, knowledge_items, persona)["sections"][:4]:
+    for section in build_context_package(
+        memories,
+        knowledge_items,
+        persona,
+        memory_text=memory_text,
+        knowledge_text=knowledge_text,
+    )["sections"][:4]:
         content = section.get("content", "")
         if content:
             lines.append(content)
@@ -1261,6 +1284,27 @@ def build_chat_runtime_callbacks():
                 logger.info("Knowledge skipped invalid file")
             logger.info(f"Knowledge matched: {len(matched_knowledge)}")
 
+        rag_enabled = bool(settings.get("rag.pipeline_enabled", False))
+        rag_result = run_rag_pipeline_with_fallback(
+            matched_memories,
+            matched_knowledge,
+            enabled=rag_enabled,
+            logger=logger,
+        )
+        optimized_memory_text = None
+        optimized_knowledge_text = None
+        if rag_enabled and rag_result["diagnostics"].get("success"):
+            for section in rag_result.get("sections", []):
+                if not isinstance(section, dict):
+                    continue
+                if section.get("name") == "Memory":
+                    optimized_memory_text = section.get("content", "")
+                elif section.get("name") == "Knowledge":
+                    optimized_knowledge_text = section.get("content", "")
+            logger.info("RAG pipeline completed")
+        elif rag_enabled:
+            logger.error(rag_result["diagnostics"].get("reason", "RAG pipeline fallback used."))
+
         if matched_memories:
             logger.info("Memory injected")
         if matched_knowledge:
@@ -1269,14 +1313,27 @@ def build_chat_runtime_callbacks():
         debug_text = ""
         if debug_enabled:
             debug_text, warning, _tokens = build_context_debug_report(
-                build_context_sections(matched_memories, matched_knowledge, active_persona, conversation_messages),
+                build_context_sections(
+                    matched_memories,
+                    matched_knowledge,
+                    active_persona,
+                    conversation_messages,
+                    memory_text=optimized_memory_text,
+                    knowledge_text=optimized_knowledge_text,
+                ),
                 warning_tokens=settings.get("context.warning_tokens", 6000)
             )
             if warning:
                 logger.info("Context size warning")
 
         return {
-            "system_context": build_memory_context(matched_memories, matched_knowledge, active_persona),
+            "system_context": build_memory_context(
+                matched_memories,
+                matched_knowledge,
+                active_persona,
+                memory_text=optimized_memory_text,
+                knowledge_text=optimized_knowledge_text,
+            ),
             "debug_text": debug_text
         }
 
