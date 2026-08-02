@@ -339,15 +339,61 @@ class MemoryStore:
                 importance = candidate.get("importance", "normal")
             else:
                 _quality, importance = self.score_candidate(candidate)
-            metadata = {
+            metadata = dict(candidate.get("metadata", {})) if isinstance(candidate.get("metadata"), dict) else {}
+            metadata.update({
                 key: candidate[key]
                 for key in MEMORY_METADATA_FIELDS
                 if key in candidate
-            }
+            })
             saved.append(self.create(memory_type, content, importance, metadata=metadata))
             existing.add(key)
             existing_content.append(content)
         return saved
+
+    def queue_candidate_records(self, candidates):
+        """Persist already-evaluated records as pending candidates only."""
+
+        existing_memories = {
+            str(item.get("content", "")).strip().casefold()
+            for item in self.list_memories()
+        }
+        pending = self.list_candidates(status="pending")
+        pending_keys = {
+            str(item.get("content", "")).strip().casefold()
+            for item in pending
+        }
+        pending_content = [item.get("content", "") for item in pending]
+        stored = []
+        now = self._now()
+        for raw_candidate in candidates or []:
+            if not isinstance(raw_candidate, dict):
+                continue
+            candidate_data = dict(raw_candidate)
+            content = str(candidate_data.get("content", "")).strip()
+            memory_type = str(candidate_data.get("type", "fact"))
+            key = content.casefold()
+            if not content or memory_type not in MEMORY_TYPES:
+                continue
+            if key in existing_memories or key in pending_keys:
+                continue
+            if any(self._is_similar(content, existing) for existing in pending_content):
+                continue
+            candidate_data.update({
+                "type": memory_type,
+                "content": content,
+                "status": "pending",
+                "source": candidate_data.get("source", "conversation"),
+                "created_time": candidate_data.get("created_time", now),
+                "updated_time": now,
+            })
+            candidate = self._normalize_candidate(candidate_data)
+            pending.append(candidate)
+            pending_keys.add(key)
+            pending_content.append(content)
+            stored.append(candidate)
+        if stored:
+            self._write_candidates(pending)
+        return stored
 
     def _normalize_candidate(self, item):
         now = self._now()

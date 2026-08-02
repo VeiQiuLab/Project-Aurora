@@ -1,6 +1,7 @@
 """Local JSON conversation storage for Aurora Chat."""
 
 import json
+import hashlib
 import threading
 import uuid
 from copy import deepcopy
@@ -145,7 +146,9 @@ def schedule_conversation_intelligence(
     expected_updated_time=None,
     logger=None,
     analyzer=None,
-    thread_factory=None
+    thread_factory=None,
+    memory_store=None,
+    min_message_count=2,
 ):
     captured_messages = deepcopy(messages or [])
     expected_message_count = len(captured_messages)
@@ -175,10 +178,136 @@ def schedule_conversation_intelligence(
                 return
             if expected_updated_time and current.get("updated_time") != expected_updated_time:
                 return
-            conversation_manager.save_conversation_intelligence(conversation_id, analysis)
+            saved = conversation_manager.save_conversation_intelligence(conversation_id, analysis)
+            trigger = _trigger_conversation_memory(
+                conversation_manager,
+                conversation_id,
+                captured_messages,
+                analysis,
+                saved,
+                expected_updated_time=expected_updated_time,
+                memory_store=memory_store,
+                min_message_count=min_message_count,
+            )
+            if not trigger["diagnostics"].get("success", True) and logger:
+                logger.error(trigger["diagnostics"].get("reason", "Conversation memory trigger failed."))
         except Exception as error:
             log_error(f"Conversation intelligence metadata save failed: {error}")
 
     thread = thread_factory(target=run_analysis, daemon=True)
     thread.start()
     return thread
+
+
+def _trigger_conversation_memory(
+    conversation_manager,
+    conversation_id,
+    messages,
+    analysis,
+    saved_conversation,
+    *,
+    expected_updated_time=None,
+    memory_store=None,
+    min_message_count=2,
+):
+    from modules.diagnostics import create_diagnostics
+
+    signals = analysis.get("memory_signals", []) if isinstance(analysis, dict) else []
+    metrics = {
+        "conversation_id": str(conversation_id or ""),
+        "triggered": False,
+        "signals_count": len(signals) if isinstance(signals, list) else 0,
+        "candidates_created": 0,
+        "skipped_reason": "",
+    }
+    if not isinstance(analysis, dict) or not analysis.get("memory_signals"):
+        metrics["skipped_reason"] = "empty_signals"
+        return {"candidates": [], "diagnostics": create_diagnostics(
+            stage="conversation_memory_trigger", metrics=metrics
+        )}
+    message_count = len(messages)
+    try:
+        minimum = max(0, int(min_message_count))
+    except (TypeError, ValueError):
+        minimum = 2
+    if message_count < minimum:
+        metrics["skipped_reason"] = "minimum_message_count"
+        return {"candidates": [], "diagnostics": create_diagnostics(
+            stage="conversation_memory_trigger", metrics=metrics
+        )}
+
+    current = conversation_manager.load(conversation_id)
+    if len(current.get("messages", [])) != len(messages):
+        metrics["skipped_reason"] = "stale_message_count"
+        return {"candidates": [], "diagnostics": create_diagnostics(
+            stage="conversation_memory_trigger", metrics=metrics
+        )}
+    fingerprint = _memory_trigger_fingerprint(
+        expected_updated_time,
+        analysis.get("analysis_version", ""),
+        signals,
+    )
+    marker = current.get("metadata", {}).get("conversation_memory_trigger", {})
+    if isinstance(marker, dict) and marker.get("source_fingerprint") == fingerprint:
+        metrics["skipped_reason"] = "duplicate_fingerprint"
+        return {"candidates": [], "diagnostics": create_diagnostics(
+            stage="conversation_memory_trigger", metrics=metrics
+        )}
+
+    if memory_store is None:
+        from modules.memory import MemoryStore
+        memory_store = MemoryStore()
+    from modules.conversation_memory_adapter import queue_conversation_memory_candidates
+
+    result = queue_conversation_memory_candidates(
+        memory_store,
+        signals,
+        conversation_id=conversation_id,
+    )
+    diagnostics = result.get("diagnostics", {})
+    if not diagnostics.get("success", True):
+        return {
+            "candidates": [],
+            "diagnostics": create_diagnostics(
+                stage="conversation_memory_trigger",
+                success=False,
+                reason="Pending candidate pipeline failed.",
+                warnings=diagnostics.get("warnings", []),
+                metrics=metrics,
+            ),
+        }
+
+    candidates = result.get("candidates", [])
+    metrics["triggered"] = True
+    metrics["candidates_created"] = len(candidates)
+    conversation_manager.save_metadata(
+        conversation_id,
+        "conversation_memory_trigger",
+        {
+            "source_fingerprint": fingerprint,
+            "analysis_version": analysis.get("analysis_version", ""),
+            "analyzed_time": analysis.get("analyzed_time", ""),
+            "candidate_count": len(candidates),
+        },
+    )
+    return {
+        "candidates": candidates,
+        "diagnostics": create_diagnostics(
+            stage="conversation_memory_trigger",
+            metrics=metrics,
+        ),
+    }
+
+
+def _memory_trigger_fingerprint(updated_time, analysis_version, signals):
+    payload = json.dumps(
+        {
+            "updated_time": updated_time or "",
+            "analysis_version": analysis_version or "",
+            "signals": signals,
+        },
+        ensure_ascii=False,
+        sort_keys=True,
+        separators=(",", ":"),
+    )
+    return hashlib.sha256(payload.encode("utf-8")).hexdigest()
