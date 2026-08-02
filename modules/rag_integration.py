@@ -20,6 +20,8 @@ def run_rag_pipeline_with_fallback(
 
     original_memory = deepcopy(memory_results) if isinstance(memory_results, list) else []
     original_knowledge = deepcopy(knowledge_results) if isinstance(knowledge_results, list) else []
+    pipeline_memory = _prepare_rag_inputs(original_memory)
+    pipeline_knowledge = _prepare_rag_inputs(original_knowledge)
     started_at = time.perf_counter()
     metrics = {
         "pipeline_enabled": bool(enabled),
@@ -43,8 +45,8 @@ def run_rag_pipeline_with_fallback(
     try:
         runner = pipeline_runner or run_rag_pipeline
         result = runner(
-            memory_results=original_memory,
-            knowledge_results=original_knowledge,
+            memory_results=pipeline_memory,
+            knowledge_results=pipeline_knowledge,
             config=config,
         )
         result = result if isinstance(result, dict) else {}
@@ -111,6 +113,18 @@ def _section_item_count(sections):
         for section in sections or []
         if isinstance(section, dict)
     )
+
+
+def _prepare_rag_inputs(results):
+    """Copy enriched retrieval metadata without inventing unavailable scores."""
+
+    prepared = []
+    for result in results:
+        item = deepcopy(result) if isinstance(result, dict) else result
+        if isinstance(item, dict) and isinstance(item.get("score_details"), dict):
+            item["score_details"] = deepcopy(item["score_details"])
+        prepared.append(item)
+    return prepared
 
 
 def _elapsed_ms(started_at):

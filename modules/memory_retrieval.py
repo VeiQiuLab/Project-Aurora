@@ -25,7 +25,7 @@ def _importance(value):
         return {"high": 10.0, "normal": 5.0, "low": 1.0}.get(str(value).casefold(), 0.0)
 
 
-def retrieve_memories(prompt, memories, max_results=5, min_importance=0):
+def retrieve_memories(prompt, memories, max_results=5, min_importance=0, enriched=False):
     """Return enabled memories matching the prompt, ranked by relevance and importance."""
 
     prompt_tokens = _tokens(prompt)
@@ -48,10 +48,27 @@ def retrieve_memories(prompt, memories, max_results=5, min_importance=0):
         overlap = prompt_tokens.intersection(memory_tokens)
         if not overlap:
             continue
-        matched.append((len(overlap), importance, memory))
+        matched.append((len(overlap), importance, sorted(overlap), memory))
 
     matched.sort(key=lambda item: (item[1], item[0]), reverse=True)
-    return [item[2] for item in matched[:max(0, int(max_results))]]
+    results = []
+    for overlap_count, importance, terms, memory in matched[:max(0, int(max_results))]:
+        if not enriched:
+            results.append(memory)
+            continue
+        enriched_memory = dict(memory)
+        existing_details = enriched_memory.get("score_details")
+        score_details = dict(existing_details) if isinstance(existing_details, dict) else {}
+        score_details.setdefault("vector", None)
+        score_details["keyword"] = overlap_count
+        score_details["matched_terms"] = terms
+        score_details["importance"] = memory.get("importance")
+        metadata = memory.get("metadata") if isinstance(memory.get("metadata"), dict) else {}
+        score_details["confidence"] = metadata.get("confidence", memory.get("confidence"))
+        enriched_memory["score_details"] = score_details
+        enriched_memory["retrieval_method"] = "keyword"
+        results.append(enriched_memory)
+    return results
 
 
 def format_memory_context(memories, limit=1200):

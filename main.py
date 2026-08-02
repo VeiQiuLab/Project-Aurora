@@ -1245,11 +1245,13 @@ def build_chat_runtime_callbacks():
             min_importance = max(0, float(settings.get("memory.min_importance", 0)))
         except (TypeError, ValueError):
             max_injection, min_importance = 5, 0
+        rag_enabled = bool(settings.get("rag.pipeline_enabled", False))
         matched_memories = retrieve_memories(
             prompt,
             memory_store.list_memories(),
             max_results=max_injection,
-            min_importance=min_importance
+            min_importance=min_importance,
+            enriched=rag_enabled,
         )
         logger.info(f"Memory matched: {len(matched_memories)}")
 
@@ -1269,7 +1271,11 @@ def build_chat_runtime_callbacks():
             except (TypeError, ValueError):
                 max_knowledge = 3
             knowledge_items = knowledge_store.list_items()
-            matched_knowledge = knowledge_store.retrieve(prompt, max_results=max_knowledge)
+            matched_knowledge = knowledge_store.retrieve(
+                prompt,
+                max_results=max_knowledge,
+                enriched=rag_enabled,
+            )
             disabled_matches = retrieval_summary(
                 prompt,
                 knowledge_items,
@@ -1284,7 +1290,6 @@ def build_chat_runtime_callbacks():
                 logger.info("Knowledge skipped invalid file")
             logger.info(f"Knowledge matched: {len(matched_knowledge)}")
 
-        rag_enabled = bool(settings.get("rag.pipeline_enabled", False))
         rag_result = run_rag_pipeline_with_fallback(
             matched_memories,
             matched_knowledge,

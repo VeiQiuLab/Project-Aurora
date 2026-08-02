@@ -382,7 +382,7 @@ class KnowledgeStore:
             "index_file": str(self.vector_index_file)
         }
 
-    def vector_search_by_embedding(self, embedding, top_k=3, min_similarity=0.0, enabled_only=True):
+    def vector_search_by_embedding(self, embedding, top_k=3, min_similarity=0.0, enabled_only=True, enriched=False):
         query_vector = self._normalize_vector(embedding)
         if not query_vector:
             return []
@@ -411,7 +411,7 @@ class KnowledgeStore:
             if score < threshold:
                 continue
             content = str(record.get("content", ""))
-            results.append({
+            result = {
                 "id": item_id,
                 "file_name": record.get("file_name", ""),
                 "file_type": record.get("file_type", ""),
@@ -421,11 +421,21 @@ class KnowledgeStore:
                 "embedding_updated_time": entry.get("updated_time", ""),
                 "snippet": content[:500],
                 "record": record
-            })
+            }
+            if enriched:
+                result["score_details"] = {
+                    "vector": score,
+                    "keyword": None,
+                    "matched_terms": [],
+                    "importance": None,
+                    "confidence": None,
+                }
+                result["retrieval_method"] = "vector"
+            results.append(result)
         results.sort(key=lambda item: item.get("score", 0), reverse=True)
         return results[:limit]
 
-    def vector_search(self, query, provider=None, top_k=3, min_similarity=0.0, enabled_only=True):
+    def vector_search(self, query, provider=None, top_k=3, min_similarity=0.0, enabled_only=True, enriched=False):
         text = str(query or "").strip()
         if not text:
             return []
@@ -435,10 +445,11 @@ class KnowledgeStore:
             query_vector,
             top_k=top_k,
             min_similarity=min_similarity,
-            enabled_only=enabled_only
+            enabled_only=enabled_only,
+            enriched=enriched,
         )
 
-    def retrieve(self, prompt, max_results=3, enabled_only=True, prefer_vector=True):
+    def retrieve(self, prompt, max_results=3, enabled_only=True, prefer_vector=True, enriched=False):
         """Retrieve Knowledge records with vector search and keyword fallback."""
 
         text = str(prompt or "").strip()
@@ -458,13 +469,19 @@ class KnowledgeStore:
                 vector_results = self.vector_search(
                     text,
                     top_k=limit,
-                    enabled_only=enabled_only
+                    enabled_only=enabled_only,
+                    enriched=enriched,
                 )
-                records = [
-                    dict(result.get("record", {}))
-                    for result in vector_results
-                    if isinstance(result, dict) and isinstance(result.get("record"), dict)
-                ]
+                records = []
+                for result in vector_results:
+                    if not isinstance(result, dict) or not isinstance(result.get("record"), dict):
+                        continue
+                    record = dict(result["record"])
+                    if enriched:
+                        record["score_details"] = dict(result.get("score_details", {}))
+                        record["retrieval_method"] = result.get("retrieval_method", "vector")
+                        record["score"] = result.get("score", record.get("score", 0.0))
+                    records.append(record)
                 if records:
                     return records
             except Exception:
@@ -475,7 +492,8 @@ class KnowledgeStore:
             text,
             self.list_items(),
             max_results=limit,
-            enabled_only=enabled_only
+            enabled_only=enabled_only,
+            enriched=enriched,
         )
 
     def _vector_entries_by_id(self):

@@ -55,7 +55,7 @@ def _match_record(prompt_tokens, item):
     }
 
 
-def search_knowledge(prompt, items, max_results=3, enabled_only=True):
+def search_knowledge(prompt, items, max_results=3, enabled_only=True, enriched=False):
     """Return knowledge records matching the prompt by simple keyword overlap."""
 
     prompt_tokens = _tokens(prompt)
@@ -78,7 +78,24 @@ def search_knowledge(prompt, items, max_results=3, enabled_only=True):
         limit = max(0, int(max_results))
     except (TypeError, ValueError):
         limit = 3
-    return [item["item"] for item in matched[:limit]]
+    results = []
+    for match in matched[:limit]:
+        item = match["item"]
+        if not enriched:
+            results.append(item)
+            continue
+        enriched_item = dict(item)
+        existing_details = enriched_item.get("score_details")
+        score_details = dict(existing_details) if isinstance(existing_details, dict) else {}
+        score_details.setdefault("vector", None)
+        score_details["keyword"] = match["score"]
+        score_details["matched_terms"] = list(match["keywords"])
+        score_details.setdefault("importance", None)
+        score_details.setdefault("confidence", None)
+        enriched_item["score_details"] = score_details
+        enriched_item["retrieval_method"] = "keyword"
+        results.append(enriched_item)
+    return results
 
 
 def format_knowledge_context(items, limit=1200):
