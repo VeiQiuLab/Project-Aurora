@@ -47,6 +47,9 @@ class ChatPanel(ctk.CTkFrame):
         stop_generation_callback,
         preview_context_callback,
         clear_chat_callback,
+        voice_start_callback=None,
+        voice_cancel_callback=None,
+        voice_available=False,
         show_header_title=True,
         **kwargs
     ):
@@ -67,6 +70,9 @@ class ChatPanel(ctk.CTkFrame):
         self.stop_generation_callback = stop_generation_callback
         self.preview_context_callback = preview_context_callback
         self.clear_chat_callback = clear_chat_callback
+        self.voice_start_callback = voice_start_callback
+        self.voice_cancel_callback = voice_cancel_callback
+        self.voice_available = bool(voice_available)
         self.show_header_title = show_header_title
         self.buttons = {}
         self.input_default_height = 72
@@ -267,13 +273,20 @@ class ChatPanel(ctk.CTkFrame):
         input_actions.grid(row=1, column=0, sticky="ew")
         input_actions.grid_columnconfigure(0, weight=1)
 
-        input_hint = ctk.CTkLabel(input_actions, text="", font=FONT_SMALL)
-        input_hint.grid(row=0, column=0, sticky="ew", padx=(0, SPACING_MEDIUM))
+        self.voice_state_label = ctk.CTkLabel(
+            input_actions,
+            text="IDLE  Aurora Ready",
+            font=FONT_SMALL,
+            text_color=COLOR_MUTED,
+            anchor="w"
+        )
+        self.voice_state_label.grid(row=0, column=0, sticky="w", padx=(0, SPACING_MEDIUM))
 
         button_specs = [
             (input_actions, 0, 1, PrimaryButton, self.t("send"), self.send_prompt_callback),
             (input_actions, 0, 2, SecondaryButton, self.t("stop_generate"), self.stop_generation_callback),
             (input_actions, 0, 3, SecondaryButton, self.t("clear"), self.clear_chat_callback),
+            (input_actions, 0, 4, SecondaryButton, "Voice", self._toggle_voice),
             (chat_header, 0, 1, SecondaryButton, self.t("chat_window_context_button"), self.preview_context_callback),
         ]
         for parent, row, column, button_class, label, command in button_specs:
@@ -284,7 +297,28 @@ class ChatPanel(ctk.CTkFrame):
         self.buttons[self.t("chat_window_search")] = search_button
         self.buttons[self.t("more_actions")] = more_button
         self.buttons[self.t("stop_generate")].configure(state="disabled")
+        if not self.voice_available:
+            self.buttons["Voice"].configure(state="disabled")
         self.refresh_context_statuses()
+
+    def _toggle_voice(self):
+        if not self.voice_available:
+            return
+        if callable(self.voice_cancel_callback) and self.buttons["Voice"].cget("text") == "Cancel Voice":
+            self.voice_cancel_callback()
+            return
+        if callable(self.voice_start_callback):
+            self.voice_start_callback()
+
+    def set_voice_state(self, state, text):
+        self.voice_state_label.configure(text=f"{state}  {text}")
+        if "Voice" not in self.buttons:
+            return
+        active = state in {"LISTENING", "TRANSCRIBING", "THINKING", "SPEAKING"}
+        self.buttons["Voice"].configure(
+            text="Cancel Voice" if active else "Voice",
+            state="normal" if self.voice_available else "disabled"
+        )
 
     def show_conversation_actions_menu(self, button):
         try:

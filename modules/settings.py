@@ -24,6 +24,25 @@ class Settings:
             "persona": {
                 "enabled": True
             },
+            "voice": {
+                "enabled": False,
+                "stt": {
+                    "provider": "faster_whisper",
+                    "model_size": "small",
+                    "device": "auto",
+                    "compute_type": "auto"
+                },
+                "tts": {
+                    "provider": "edge_tts",
+                    "voice": "zh-CN-XiaoxiaoNeural"
+                },
+                "playback": {
+                    "backend": "pygame",
+                    "enabled": True,
+                    "wait_for_completion": True,
+                    "timeout_seconds": 120.0
+                }
+            },
             "knowledge": {
                 "enabled": True,
                 "max_results": 3,

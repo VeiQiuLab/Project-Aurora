@@ -6,6 +6,7 @@ import customtkinter as ctk
 
 from modules.chat import ChatError, ChatSession
 from modules.conversation import ConversationManager, schedule_conversation_intelligence
+from modules.experience.state import CompanionState, CompanionStateStore
 from modules.search import search_conversations
 from widgets.components.chat_panel import ChatPanel
 
@@ -32,6 +33,7 @@ class ChatPage(ctk.CTkFrame):
         get_active_conversation_id=None,
         set_active_conversation_id=None,
         register_load_callback=None,
+        voice_runtime=None,
         **kwargs
     ):
         kwargs.setdefault("fg_color", "transparent")
@@ -51,6 +53,8 @@ class ChatPage(ctk.CTkFrame):
         self.get_active_conversation_id = get_active_conversation_id or (lambda: None)
         self.set_active_conversation_id = set_active_conversation_id or (lambda _value: None)
         self.register_load_callback = register_load_callback
+        self.voice_runtime = voice_runtime
+        self.companion_state = CompanionStateStore()
 
         self.selected_model = {"name": ""}
         self.session = ChatSession(self._initial_context())
@@ -67,6 +71,9 @@ class ChatPage(ctk.CTkFrame):
         self.debug_context_var = ctk.BooleanVar(value=False)
 
         self.build()
+        if self.voice_runtime is not None:
+            self.voice_runtime.subscribe_state(self._on_voice_state)
+        self._on_voice_state_value(CompanionState.IDLE)
         if callable(self.register_load_callback):
             self.register_load_callback(self.load_conversation_by_id)
         self.refresh_conversations()
@@ -98,6 +105,9 @@ class ChatPage(ctk.CTkFrame):
             stop_generation_callback=self.stop_generation,
             preview_context_callback=self.preview_chat_context,
             clear_chat_callback=self.clear_chat,
+            voice_start_callback=self.start_voice_session,
+            voice_cancel_callback=self.cancel_voice_session,
+            voice_available=self.voice_runtime is not None and bool(self.settings.get("voice.enabled", False)),
             show_header_title=False
         )
         self.panel.grid(row=0, column=0, sticky="nsew")
@@ -120,10 +130,48 @@ class ChatPage(ctk.CTkFrame):
             "input_default_height",
             "input_line_height",
             "model_selector",
-            "model_inline_label"
+            "model_inline_label",
+            "voice_state_label"
         ]
         for name in widget_names:
             setattr(self, name, getattr(self.panel, name))
+
+    def _on_voice_state(self, event):
+        try:
+            self.after(0, lambda: self._on_voice_state_value(event.current_state))
+        except Exception:
+            return
+
+    def _on_voice_state_value(self, state):
+        labels = {
+            CompanionState.IDLE: "Aurora Ready",
+            CompanionState.LISTENING: "正在聆听...",
+            CompanionState.TRANSCRIBING: "正在理解...",
+            CompanionState.THINKING: "正在思考...",
+            CompanionState.SPEAKING: "正在回应...",
+            CompanionState.ERROR: "出现错误",
+        }
+        current = state if isinstance(state, CompanionState) else CompanionState.IDLE
+        self.panel.set_voice_state(current.value, labels.get(current, current.value))
+
+    def start_voice_session(self):
+        if self.voice_runtime is None or not bool(self.settings.get("voice.enabled", False)):
+            return False
+        try:
+            return self.voice_runtime.start_voice_session()
+        except Exception as error:
+            self.logger.error(f"Voice session start failed: {error}")
+            self._on_voice_state_value(CompanionState.ERROR)
+            return False
+
+    def cancel_voice_session(self):
+        if self.voice_runtime is None:
+            return False
+        try:
+            return self.voice_runtime.cancel_voice_session()
+        except Exception as error:
+            self.logger.error(f"Voice session cancel failed: {error}")
+            return False
 
     def is_open(self):
         try:
@@ -429,7 +477,28 @@ class ChatPage(ctk.CTkFrame):
             self.append_text(f"{self.t('error')}: {self.t('chat_window_service_unavailable')}")
             return
 
-        context = self.prepare_prompt_context_callback(prompt, self.session.snapshot(), self.debug_context_var.get())
+        self.companion_state.transition(
+            CompanionState.THINKING,
+            reason="chat_request_started",
+            source="chat_page",
+        )
+        try:
+            context = self.prepare_prompt_context_callback(
+                prompt,
+                self.session.snapshot(),
+                self.debug_context_var.get(),
+            )
+        except Exception:
+            self.companion_state.transition(
+                CompanionState.ERROR,
+                reason="chat_context_failed",
+                source="chat_page",
+            )
+            self.companion_state.force_idle(
+                reason="chat_context_failed",
+                source="chat_page",
+            )
+            raise
         self.session.set_system_context(context.get("system_context", ""))
         if context.get("debug_text"):
             self.append_text(context["debug_text"])
@@ -463,34 +532,61 @@ class ChatPage(ctk.CTkFrame):
                 )
                 error_message = None
                 self.logger.info(f"Chat request succeeded: {model}")
+                if result == "stopped":
+                    self.companion_state.force_idle(
+                        reason="chat_request_stopped",
+                        source="chat_page",
+                    )
+                else:
+                    self.companion_state.transition(
+                        CompanionState.SPEAKING,
+                        reason="chat_response_ready",
+                        source="chat_page",
+                    )
             except ChatError as error:
                 result = "failed"
                 error_message = str(error)
                 self.logger.error(f"Chat request failed: {error_message}")
+                self.companion_state.transition(
+                    CompanionState.ERROR,
+                    reason="chat_request_failed",
+                    source="chat_page",
+                )
             except Exception as error:
                 result = "failed"
                 error_message = self.t("chat_window_unexpected_chat_error")
                 self.logger.error(f"Chat request failed: {error}")
+                self.companion_state.transition(
+                    CompanionState.ERROR,
+                    reason="chat_request_failed",
+                    source="chat_page",
+                )
 
             def update_chat():
-                if not self.is_open():
-                    return
-                if error_message:
-                    self.append_text(f"{self.t('error')}: {error_message}")
-                    self.set_status(error_message, "error")
-                elif result == "stopped":
-                    self.append_text(self.t("chat_window_generation_stopped_marker"))
-                    self.set_status(self.t("chat_window_generation_stopped"), "warning")
-                else:
-                    self.finish_stream_message()
-                    self.set_status(self.t("chat_window_response_received"), "healthy")
-                self.stream_state["running"] = False
-                self.stream_state["stop_event"] = None
-                self.buttons[self.t("send")].configure(state="normal")
-                self.buttons[self.t("stop_generate")].configure(state="disabled")
-                self.focus_input()
-                if not error_message:
-                    self.save_conversation(auto=True)
+                try:
+                    if not self.is_open():
+                        return
+                    if error_message:
+                        self.append_text(f"{self.t('error')}: {error_message}")
+                        self.set_status(error_message, "error")
+                    elif result == "stopped":
+                        self.append_text(self.t("chat_window_generation_stopped_marker"))
+                        self.set_status(self.t("chat_window_generation_stopped"), "warning")
+                    else:
+                        self.finish_stream_message()
+                        self.set_status(self.t("chat_window_response_received"), "healthy")
+                    self.stream_state["running"] = False
+                    self.stream_state["stop_event"] = None
+                    self.buttons[self.t("send")].configure(state="normal")
+                    self.buttons[self.t("stop_generate")].configure(state="disabled")
+                    self.focus_input()
+                    if not error_message:
+                        self.save_conversation(auto=True)
+                finally:
+                    self.companion_state.force_idle(
+                        reason="chat_request_finished",
+                        source="chat_page",
+                    )
 
             try:
                 self.after(0, update_chat)

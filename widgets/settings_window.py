@@ -98,6 +98,7 @@ class SettingsWindow(ctk.CTkToplevel):
 
         self.build_general_section()
         self.build_ai_section()
+        self.build_voice_section()
         self.build_developer_section()
         self.build_remote_section()
         self.build_persona_section()
@@ -227,6 +228,31 @@ class SettingsWindow(ctk.CTkToplevel):
             self.t("docker_startup_timeout"),
             self.settings.get("services.docker.startup_timeout", 60)
         )
+
+    def build_voice_section(self):
+        self.add_section_title("Voice")
+        self.voice_enabled_var = ctk.BooleanVar(
+            value=bool(self.settings.get("voice.enabled", False))
+        )
+        self.add_switch("Voice Enabled", self.voice_enabled_var)
+        self.voice_stt_option = self.add_option_row(
+            "STT Provider",
+            ["Faster Whisper"],
+            "Faster Whisper"
+        )
+        self.voice_tts_option = self.add_option_row(
+            "TTS Provider",
+            ["Edge TTS"],
+            "Edge TTS"
+        )
+        self.voice_entry = self.add_entry_row(
+            "Voice",
+            self.settings.get("voice.tts.voice", "zh-CN-XiaoxiaoNeural")
+        )
+        self.voice_playback_var = ctk.BooleanVar(
+            value=bool(self.settings.get("voice.playback.enabled", True))
+        )
+        self.add_switch("Playback Enabled", self.voice_playback_var)
 
     def build_developer_section(self):
         self.add_section_title(self.t("developer"))
@@ -482,6 +508,11 @@ class SettingsWindow(ctk.CTkToplevel):
             "network.ignore_virtual_adapter": bool(self.ignore_virtual_adapter_var.get()),
             "chat_model": self.chat_model_entry.get().strip(),
             "embedding_model": self.embedding_model_entry.get().strip(),
+            "voice.enabled": bool(self.voice_enabled_var.get()),
+            "voice.stt.provider": "faster_whisper",
+            "voice.tts.provider": "edge_tts",
+            "voice.tts.voice": self.voice_entry.get().strip(),
+            "voice.playback.enabled": bool(self.voice_playback_var.get()),
             "remote.enabled": bool(self.settings.get("remote.enabled", False)) and bool(self.remote_enabled_var.get()),
             "remote.mode": self.remote_mode_option.get(),
             "remote.auth_required": True,
