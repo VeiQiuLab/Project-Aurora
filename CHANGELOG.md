@@ -1,5 +1,14 @@
 # Project Aurora Changelog
 
+## v3.7.0 - 2026-08-04
+
+### Chat-first UI
+
+- Updated the desktop experience around a Chat-first AppShell.
+- Consolidated Settings into AI, Voice, Appearance, Data, and Developer sections.
+- Moved Persona, Memory, and Knowledge/RAG entry points under Settings while preserving existing storage compatibility.
+- Refined ChatPanel visual structure, empty state, sidebar conversations, and modern input controls.
+
 ## v2.4.3 - 2026.07.27
 
 ### Localization & UI Stability

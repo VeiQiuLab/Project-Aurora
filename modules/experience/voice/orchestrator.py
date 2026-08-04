@@ -8,6 +8,7 @@ from time import monotonic
 from typing import Callable, Mapping
 
 from modules.diagnostics import create_diagnostics
+from modules.logger import logger
 from modules.experience.audio.playback import (
     AudioPlaybackController,
     PlaybackEvent,
@@ -193,9 +194,15 @@ class VoiceOrchestrator:
         self.state_store.force_idle(reason="voice_cancel_requested", source="voice_orchestrator")
 
     def _transition(self, state: CompanionState, reason: str) -> None:
+        logger.info(
+            f"VoiceOrchestrator state transition requested "
+            f"{self.state_store.current_state.value}->{state.value} reason={reason}"
+        )
         result = self.state_store.transition(state, reason=reason, source="voice_orchestrator")
         if not result.success:
+            logger.warning(f"VoiceOrchestrator state transition failed: {result.diagnostics}")
             raise RuntimeError(f"invalid voice state transition: {result.diagnostics}")
+        logger.info(f"VoiceOrchestrator state transition completed state={state.value}")
 
     def _handle_playback_event(self, event: PlaybackEvent) -> None:
         if event.event_type is PlaybackEventType.STARTED:

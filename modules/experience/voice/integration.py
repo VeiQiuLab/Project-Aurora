@@ -8,11 +8,16 @@ from typing import Any
 from modules.experience.audio.playback import AudioPlaybackController
 from modules.experience.audio.recorder import AudioRecorder
 from modules.experience.audio.real_playback import RealPlaybackController
+from modules.experience.audio.ffmpeg_source import FFmpegAudioFrameSource
+from modules.experience.audio.frame_pipeline import AudioFrameBuffer
+from modules.experience.audio.device_discovery import resolve_voice_input_device
+from modules.experience.audio.vad import RMSVADAdapter
 from modules.experience.state import CompanionStateStore
 
 from .fake import FakeSpeechToTextProvider, FakeTextToSpeechProvider
 from .interfaces import SpeechToTextProvider, TextToSpeechProvider
 from .orchestrator import VoiceOrchestrator
+from .session import VoiceSessionManager
 from .providers.edge_tts import EdgeTTSProvider
 from .providers.faster_whisper import FasterWhisperProvider
 from .runtime import RuntimeService, StateCallback
@@ -28,6 +33,8 @@ def create_voice_runtime(
     stt_provider: SpeechToTextProvider | None = None,
     tts_provider: TextToSpeechProvider | None = None,
     playback: AudioPlaybackController | None = None,
+    use_frame_pipeline: bool = False,
+    input_device_name: str | None = None,
 ) -> RuntimeService | None:
     """Create the configured runtime, returning None when Voice is disabled.
 
@@ -46,21 +53,79 @@ def create_voice_runtime(
     stt = stt_provider or _create_stt(settings)
     tts = tts_provider or _create_tts(settings)
     audio_playback = playback or _create_playback(settings)
-    orchestrator = VoiceOrchestrator(
-        recorder=recorder,
-        stt_provider=stt,
-        tts_provider=tts,
-        playback=audio_playback,
-        state_store=store,
-        text_input_handler=text_input_handler,
-        wait_for_playback_completion=bool(
-            _get_setting(settings, "voice.playback.wait_for_completion", True)
-        ),
-        playback_timeout_seconds=float(
-            _get_setting(settings, "voice.playback.timeout_seconds", 120.0)
-        ),
+    wait_for_playback_completion = bool(
+        _get_setting(settings, "voice.playback.wait_for_completion", True)
     )
-    return RuntimeService(orchestrator, state_callback=state_callback)
+    playback_timeout_seconds = float(
+        _get_setting(settings, "voice.playback.timeout_seconds", 120.0)
+    )
+
+    def build_orchestrator(current_recorder: AudioRecorder) -> VoiceOrchestrator:
+        return VoiceOrchestrator(
+            recorder=current_recorder,
+            stt_provider=stt,
+            tts_provider=tts,
+            playback=audio_playback,
+            state_store=store,
+            text_input_handler=text_input_handler,
+            wait_for_playback_completion=wait_for_playback_completion,
+            playback_timeout_seconds=playback_timeout_seconds,
+        )
+
+    orchestrator = build_orchestrator(recorder)
+    session_manager = None
+    if use_frame_pipeline:
+        device_name = resolve_voice_input_device(settings, input_device_name)
+        pre_roll_ms = int(_get_setting(settings, "voice.recorder.pre_roll_ms", 500))
+        # Construct the shared buffer before the source so every producer has
+        # one explicit distribution target.
+        buffer = AudioFrameBuffer(
+            max_duration_ms=max(
+                pre_roll_ms,
+                int(_get_setting(settings, "voice.recorder.pre_roll_buffer_ms", 1000)),
+            )
+        )
+        source = FFmpegAudioFrameSource(
+            device_name=device_name.strip(),
+            buffer=buffer,
+            sample_rate=int(_get_setting(settings, "voice.recorder.sample_rate", 16000)),
+            channels=int(_get_setting(settings, "voice.recorder.channels", 1)),
+            frame_duration_ms=int(_get_setting(settings, "voice.vad.frame_duration_ms", 20)),
+            ffmpeg_path=str(_get_setting(settings, "voice.recorder.ffmpeg_path", "ffmpeg")),
+        )
+        vad = RMSVADAdapter(
+            buffer.subscribe(pre_roll_ms=0),
+            threshold=float(_get_setting(settings, "voice.vad.threshold", 0.014)),
+            frame_duration_ms=int(_get_setting(settings, "voice.vad.frame_duration_ms", 20)),
+            minimum_active_duration_ms=int(
+                _get_setting(settings, "voice.vad.minimum_active_duration_ms", 100)
+            ),
+            start_threshold=_get_setting(settings, "voice.vad.start_threshold", None),
+            stop_threshold=_get_setting(settings, "voice.vad.stop_threshold", None),
+            peak_threshold=_get_setting(settings, "voice.vad.peak_threshold", 0.03),
+        )
+        session_manager = VoiceSessionManager(
+            state_store=store,
+            vad_adapter=vad,
+            audio_buffer=buffer,
+            audio_source=source,
+            orchestrator_factory=build_orchestrator,
+            pre_roll_ms=pre_roll_ms,
+            inactivity_timeout_seconds=float(
+                _get_setting(settings, "voice.session.inactivity_timeout_seconds", 180.0)
+            ),
+            maximum_recording_duration_seconds=float(
+                _get_setting(settings, "voice.recorder.maximum_recording_duration", 180.0)
+            ),
+            silence_end_threshold_seconds=float(
+                _get_setting(settings, "voice.recorder.silence_end_threshold", 10.0)
+            ),
+        )
+    return RuntimeService(
+        orchestrator,
+        state_callback=state_callback,
+        session_manager=session_manager,
+    )
 
 
 def _create_stt(settings: Any) -> SpeechToTextProvider:

@@ -11,6 +11,7 @@ from time import monotonic, time
 from typing import Callable, Mapping, Sequence
 
 from modules.diagnostics import create_diagnostics
+from modules.logger import logger
 
 from .frame_pipeline import AudioFrame, AudioFrameSource
 
@@ -128,6 +129,10 @@ class RMSVADAdapter(VADAdapter):
         return dict(self._last_wait_diagnostics)
 
     def wait_for_voice(self, cancel_event: Event, timeout_seconds: float) -> VoiceActivityEvent | None:
+        wait_started_at = monotonic()
+        logger.info(
+            f"RMSVADAdapter.wait_for_voice entered timeout_seconds={timeout_seconds:.3f}"
+        )
         deadline = monotonic() + max(float(timeout_seconds), 0.0)
         active_ms = 0
         frames_checked = 0
@@ -172,6 +177,10 @@ class RMSVADAdapter(VADAdapter):
                         metrics={"rms": rms, "peak_amplitude": peak, "pcm_min": pcm_min, "pcm_max": pcm_max, "frames_checked": frames_checked, "above_threshold_frames": above_threshold_frames, "max_rms": max_rms, "max_peak": max_peak, **self.diagnostics},
                     )
                     self._last_wait_diagnostics = diagnostics
+                    logger.info(
+                        f"RMSVADAdapter VOICE_STARTED wait_ms={int((monotonic() - wait_started_at) * 1000)} "
+                        f"frames_checked={frames_checked}"
+                    )
                     return VoiceActivityEvent(
                         active=True,
                         event_type=VoiceActivityType.STARTED,
@@ -182,6 +191,11 @@ class RMSVADAdapter(VADAdapter):
             else:
                 active_ms = 0
         if cancel_event.is_set():
+            logger.info(
+                f"RMSVADAdapter.wait_for_voice cancelled "
+                f"wait_ms={int((monotonic() - wait_started_at) * 1000)} "
+                f"frames_checked={frames_checked}"
+            )
             return VoiceActivityEvent(
                 active=False,
                 event_type=VoiceActivityType.STOPPED,
@@ -202,6 +216,10 @@ class RMSVADAdapter(VADAdapter):
                 "trigger_failure_reason": "insufficient_consecutive_frames",
                 **self.diagnostics,
             },
+        )
+        logger.info(
+            f"RMSVADAdapter.wait_for_voice finished wait_ms={int((monotonic() - wait_started_at) * 1000)} "
+            f"frames_checked={frames_checked} reason=trigger_timeout"
         )
         return None
 

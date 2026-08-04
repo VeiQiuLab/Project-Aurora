@@ -1,3 +1,5 @@
+import tkinter as tk
+
 import customtkinter as ctk
 
 from modules.ui_theme import (
@@ -36,6 +38,32 @@ def SecondaryButton(parent, text, command=None, **kwargs):
 
 def DangerButton(parent, text, command=None, **kwargs):
     return _button(parent, text, command=command, kind="danger", **kwargs)
+
+
+def bind_text_edit_shortcuts(widget):
+    """Keep native text editing shortcuts consistent across CTk inputs."""
+
+    target = getattr(widget, "_textbox", None) or getattr(widget, "_entry", None) or widget
+
+    def virtual_action(action):
+        def handler(_event=None):
+            target.event_generate(action)
+            return "break"
+        return handler
+
+    def select_all(_event=None):
+        try:
+            target.selection_range(0, "end")
+        except (AttributeError, tk.TclError):
+            target.tag_add("sel", "1.0", "end")
+            target.mark_set("insert", "end")
+        return "break"
+
+    target.bind("<Control-c>", virtual_action("<<Copy>>"), add="+")
+    target.bind("<Control-v>", virtual_action("<<Paste>>"), add="+")
+    target.bind("<Control-x>", virtual_action("<<Cut>>"), add="+")
+    target.bind("<Control-a>", select_all, add="+")
+    return target
 
 
 class StatusLabel(ctk.CTkLabel):
@@ -91,6 +119,7 @@ class FormRow(ctk.CTkFrame):
 
     def add_entry(self, current_value, width=FORM_CONTROL_WIDTH):
         entry = ctk.CTkEntry(self.control_frame, width=width)
+        bind_text_edit_shortcuts(entry)
         entry.insert(0, str(current_value))
         entry.pack(side="left")
         return entry

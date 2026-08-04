@@ -48,3 +48,25 @@ def test_frame_recorder_timeout_marks_diagnostics(tmp_path):
     time.sleep(0.06)
     audio = recorder.stop()
     assert audio.diagnostics["timed_out"] is True
+
+
+def test_frame_recorder_stops_after_configured_silence(tmp_path):
+    buffer = AudioFrameBuffer()
+    reader = buffer.subscribe()
+    recorder = FrameRecorder(
+        reader,
+        output_dir=tmp_path,
+        min_duration_ms=20,
+        silence_end_threshold_ms=30,
+        read_timeout_seconds=0.01,
+    )
+    recorder.start()
+    buffer.publish(pcm(2000))
+    time.sleep(0.08)
+
+    assert recorder.completed is True
+    audio = recorder.stop()
+
+    assert audio.diagnostics["stop_reason"] == "silence_detected"
+    assert audio.diagnostics["silence_detected_time"] is not None
+    assert audio.diagnostics["recording_duration"] == audio.duration_ms

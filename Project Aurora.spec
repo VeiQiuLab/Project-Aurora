@@ -1,10 +1,15 @@
 from pathlib import Path
+import unicodedata
 
 from PyInstaller.utils.hooks import collect_submodules
 
 
 project_root = Path(SPECPATH)
 icon_path = project_root / "assets" / "app.ico"
+unicodedata_binary = Path(unicodedata.__file__)
+if not unicodedata_binary.is_file():
+    raise RuntimeError(f"unicodedata extension not found: {unicodedata_binary}")
+
 datas = [
     (str(project_root / "config"), "config"),
     (str(project_root / "data"), "data"),
@@ -15,9 +20,13 @@ datas = [
 a = Analysis(
     [str(project_root / "main.py")],
     pathex=[str(project_root)],
-    binaries=[],
+    binaries=[(str(unicodedata_binary), ".")],
     datas=datas,
-    hiddenimports=collect_submodules("customtkinter"),
+    hiddenimports=[
+        "customtkinter",
+        *collect_submodules("customtkinter"),
+        "unicodedata",
+    ],
     hookspath=[],
     hooksconfig={},
     runtime_hooks=[],

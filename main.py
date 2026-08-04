@@ -14,7 +14,6 @@ from tkinter import filedialog, messagebox, StringVar
 
 from modules.version import *
 from modules.logger import logger
-from modules.credential_storage import CredentialStorageProvider
 
 
 configuration_file = Path(__file__).resolve().parent / "config" / "settings.json"
@@ -22,7 +21,7 @@ configuration_file = Path(__file__).resolve().parent / "config" / "settings.json
 
 def ensure_runtime_directories():
     project_root = Path(__file__).resolve().parent
-    for relative_path in ("data", "data/conversations", "data/memory", "data/knowledge", "data/persona", "data/remote", "config", "logs"):
+    for relative_path in ("data", "data/conversations", "data/memory", "data/knowledge", "data/persona", "config", "logs"):
         (project_root / relative_path).mkdir(parents=True, exist_ok=True)
 
 
@@ -64,57 +63,10 @@ def inspect_configuration_file():
         "context.preview_limit",
         "context.inspector_preview_limit",
         "first_run.completed",
-        "remote.enabled",
-        "remote.mode",
-        "remote.auth_required",
-        "remote.authentication_required",
-        "remote.auth_enabled",
-        "remote.authentication_type",
-        "remote.token_configured",
-        "remote.last_token_update",
-        "remote.credential_storage",
-        "remote.secure_storage_configured",
-        "remote.secure_storage_available",
-        "remote.credential_test_passed",
-        "remote.credential_last_check",
-        "remote.credential_last_result",
-        "remote.credential_command_status",
-        "remote.credential_last_operation",
-        "remote.credential_operation_result",
-        "remote.credential_duration_ms",
-        "remote.credential_error_suggestion",
-        "remote.last_storage_error",
-        "remote.credential_history",
-        "remote.credential_steps",
-        "remote.network_history",
-        "remote.security_history",
-        "remote.authentication_history",
-        "remote.remote_history",
-        "remote.lan_status_page_enabled",
-        "remote.lan_status_port",
-        "remote.lan_status_user_confirmed",
-        "remote.lan_chat_enabled",
-        "remote.lan_chat_port",
-        "remote.mobile_access_confirmed",
-        "remote.mobile_debug_mode",
-        "remote.mobile_response_limit",
-        "remote.selected_lan_ip",
-        "remote.selected_adapter",
-        "remote.last_mobile_error",
-        "remote.last_mobile_capability",
         "chat_model",
         "embedding_model",
-        "mobile_chat_timeout",
-        "mobile_debug_mode",
-        "mobile_response_limit",
         "network.preferred_interface",
         "network.ignore_virtual_adapter",
-        "remote.authentication_configured",
-        "remote.lan_ready",
-        "remote.ios_access_ready",
-        "remote.tailscale_ready",
-        "remote.user_confirmed",
-        "remote.security_confirmed"
     ]
 
     for path in required_paths:
@@ -150,8 +102,6 @@ from modules.rag_integration import run_rag_pipeline_with_fallback
 from modules.memory import MemoryStore
 from modules.knowledge import KnowledgeStore
 from modules.persona import PersonaStore
-from modules.authentication import AuthenticationManager
-from modules.remote import RemoteAccessManager
 from modules.language import TEXT, set_language as set_legacy_language
 from modules.i18n import normalize_language, set_language as set_i18n_language, t
 from modules.ui_theme import (
@@ -170,13 +120,15 @@ from modules.ui_theme import (
     FONT_TITLE,
     status_color
 )
-from modules.lan_server import LANStatusPageServer, DEFAULT_LAN_STATUS_PORT
-from modules.mobile_chat import MobileChatService
 from modules.search import search_memories, search_conversations
 from modules.memory_retrieval import format_memory_context, retrieve_memories
 from modules.retrieval import format_knowledge_context, search_knowledge, retrieval_summary
 from modules.service_manager import ServiceManager
 from modules.shutdown_manager import ShutdownManager
+from modules.experience.audio.device_discovery import resolve_voice_input_device
+from modules.experience.audio.recorder import FFmpegMicrophoneRecorder
+from modules.experience.state import CompanionStateStore
+from modules.experience.voice.integration import create_voice_runtime
 from widgets.app_shell import AppShell
 from widgets.chat_window import ChatWindow
 from widgets.conversation_browser import ConversationBrowserWindow
@@ -192,9 +144,7 @@ from widgets.pages.learning_center_page import LearningCenterPage
 from widgets.pages.library_page import LibraryPage
 from widgets.pages.memory_page import MemoryPage
 from widgets.pages.persona_page import PersonaPage
-from widgets.pages.remote_page import RemotePage
 from widgets.pages.settings_page import SettingsPage
-from widgets.remote_window import RemoteWindow, RemoteDiagnosticsWindow
 from widgets.settings_window import SettingsWindow
 
 def apply_language(language):
@@ -393,6 +343,8 @@ for startup_item in [
 
 status_labels = {}
 app_shell = None
+voice_runtime = None
+companion_state_store = CompanionStateStore()
 models_window = None
 health_window = None
 settings_window = None
@@ -402,20 +354,14 @@ memory_window = None
 knowledge_window = None
 conversation_browser_window = None
 persona_window = None
-remote_window = None
-remote_diagnostics_window = None
 active_conversation_id = None
 chat_load_conversation_callback = None
 pending_conversation_id = None
 memory_store = MemoryStore()
 knowledge_store = KnowledgeStore()
 persona_store = PersonaStore()
-remote_manager = RemoteAccessManager()
-authentication_manager = AuthenticationManager()
-credential_storage_provider = CredentialStorageProvider()
 service_manager = ServiceManager()
 shutdown_manager = ShutdownManager(logger=logger)
-lan_status_server = LANStatusPageServer()
 service_lifecycle = {
     "ollama_started_by_app": False,
     "openwebui_started_by_app": False,
@@ -441,26 +387,6 @@ def mark_service_started_by_app(service_name):
         service_lifecycle["openwebui_started_by_app"] = True
     elif service_name == "openwebui_process":
         service_lifecycle["openwebui_process_started_by_app"] = True
-
-
-def get_mobile_chat_model():
-    logger.info("Chat model loaded")
-    logger.info("Embedding model loaded")
-    configured_model = str(settings.get("chat_model", "qwen3:8b") or "").strip()
-    if configured_model:
-        logger.info(f"Chat model selected: {configured_model}")
-    return configured_model
-
-
-def mobile_chat_logger(event):
-    logger.info(event)
-
-
-mobile_chat_service = MobileChatService(
-    model_provider=get_mobile_chat_model,
-    remote_manager=remote_manager,
-    event_callback=mobile_chat_logger
-)
 
 
 def fetch_ollama_models_from_api(timeout=5):
@@ -625,7 +551,7 @@ health_center_labels = {}
 health_center_groups = [
     (t("ai_services"), ["Ollama", "Chat Model", "Embedding Model"]),
     (t("memory_knowledge"), ["Memory", "Knowledge", "Vector Index"]),
-    (t("system"), ["Conversation Store", "Persona", "Remote"])
+    (t("system"), ["Conversation Store", "Persona"])
 ]
 
 for column, (group_title, health_names) in enumerate(health_center_groups):
@@ -750,8 +676,7 @@ showcase_items = [
     (t("local_ai_chat"), t("available_status")),
     (t("memory_system"), t("available_status")),
     (t("knowledge_base"), t("available_status")),
-    (t("persona_system"), t("enabled") if settings.get("persona.enabled", True) else t("disabled")),
-    (t("remote_security"), t("protected"))
+    (t("persona_system"), t("enabled") if settings.get("persona.enabled", True) else t("disabled"))
 ]
 
 for index, (feature_name, feature_status) in enumerate(showcase_items):
@@ -1339,7 +1264,15 @@ def build_chat_runtime_callbacks():
                 memory_text=optimized_memory_text,
                 knowledge_text=optimized_knowledge_text,
             ),
-            "debug_text": debug_text
+            "debug_text": debug_text,
+            "context_diagnostics": {
+                "memory_retrieval": True,
+                "memory_matches": len(matched_memories),
+                "knowledge_retrieval": bool(settings.get("knowledge.enabled", True)),
+                "knowledge_matches": len(matched_knowledge),
+                "persona_enabled": bool(settings.get("persona.enabled", True)),
+                "conversation_messages": len(conversation_messages or []),
+            }
         }
 
     def build_chat_context_preview(prompt, conversation_messages):
@@ -1397,46 +1330,94 @@ def build_chat_runtime_callbacks():
     }
 
 
-def show_chat():
-    global active_conversation_id, chat_load_conversation_callback, chat_window, pending_conversation_id
+def build_voice_text_input_handler():
+    """Adapt the existing synchronous core chat boundary for Voice Runtime."""
 
-    if chat_window is not None and chat_window.winfo_exists():
-        chat_window.focus()
-        chat_window.lift()
-        return
+    def handle_voice_text(prompt):
+        callbacks = build_chat_runtime_callbacks()
+        conversation_messages = []
+        if active_conversation_id:
+            try:
+                conversation = ConversationManager().load(active_conversation_id)
+                conversation_messages = conversation.get("messages", [])
+            except Exception as error:
+                logger.warning(f"Voice conversation history unavailable: {error}")
 
-    logger.info("Chat started")
+        context = callbacks["prepare_prompt_context_callback"](
+            prompt,
+            conversation_messages,
+            False,
+        )
+        system_context = context.get("system_context", "")
+        context_diagnostics = context.get("context_diagnostics", {})
+        session = ChatSession(system_context)
+        session.replace(conversation_messages)
+        session.set_system_context(system_context)
+        diagnostic_messages = session.snapshot() + [{"role": "user", "content": prompt}]
+        logger.info(
+            "Voice diagnostics: "
+            f"STT result={prompt!r}; "
+            f"ContextBuilder input summary={context_diagnostics}; "
+            f"model={settings.get('chat_model', '')}; "
+            f"system_context_chars={len(system_context)}; message_count={len(diagnostic_messages)}"
+        )
+        logger.info(f"Voice final system context: {system_context!r}")
+        logger.info(f"Voice final messages before Core: {diagnostic_messages!r}")
+        response_parts = []
+        result = stream_chat(
+            settings.get("chat_model", ""),
+            prompt,
+            session,
+            response_parts.append,
+            threading.Event(),
+        )
+        if result != "completed":
+            raise ChatError("Voice chat generation did not complete.")
+        response = "".join(response_parts).strip()
+        if not response:
+            raise ChatError("Voice chat returned an empty response.")
+        return response
 
-    runtime = build_chat_runtime_callbacks()
+    return handle_voice_text
 
-    def clear_chat_window():
-        global chat_window
-        chat_window = None
 
-    chat_window = ChatWindow(
-        app,
-        text=TEXT,
-        translate=t,
-        logger=logger,
-        settings=settings,
-        conversation_manager=ConversationManager(),
-        initial_context_provider=runtime["initial_context_provider"],
-        model_records_provider=runtime["model_records_provider"],
-        model_capability_provider=runtime["model_capability_provider"],
-        prepare_prompt_context_callback=runtime["prepare_prompt_context_callback"],
-        stream_chat_callback=runtime["stream_chat_callback"],
-        context_preview_builder=runtime["context_preview_builder"],
-        context_preview_callback=runtime["context_preview_callback"],
-        get_active_conversation_id=runtime["get_active_conversation_id"],
-        set_active_conversation_id=runtime["set_active_conversation_id"],
-        register_load_callback=runtime["register_load_callback"],
-        on_close=clear_chat_window
+def create_application_voice_runtime():
+    """Create the one application Voice Runtime and share its state store."""
+
+    if not settings.get("voice.enabled", False):
+        return None
+    device_name = resolve_voice_input_device(settings)
+    logger.info(f"Voice input device: {device_name}")
+    recorder = FFmpegMicrophoneRecorder(
+        device_name=device_name,
+        sample_rate=int(settings.get("voice.recorder.sample_rate", 16000)),
+        channels=int(settings.get("voice.recorder.channels", 1)),
+        ffmpeg_path=settings.get("voice.recorder.ffmpeg_path", "ffmpeg"),
+        min_duration_ms=int(settings.get("voice.recorder.min_duration_ms", 750)),
     )
+    return create_voice_runtime(
+        settings,
+        recorder=recorder,
+        text_input_handler=build_voice_text_input_handler(),
+        state_store=companion_state_store,
+        input_device_name=device_name,
+        use_frame_pipeline=str(
+            settings.get("voice.recorder.backend", "frame_pipeline")
+        ).lower() != "ffmpeg",
+    )
+
+
+def show_chat():
+    global pending_conversation_id
+
+    shell = create_app_shell()
+    shell.navigate("chat")
 
     if pending_conversation_id:
         pending_id = pending_conversation_id
         pending_conversation_id = None
-        chat_window.after(0, lambda: chat_window.load_conversation_by_id(pending_id))
+        if callable(chat_load_conversation_callback):
+            chat_load_conversation_callback(pending_id)
 
 def show_conversation_browser():
     global conversation_browser_window, pending_conversation_id, active_conversation_id
@@ -1514,72 +1495,6 @@ def build_persona_final_prompt_preview(prompt, persona_data):
 
 def show_persona():
     open_learning_center_tab("persona")
-
-def show_remote_access():
-    global remote_window
-    if remote_window is not None and remote_window.winfo_exists():
-        remote_window.focus()
-        remote_window.lift()
-        return
-
-    def lan_status_snapshot():
-        try:
-            service_status = check_all()
-        except Exception:
-            service_status = {"ollama": False, "webui": False, "api": False}
-        return {
-            "status": "Online",
-            "version": RELEASE,
-            "ollama": "Ready" if service_status.get("ollama") or service_status.get("api") else "Offline",
-            "openwebui": "Ready" if service_status.get("webui") else "Offline",
-            "memory": "Available" if (Path(__file__).resolve().parent / "data" / "memory").exists() else "Offline",
-            "knowledge": "Available" if (Path(__file__).resolve().parent / "data" / "knowledge").exists() else "Offline",
-            "persona": "Enabled" if settings.get("persona.enabled", True) else "Disabled",
-            "remote_security": "Protected"
-        }
-
-    def clear_remote_window():
-        global remote_window
-        remote_window = None
-
-    remote_window = RemoteWindow(
-        app,
-        remote_manager=remote_manager,
-        authentication_manager=authentication_manager,
-        credential_storage_provider=credential_storage_provider,
-        settings=settings,
-        lan_status_server=lan_status_server,
-        lan_status_snapshot=lan_status_snapshot,
-        mobile_chat_service=mobile_chat_service,
-        text=TEXT,
-        logger=logger,
-        default_lan_status_port=DEFAULT_LAN_STATUS_PORT,
-        on_close=clear_remote_window
-    )
-
-
-def show_remote_diagnostics():
-    global remote_diagnostics_window
-    if remote_diagnostics_window is not None and remote_diagnostics_window.winfo_exists():
-        remote_diagnostics_window.focus()
-        remote_diagnostics_window.lift()
-        return
-
-    logger.info("Remote diagnostics opened")
-
-    def clear_remote_diagnostics_window():
-        global remote_diagnostics_window
-        remote_diagnostics_window = None
-
-    remote_diagnostics_window = RemoteDiagnosticsWindow(
-        app,
-        remote_manager=remote_manager,
-        credential_storage_provider=credential_storage_provider,
-        text=TEXT,
-        logger=logger,
-        project_root=Path(__file__).resolve().parent,
-        on_close=clear_remote_diagnostics_window
-    )
 
 def test_settings_service_connection(target_window, service_name, url, callback):
     def run_check():
@@ -1745,22 +1660,6 @@ btn_knowledge = ui_button(
 btn_knowledge.pack(fill="x", padx=40, pady=8)
 
 
-btn_remote = ui_button(
-    actions_frame,
-    text=t("remote_access"),
-    command=show_remote_access
-)
-btn_remote.pack(fill="x", padx=40, pady=8)
-
-
-btn_remote_diagnostics = ui_button(
-    actions_frame,
-    text=t("remote_diagnostics"),
-    command=show_remote_diagnostics
-)
-btn_remote_diagnostics.pack(fill="x", padx=40, pady=8)
-
-
 def show_settings():
     global settings_window
 
@@ -1826,8 +1725,6 @@ def refresh_main_texts():
     btn_memory.configure(text=t("memory"))
     btn_persona.configure(text=t("persona"))
     btn_knowledge.configure(text=t("knowledge_base"))
-    btn_remote.configure(text=t("remote_access"))
-    btn_remote_diagnostics.configure(text=t("remote_diagnostics"))
     settings_button.configure(text=t("settings"))
 
 
@@ -1885,9 +1782,7 @@ def show_about():
         f"- Memory System\n"
         f"- Knowledge Base\n"
         f"- Persona System\n"
-        f"- Context Inspector\n"
-        f"- Remote Security Framework\n"
-        f"- LAN Status Page"
+        f"- Context Inspector"
     )
 
 
@@ -1931,15 +1826,6 @@ def cleanup_callbacks():
             chat_window.register_load_callback(None)
         except Exception:
             pass
-
-
-def cleanup_lan_services():
-    if lan_status_server.is_running():
-        result = lan_status_server.stop()
-        if result.get("released"):
-            logger.info("LAN server port released")
-        logger.info("LAN status page stopped")
-        logger.info("Mobile chat stopped")
 
 
 def terminate_tracked_process(service_name):
@@ -2009,7 +1895,6 @@ def cleanup_settings():
 
 shutdown_manager.register_cleanup(cleanup_settings, "settings")
 shutdown_manager.register_cleanup(cleanup_started_services, "started_services")
-shutdown_manager.register_cleanup(cleanup_lan_services, "lan_mobile")
 shutdown_manager.register_cleanup(cleanup_callbacks, "callbacks")
 shutdown_manager.register_cleanup(cleanup_chat_surfaces, "chat_surfaces")
 
@@ -2341,18 +2226,10 @@ def startup_check():
                     )
             else:
                 logger.info("Docker skipped (Open WebUI disabled)")
-        try:
-            credential_status = credential_storage_provider.check_available()
-            remote_manager.update_credential_diagnostics(credential_status)
-            remote_manager.record_diagnostic_history()
-            logger.info("Startup Diagnostic:")
-            logger.info(f"Ollama: {'Ready' if ollama_connected else 'Offline'}")
-            logger.info(f"Open WebUI: {'Ready' if status.get('webui', False) else 'Offline'}")
-            logger.info(f"Remote: {'Enabled' if settings.get('remote.enabled', False) else 'Disabled'}")
-            logger.info(f"Credential Storage: {'Available' if credential_status.get('available') else 'Unavailable'}")
-            logger.info("Startup diagnostic completed")
-        except Exception as error:
-            logger.error(f"Startup diagnostic failed: {error}")
+        logger.info("Startup Diagnostic:")
+        logger.info(f"Ollama: {'Ready' if ollama_connected else 'Offline'}")
+        logger.info(f"Open WebUI: {'Ready' if status.get('webui', False) else 'Offline'}")
+        logger.info("Startup diagnostic completed")
         logger.info(
             f"Service check duration: {int((time.perf_counter() - service_started) * 1000)}ms"
         )
@@ -2376,16 +2253,31 @@ def navigate_app_shell(page_name):
         app_shell.navigate(page_name)
 
 
-def open_learning_center_tab(panel_id):
+def open_settings_panel(panel_id):
     shell = create_app_shell()
-    learning_page = shell.page_frames.get("learning")
-    if learning_page is not None:
-        logger.info(f"Learning Center legacy route reused: {panel_id}")
-    shell.navigate("learning")
-    learning_page = shell.page_frames.get("learning")
-    if learning_page is not None:
-        learning_page.show_tab(panel_id)
-        logger.info(f"Learning Center opened: {panel_id}")
+    shell.navigate("settings")
+    settings_page = shell.page_frames.get("settings")
+    if settings_page is None:
+        return
+    if panel_id == "persona":
+        settings_page.show_category("ai")
+        show_panel = getattr(settings_page, "_show_persona_panel", None)
+    elif panel_id == "memory":
+        settings_page.show_category("data")
+        show_panel = getattr(settings_page, "_show_memory_panel", None)
+    elif panel_id == "knowledge":
+        settings_page.show_category("data")
+        show_panel = getattr(settings_page, "_show_knowledge_panel", None)
+    else:
+        settings_page.show_category("ai")
+        show_panel = None
+    if callable(show_panel):
+        show_panel()
+    logger.info(f"Settings legacy route opened: {panel_id}")
+
+
+def open_learning_center_tab(panel_id):
+    open_settings_panel(panel_id)
 
 
 def app_shell_home_status_provider():
@@ -2410,7 +2302,6 @@ def app_shell_home_status_provider():
     except Exception as error:
         logger.error(f"AppShell persona status failed: {error}")
 
-    remote_enabled = settings.get("remote.enabled", False)
     chat_model = settings.get("chat_model", "")
     return {
         "overall": "healthy",
@@ -2434,11 +2325,6 @@ def app_shell_home_status_provider():
             "status": "enabled" if settings.get("persona.enabled", True) else "disabled",
             "text": t("enabled") if settings.get("persona.enabled", True) else t("disabled"),
             "detail": persona_name
-        },
-        "remote": {
-            "status": "enabled" if remote_enabled else "disabled",
-            "text": t("enabled") if remote_enabled else t("disabled"),
-            "detail": t("remote")
         }
     }
 
@@ -2490,22 +2376,6 @@ def app_shell_persona_status_provider():
         return {"status": "error", "text": str(error)}
 
 
-def app_shell_remote_status_provider():
-    remote_enabled = settings.get("remote.enabled", False)
-    auth_configured = settings.get("remote.authentication_configured", False)
-    security_confirmed = settings.get("remote.security_confirmed", False)
-    return {
-        "status": "enabled" if remote_enabled else "disabled",
-        "text": t("enabled") if remote_enabled else t("disabled"),
-        "remote": t("enabled") if remote_enabled else t("disabled"),
-        "authentication": t("configured") if auth_configured else t("not_configured"),
-        "safety": t("confirmed") if security_confirmed else t("not_confirmed"),
-        "devices": t("not_available_this_version"),
-        "security_policy": t("configured"),
-        "access_control": t("configured")
-    }
-
-
 def app_shell_settings_status_provider():
     return {
         "status": "healthy",
@@ -2527,17 +2397,6 @@ def create_app_shell():
         return app_shell
 
     page_builders = {
-        "home": lambda parent: HomePage(
-            parent,
-            translate=t,
-            status_provider=app_shell_home_status_provider,
-            quick_actions={
-                "new_chat": lambda: navigate_app_shell("chat"),
-                "open_library": lambda: navigate_app_shell("learning"),
-                "settings": lambda: navigate_app_shell("settings")
-            },
-            logger=logger
-        ),
         "chat": lambda parent: ChatPage(
             parent,
             text=TEXT,
@@ -2545,58 +2404,22 @@ def create_app_shell():
             logger=logger,
             settings=settings,
             conversation_manager=ConversationManager(),
+            voice_runtime=voice_runtime,
+            companion_state=companion_state_store,
             **build_chat_runtime_callbacks()
-        ),
-        "learning": lambda parent: LearningCenterPage(
-            parent,
-            knowledge_store=knowledge_store,
-            memory_store=memory_store,
-            persona_store=persona_store,
-            search_memories=search_memories,
-            settings=settings,
-            text=TEXT,
-            translate=t,
-            logger=logger,
-            version=VERSION,
-            retrieval_summary=retrieval_summary,
-            final_prompt_preview_callback=build_persona_final_prompt_preview
-        ),
-        "library": lambda parent: LibraryPage(
-            parent,
-            knowledge_store=knowledge_store,
-            settings=settings,
-            text=TEXT,
-            translate=t,
-            logger=logger,
-            version=VERSION,
-            retrieval_summary=retrieval_summary
-        ),
-        "memory": lambda parent: MemoryPage(
-            parent,
-            memory_store=memory_store,
-            search_memories=search_memories,
-            translate=t,
-            logger=logger
-        ),
-        "persona": lambda parent: PersonaPage(
-            parent,
-            persona_store=persona_store,
-            settings=settings,
-            translate=t,
-            logger=logger,
-            final_prompt_preview_callback=build_persona_final_prompt_preview
-        ),
-        "remote": lambda parent: RemotePage(
-            parent,
-            translate=t,
-            open_remote_callback=show_remote_access,
-            open_diagnostics_callback=show_remote_diagnostics,
-            remote_status_provider=app_shell_remote_status_provider,
-            logger=logger
         ),
         "settings": lambda parent: SettingsPage(
             parent,
             translate=t,
+            settings=settings,
+            text=TEXT,
+            persona_store=persona_store,
+            memory_store=memory_store,
+            search_memories=search_memories,
+            knowledge_store=knowledge_store,
+            version=VERSION,
+            retrieval_summary=retrieval_summary,
+            final_prompt_preview_callback=build_persona_final_prompt_preview,
             open_settings_callback=show_settings,
             settings_status_provider=app_shell_settings_status_provider,
             logger=logger
@@ -2613,6 +2436,7 @@ def create_app_shell():
         app_name=APP_NAME,
         translate=t,
         page_builders=page_builders,
+        initial_page_id="chat",
         on_page_change=lambda page_name: logger.info(f"AppShell page opened: {page_name}"),
         on_shutdown=shutdown_app
     )
@@ -2625,6 +2449,7 @@ logger.info("Application started")
 
 app.protocol("WM_DELETE_WINDOW", lambda: shutdown_app("wm_delete_window"))
 
+voice_runtime = create_application_voice_runtime()
 create_app_shell()
 
 if first_run_required:

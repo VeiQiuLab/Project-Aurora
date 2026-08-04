@@ -20,8 +20,7 @@ class HomePage(ctk.CTkFrame):
         ("ai_runtime", "home_ai_runtime"),
         ("memory", "home_memory"),
         ("knowledge", "home_knowledge"),
-        ("persona", "home_persona"),
-        ("remote", "home_remote")
+        ("persona", "home_persona")
     ]
 
     def __init__(
@@ -147,6 +146,5 @@ class HomePage(ctk.CTkFrame):
             "ai_runtime": {"status": "disabled", "text": "--", "detail": "--"},
             "memory": {"status": "disabled", "text": "--", "detail": "--"},
             "knowledge": {"status": "disabled", "text": "--", "detail": "--"},
-            "persona": {"status": "disabled", "text": "--", "detail": "--"},
-            "remote": {"status": "disabled", "text": "--", "detail": "--"}
+            "persona": {"status": "disabled", "text": "--", "detail": "--"}
         }

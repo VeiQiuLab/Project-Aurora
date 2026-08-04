@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from threading import Event, RLock, Thread
+from time import sleep
 from typing import Callable
 
 from modules.experience.state import CompanionStateEvent
@@ -21,8 +22,10 @@ class RuntimeService:
         orchestrator: VoiceOrchestrator,
         *,
         state_callback: StateCallback | None = None,
+        session_manager=None,
     ):
         self.orchestrator = orchestrator
+        self.session_manager = session_manager
         self._lock = RLock()
         self._session_running = False
         self._thread: Thread | None = None
@@ -76,7 +79,10 @@ class RuntimeService:
         with self._lock:
             if not self._session_running:
                 return False
-        self.orchestrator.cancel()
+        if self.session_manager is not None:
+            self.session_manager.cancel_session()
+        else:
+            self.orchestrator.cancel()
         return True
 
     def subscribe_state(self, callback: StateCallback) -> StateCallback:
@@ -106,9 +112,39 @@ class RuntimeService:
 
     def _run_session(self) -> None:
         try:
-            result = self.orchestrator.run()
+            if self.session_manager is None:
+                result = self.orchestrator.run()
+            else:
+                if not self.session_manager.start_session():
+                    result = VoiceOrchestrationResult(
+                        success=False,
+                        stage="session_start_failed",
+                    )
+                else:
+                    while self.session_manager.session_running:
+                        sleep(0.05)
+                    session_result = self.session_manager.last_result
+                    if session_result is None:
+                        result = VoiceOrchestrationResult(
+                            success=False,
+                            stage="session_result_missing",
+                        )
+                    else:
+                        result = VoiceOrchestrationResult(
+                            success=session_result.completed,
+                            cancelled=session_result.cancelled,
+                            stage=session_result.reason,
+                            diagnostics=session_result.diagnostics,
+                        )
             with self._lock:
                 self._last_result = result
+        except Exception as error:
+            with self._lock:
+                self._last_result = VoiceOrchestrationResult(
+                    success=False,
+                    stage="runtime_error",
+                    diagnostics={"error": str(error)},
+                )
         finally:
             with self._lock:
                 self._session_running = False

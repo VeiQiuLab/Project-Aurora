@@ -19,6 +19,7 @@ if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 
 from modules.experience.audio.ffmpeg_source import FFmpegAudioFrameSource
+from modules.experience.audio.device_config import get_voice_input_device_name
 from modules.experience.audio.frame_pipeline import AudioFrameBuffer
 from modules.experience.audio.frame_recorder import FrameRecorder
 from modules.experience.audio.playback import PlaybackEvent, PlaybackEventType
@@ -34,10 +35,6 @@ DEFAULT_FFMPEG = (
     "C:\\Users\\X\\AppData\\Local\\Microsoft\\WinGet\\Packages\\"
     "Gyan.FFmpeg_Microsoft.Winget.Source_8wekyb3d8bbwe\\"
     "ffmpeg-8.1.2-full_build\\bin\\ffmpeg.exe"
-)
-DEFAULT_DEVICE = (
-    r"@device_cm_{33D9A762-90C8-11D0-BD43-00A0C911CE86}"
-    r"\wave_{E882568F-106B-470C-8733-C4292EF55D58}"
 )
 DEFAULT_RESPONSE = "你好，我是 Aurora，很高兴和你进行这次语音测试。"
 
@@ -64,9 +61,13 @@ def _wav_info(path: str) -> dict[str, object]:
 
 
 def run(args: argparse.Namespace) -> dict[str, object]:
+    with (PROJECT_ROOT / "config" / "settings.json").open("r", encoding="utf-8") as config_file:
+        configured_settings = json.load(config_file)
+    device_name = get_voice_input_device_name(configured_settings, args.device)
+    print(f"Voice input device: {device_name}", flush=True)
     buffer = AudioFrameBuffer(max_duration_ms=1500)
     source = FFmpegAudioFrameSource(
-        device_name=args.device,
+        device_name=device_name,
         buffer=buffer,
         sample_rate=args.sample_rate,
         channels=1,
@@ -230,7 +231,7 @@ def run(args: argparse.Namespace) -> dict[str, object]:
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description="Manual Aurora real voice pipeline validation")
     parser.add_argument("--ffmpeg", default=DEFAULT_FFMPEG)
-    parser.add_argument("--device", default=DEFAULT_DEVICE)
+    parser.add_argument("--device", default=None)
     parser.add_argument("--sample-rate", type=int, default=16000)
     parser.add_argument("--frame-duration-ms", type=int, default=20)
     parser.add_argument("--threshold", type=float, default=0.014)

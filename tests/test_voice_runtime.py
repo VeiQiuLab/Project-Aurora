@@ -6,10 +6,12 @@ from modules.experience.voice.fake import FakeSpeechToTextProvider, FakeTextToSp
 from modules.experience.voice.models import AudioInput, SpeechResult, TranscriptionResult
 from modules.experience.voice.orchestrator import VoiceOrchestrator
 from modules.experience.voice.runtime import RuntimeService
+from modules.experience.voice.session import VoiceSessionManager
 
 
 def build_runtime(**overrides):
     state_callback = overrides.pop("state_callback", None)
+    session_manager = overrides.pop("session_manager", None)
     values = {
         "recorder": FakeRecorder(AudioInput(kind="bytes", data=b"input")),
         "stt_provider": FakeSpeechToTextProvider(TranscriptionResult(text="hello")),
@@ -19,7 +21,11 @@ def build_runtime(**overrides):
         "text_input_handler": lambda text: f"reply: {text}",
     }
     values.update(overrides)
-    return RuntimeService(VoiceOrchestrator(**values), state_callback=state_callback)
+    return RuntimeService(
+        VoiceOrchestrator(**values),
+        state_callback=state_callback,
+        session_manager=session_manager,
+    )
 
 
 def test_runtime_runs_fake_pipeline_in_background_and_forwards_state():
@@ -86,3 +92,24 @@ def test_runtime_cancel_when_idle_returns_false():
     runtime = build_runtime()
 
     assert runtime.cancel_voice_session() is False
+
+
+def test_runtime_delegates_to_frame_session_manager_and_preserves_shared_state():
+    state_store = CompanionStateStore()
+    manager = VoiceSessionManager(
+        state_store=state_store,
+        wait_for_voice=lambda _cancel, _timeout: False,
+        run_cycle=lambda: None,
+        inactivity_timeout_seconds=0.02,
+        wait_slice_seconds=0.005,
+    )
+    runtime = build_runtime(state_store=state_store, session_manager=manager)
+
+    assert runtime.start_voice_session() is True
+    result = runtime.wait_for_session(timeout_seconds=2)
+
+    assert result is not None
+    assert result.success is True
+    assert result.stage == "inactivity_timeout"
+    assert runtime.orchestrator.state_store is manager.state_store
+    assert state_store.current_state is CompanionState.IDLE

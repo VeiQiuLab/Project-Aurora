@@ -68,7 +68,7 @@ def check_ollama_api(url=DEFAULT_OLLAMA_HOST, timeout=3):
 
 
 def check_ollama_diagnostics(url=DEFAULT_OLLAMA_HOST, model="", timeout=3):
-    """Return detailed Ollama diagnostics for LAN/mobile chat troubleshooting."""
+    """Return detailed local Ollama diagnostics."""
 
     target = str(url or DEFAULT_OLLAMA_HOST).rstrip("/")
     chat_model = str(settings.get("chat_model", "qwen3:8b") or "").strip()
@@ -275,25 +275,6 @@ def check_startup_health(timeout=3):
         ))
     except Exception as error:
         items.append(_health_item("Persona", "Error", error))
-
-    try:
-        from modules.remote import RemoteAccessManager
-        from modules.authentication import AuthenticationManager
-        remote_manager = RemoteAccessManager()
-        remote_status = remote_manager.status()
-        auth_status = AuthenticationManager(remote_manager.file_path).status()
-        items.append(_health_item(
-            "Remote",
-            "Healthy",
-            "Remote framework readable.",
-            {
-                "remote_status": remote_status.get("remote_status"),
-                "security_status": remote_status.get("security_status"),
-                "authentication": auth_status.get("status")
-            }
-        ))
-    except Exception as error:
-        items.append(_health_item("Remote", "Error", error))
 
     return {
         "status": _overall_status(items),

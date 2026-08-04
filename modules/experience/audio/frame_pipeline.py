@@ -9,6 +9,8 @@ from threading import Condition, Event, RLock
 from time import time
 from typing import Mapping
 
+from modules.logger import logger
+
 
 @dataclass(frozen=True)
 class AudioFrame:
@@ -100,6 +102,13 @@ class AudioFrameBuffer:
                 sequence=self._sequence,
                 diagnostics=dict(diagnostics or {}),
             )
+            if self._sequence == 1:
+                logger.info(f"AudioFrameBuffer first_frame_time={frame.timestamp:.6f}")
+            if self._sequence == 1 or self._sequence % 50 == 0:
+                logger.info(
+                    f"AudioFrameBuffer publish called cumulative_frames={self._sequence} "
+                    f"bytes={len(data)}"
+                )
             self._frames.append(frame)
             self._trim_locked()
             subscribers = tuple(self._subscribers)

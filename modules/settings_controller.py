@@ -49,10 +49,6 @@ class SettingsController:
 
         self._validate_number(normalized, errors, "services.docker.startup_timeout", minimum=1, numeric_type=int)
         self._validate_number(normalized, errors, "status.refresh_interval", minimum=0.01, numeric_type=float)
-        self._validate_number(normalized, errors, "remote.mobile_chat_timeout", minimum=1, numeric_type=int)
-        self._validate_number(normalized, errors, "mobile_chat_timeout", minimum=1, numeric_type=int)
-        self._validate_number(normalized, errors, "remote.mobile_response_limit", minimum=1000, numeric_type=int)
-        self._validate_number(normalized, errors, "mobile_response_limit", minimum=1000, numeric_type=int)
         self._validate_number(normalized, errors, "memory.max_injection", minimum=1, numeric_type=int)
         self._validate_number(normalized, errors, "memory.min_importance", minimum=0, numeric_type=float)
         self._validate_number(normalized, errors, "knowledge.max_results", minimum=0, numeric_type=int)

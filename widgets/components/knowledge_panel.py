@@ -21,7 +21,8 @@ from widgets.ui_components import (
     PrimaryButton,
     SecondaryButton,
     SectionCard,
-    StatusLabel
+    StatusLabel,
+    bind_text_edit_shortcuts
 )
 from widgets.components.workspace_header import WorkspaceHeader
 from widgets.components.workspace_empty_state import WorkspaceEmptyState
@@ -116,6 +117,7 @@ class KnowledgePanel(ctk.CTkFrame):
         search_controls.grid_columnconfigure(0, weight=1)
         search_controls.grid_columnconfigure(1, weight=0)
         self.search_entry = ctk.CTkEntry(search_controls, width=FORM_CONTROL_WIDTH)
+        bind_text_edit_shortcuts(self.search_entry)
         self.search_entry.grid(row=0, column=0, sticky="ew", padx=(0, SPACING_SMALL))
         self.search_button = PrimaryButton(
             search_controls,

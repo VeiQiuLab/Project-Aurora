@@ -3,6 +3,7 @@ from tkinter import Menu
 
 import customtkinter as ctk
 
+from modules.logger import logger
 from modules.ui_theme import (
     COLOR_MUTED,
     FONT_BODY,
@@ -14,15 +15,12 @@ from modules.ui_theme import (
     SPACING_MEDIUM,
     SPACING_LARGE
 )
-from modules.version import RELEASE
 from widgets.ui_components import (
     PrimaryButton,
     SecondaryButton,
-    SectionCard,
-    StatusLabel
+    StatusLabel,
+    bind_text_edit_shortcuts
 )
-from widgets.components.workspace_header import WorkspaceHeader
-from widgets.components.workspace_empty_state import WorkspaceEmptyState
 
 
 class ChatPanel(ctk.CTkFrame):
@@ -75,6 +73,8 @@ class ChatPanel(ctk.CTkFrame):
         self.voice_available = bool(voice_available)
         self.show_header_title = show_header_title
         self.buttons = {}
+        self.input_mode = "idle"
+        self.voice_active = False
         self.input_default_height = 72
         self.input_line_height = 24
 
@@ -82,147 +82,31 @@ class ChatPanel(ctk.CTkFrame):
 
     def build(self):
         self.grid_columnconfigure(0, weight=1)
-        self.grid_rowconfigure(1, weight=1)
-
-        self.workspace_header = WorkspaceHeader(
-            self,
-            title="Aurora Chat",
-            description=self.t("workspace_chat_description"),
-            status="disabled",
-            status_text=self.t("chat_window_loading_models"),
-            show_status=False,
-            show_title=self.show_header_title
-        )
-        self.workspace_header.grid_with_workspace_padding()
-        self.header_model_label = self.workspace_header.status_label
+        self.grid_rowconfigure(0, weight=1)
+        self.header_model_label = StatusLabel(self, status="disabled", text="")
 
         body = ctk.CTkFrame(self, fg_color="transparent")
         body.grid(
-            row=1,
+            row=0,
             column=0,
             sticky="nsew",
             padx=SPACING_LARGE + SPACING_SMALL,
-            pady=(0, SPACING_LARGE)
+            pady=(SPACING_LARGE, SPACING_LARGE)
         )
         body.grid_rowconfigure(0, weight=1)
-        body.grid_columnconfigure(0, weight=0, minsize=280)
-        body.grid_columnconfigure(1, weight=1)
-
-        left_panel = ctk.CTkFrame(body, width=280)
-        left_panel.grid(row=0, column=0, sticky="nsew", padx=(0, SPACING_MEDIUM))
-        left_panel.grid_propagate(False)
-        left_panel.grid_columnconfigure(0, weight=1)
-        left_panel.grid_rowconfigure(5, weight=1)
-        ctk.CTkLabel(left_panel, text=self.t("conversation_list"), font=FONT_HEADER).grid(
-            row=0,
-            column=0,
-            sticky="w",
-            padx=SPACING_MEDIUM,
-            pady=(SPACING_MEDIUM, SPACING_SMALL)
-        )
-        new_chat_button = PrimaryButton(left_panel, text=self.t("new_chat"), command=self.new_conversation_callback)
-        new_chat_button.grid(row=1, column=0, sticky="ew", padx=SPACING_MEDIUM, pady=(0, SPACING_MEDIUM))
-        ctk.CTkLabel(left_panel, text=self.t("chat_window_search_conversations"), font=FONT_SMALL).grid(
-            row=2,
-            column=0,
-            sticky="w",
-            padx=SPACING_MEDIUM,
-            pady=(0, SPACING_SMALL)
-        )
-        self.conversation_search_entry = ctk.CTkEntry(left_panel)
-        self.conversation_search_entry.grid(row=3, column=0, sticky="ew", padx=SPACING_MEDIUM, pady=(0, SPACING_SMALL))
-        search_button = SecondaryButton(
-            left_panel,
-            text=self.t("chat_window_search"),
-            command=self.search_conversation_callback
-        )
-        search_button.grid(row=4, column=0, sticky="ew", padx=SPACING_MEDIUM, pady=(0, SPACING_MEDIUM))
-        self.conversation_selector = ctk.CTkOptionMenu(
-            left_panel,
-            values=[self.t("no_conversations")],
-            command=lambda _value: self.load_conversation_callback()
-        )
-        self.conversation_selector.grid(row=5, column=0, sticky="new", padx=SPACING_MEDIUM, pady=(0, SPACING_MEDIUM))
-
-        sidebar_status = ctk.CTkFrame(left_panel, height=176)
-        sidebar_status.grid(row=6, column=0, sticky="ew", padx=SPACING_MEDIUM, pady=(SPACING_SMALL, SPACING_MEDIUM))
-        sidebar_status.grid_propagate(False)
-        sidebar_status.grid_columnconfigure(0, weight=1)
-        ctk.CTkLabel(sidebar_status, text=self.t("aurora_status"), font=FONT_SMALL).grid(
-            row=0,
-            column=0,
-            sticky="w",
-            padx=SPACING_SMALL,
-            pady=(SPACING_SMALL, 0)
-        )
-        self.chat_status = StatusLabel(
-            sidebar_status,
-            status="disabled",
-            text=self.t("loading_ollama_models"),
-            anchor="w",
-            justify="left"
-        )
-        self.chat_status.grid(row=1, column=0, sticky="ew", padx=SPACING_SMALL, pady=(SPACING_SMALL, 0))
-        self.sidebar_model_status = self.add_sidebar_status(
-            sidebar_status,
-            2,
-            f"{self.t('model')}: {self.t('chat_window_loading_models')}"
-        )
-        self.sidebar_persona_status = self.add_sidebar_status(
-            sidebar_status,
-            3,
-            self.compact_status_text(self.t("persona"), True)
-        )
-        self.sidebar_memory_status = self.add_sidebar_status(
-            sidebar_status,
-            4,
-            self.compact_status_text(self.t("memory"), True)
-        )
-        self.sidebar_knowledge_status = self.add_sidebar_status(
-            sidebar_status,
-            5,
-            self.compact_status_text(self.t("knowledge"), True)
-        )
-        ctk.CTkLabel(sidebar_status, text=f"Aurora {RELEASE}", font=FONT_SMALL, text_color=COLOR_MUTED).grid(
-            row=6,
-            column=0,
-            sticky="w",
-            padx=SPACING_SMALL,
-            pady=(SPACING_SMALL, 0)
-        )
-
-        more_button = SecondaryButton(
-            left_panel,
-            text=self.t("more_actions"),
-            command=lambda: self.show_conversation_actions_menu(more_button)
-        )
-        more_button.grid(row=7, column=0, sticky="ew", padx=SPACING_MEDIUM, pady=(0, SPACING_MEDIUM))
-        self.conversation_actions_menu = Menu(self, tearoff=0)
-        self.conversation_actions_menu.add_command(label=self.t("save_chat"), command=self.save_conversation_callback)
-        self.conversation_actions_menu.add_command(label=self.t("rename_chat"), command=self.rename_conversation_callback)
-        self.conversation_actions_menu.add_separator()
-        self.conversation_actions_menu.add_command(label=self.t("delete_chat"), command=self.delete_conversation_callback)
-        self.conversation_actions_menu.add_separator()
-        self.conversation_actions_menu.add_command(
-            label=self.t("chat_window_context_button"),
-            command=self.preview_context_callback
-        )
-        self.conversation_actions_menu.add_checkbutton(
-            label=self.t("show_chat_context_debug_info"),
-            variable=self.debug_context_var
-        )
-        self.conversation_actions_menu.add_separator()
-        self.conversation_actions_menu.add_command(label=self.t("close"), command=self.close_callback)
+        body.grid_columnconfigure(0, weight=1)
 
         center_panel = ctk.CTkFrame(body, fg_color="transparent")
-        center_panel.grid(row=0, column=1, sticky="nsew")
+        center_panel.grid(row=0, column=0, sticky="nsew")
+        center_panel.grid_rowconfigure(0, weight=0)
         center_panel.grid_rowconfigure(1, weight=1)
+        center_panel.grid_rowconfigure(2, weight=0)
         center_panel.grid_columnconfigure(0, weight=1)
 
         chat_header = ctk.CTkFrame(center_panel, fg_color="transparent")
         chat_header.grid(row=0, column=0, sticky="ew", pady=(0, SPACING_SMALL))
         chat_header.grid_columnconfigure(0, weight=1)
-        self.current_title_label = ctk.CTkLabel(chat_header, text=self.t("chat"), font=FONT_HEADER)
+        self.current_title_label = ctk.CTkLabel(chat_header, text="", font=FONT_HEADER)
         self.current_title_label.grid(row=0, column=0, sticky="w")
         self.model_inline_label = ctk.CTkLabel(chat_header, text=self.t("chat_window_loading_models"), font=FONT_SMALL)
         self.model_selector = ctk.CTkOptionMenu(
@@ -230,103 +114,211 @@ class ChatPanel(ctk.CTkFrame):
             values=[self.t("chat_window_loading_models")],
             command=self.model_selected_callback
         )
-        self.context_model_status = self.sidebar_model_status
-        self.context_persona_status = self.sidebar_persona_status
-        self.context_memory_status = self.sidebar_memory_status
-        self.context_knowledge_status = self.sidebar_knowledge_status
+        self.chat_status = StatusLabel(chat_header, status="disabled", text=self.t("loading_ollama_models"))
+        self.context_model_status = StatusLabel(chat_header, status="disabled", text="")
+        self.context_persona_status = StatusLabel(chat_header, status="disabled", text="")
+        self.context_memory_status = StatusLabel(chat_header, status="disabled", text="")
+        self.context_knowledge_status = StatusLabel(chat_header, status="disabled", text="")
         self.debug_switch = None
+        more_button = SecondaryButton(
+            chat_header,
+            text=self.t("more_actions"),
+            command=self._show_input_more_menu
+        )
+        more_button.grid(row=0, column=1, sticky="e", padx=(SPACING_SMALL, 0))
+        self.buttons[self.t("more_actions")] = more_button
 
-        chat_card = SectionCard(center_panel, self.t("chat_messages"))
-        chat_card.grid(row=1, column=0, sticky="nsew", pady=(0, SPACING_MEDIUM))
-        chat_card.body.grid_rowconfigure(0, weight=1)
-        chat_card.body.grid_columnconfigure(0, weight=1)
-        self.chat_display = ctk.CTkTextbox(chat_card.body, wrap="word", font=FONT_BODY, border_spacing=14)
+        message_area = ctk.CTkFrame(center_panel, fg_color="transparent")
+        message_area.grid(row=1, column=0, sticky="nsew", pady=(0, SPACING_MEDIUM))
+        message_area.grid_rowconfigure(0, weight=1)
+        message_area.grid_columnconfigure(0, weight=1)
+        self.chat_display = ctk.CTkTextbox(
+            message_area,
+            wrap="word",
+            font=FONT_BODY,
+            border_spacing=14,
+            fg_color="transparent",
+            border_width=0
+        )
         self.chat_display.grid(row=0, column=0, sticky="nsew")
         self.configure_chat_tags()
         self.chat_display.configure(state="disabled")
-        self.empty_state = WorkspaceEmptyState(
-            chat_card.body,
-            title=self.t("workspace_empty_chat_title"),
-            description=self.t("workspace_empty_chat_description"),
-            action_text=self.t("new_chat"),
-            action_callback=self.new_conversation_callback
-        )
+        self.empty_state = ctk.CTkFrame(message_area, fg_color="transparent")
+        self.empty_state.grid_columnconfigure(0, weight=1)
+        self.empty_state.grid_rowconfigure(0, weight=1)
+        self.empty_state.grid_rowconfigure(3, weight=1)
+        ctk.CTkLabel(
+            self.empty_state,
+            text="你好，我是 Aurora",
+            font=FONT_TITLE,
+            anchor="center"
+        ).grid(row=1, column=0, sticky="ew", pady=(0, SPACING_SMALL))
+        ctk.CTkLabel(
+            self.empty_state,
+            text="今天想聊些什么？",
+            font=FONT_BODY,
+            text_color=COLOR_MUTED,
+            anchor="center"
+        ).grid(row=2, column=0, sticky="ew")
         self.empty_state.grid(row=0, column=0, sticky="nsew")
 
-        input_card = SectionCard(center_panel, self.t("input_box"))
+        input_card = ctk.CTkFrame(
+            center_panel,
+            corner_radius=22,
+            fg_color="#F9FAFB",
+            border_width=1,
+            border_color="#E5E7EB"
+        )
         input_card.grid(row=2, column=0, sticky="ew")
-        input_card.body.grid_columnconfigure(0, weight=1)
+        input_card.grid_rowconfigure(0, weight=0)
+        input_card.grid_columnconfigure(0, weight=1)
+        input_card.grid_columnconfigure(1, weight=0)
         self.input_box = ctk.CTkTextbox(
-            input_card.body,
+            input_card,
             height=self.input_default_height,
             wrap="word",
             font=FONT_BODY,
-            border_spacing=12
+            border_spacing=12,
+            fg_color="transparent",
+            border_width=0
         )
-        self.input_box.grid(row=0, column=0, sticky="ew", pady=(0, SPACING_SMALL))
+        self.input_box.grid(row=0, column=0, sticky="ew", padx=(SPACING_MEDIUM, SPACING_SMALL), pady=SPACING_SMALL)
+        self.input_placeholder_label = ctk.CTkLabel(
+            input_card,
+            text="输入消息...",
+            font=FONT_BODY,
+            text_color=COLOR_MUTED,
+            anchor="w"
+        )
+        self.input_placeholder_label.grid(row=0, column=0, sticky="w", padx=(SPACING_LARGE, SPACING_SMALL))
+        self.input_placeholder_label.bind("<Button-1>", lambda _event=None: self.focus_input())
+        bind_text_edit_shortcuts(self.input_box)
         self.input_box.bind("<Return>", self.handle_input_return)
         self.input_box.bind("<Shift-Return>", self.handle_input_shift_return)
         self.input_box.bind("<KeyRelease>", self.resize_input_box)
+        self.input_box.bind("<FocusIn>", self._refresh_input_placeholder, add="+")
+        self.input_box.bind("<FocusOut>", self._refresh_input_placeholder, add="+")
         self.attach_text_menu(self.input_box)
 
-        input_actions = ctk.CTkFrame(input_card.body, fg_color="transparent")
-        input_actions.grid(row=1, column=0, sticky="ew")
-        input_actions.grid_columnconfigure(0, weight=1)
+        input_actions = ctk.CTkFrame(input_card, fg_color="transparent")
+        input_actions.grid(row=0, column=1, sticky="se", padx=(0, SPACING_MEDIUM), pady=SPACING_SMALL)
+        input_actions.grid_columnconfigure(0, weight=0)
+        input_actions.grid_columnconfigure(1, weight=0)
 
         self.voice_state_label = ctk.CTkLabel(
             input_actions,
             text="IDLE  Aurora Ready",
             font=FONT_SMALL,
             text_color=COLOR_MUTED,
-            anchor="w"
+            anchor="e"
         )
-        self.voice_state_label.grid(row=0, column=0, sticky="w", padx=(0, SPACING_MEDIUM))
 
         button_specs = [
-            (input_actions, 0, 1, PrimaryButton, self.t("send"), self.send_prompt_callback),
-            (input_actions, 0, 2, SecondaryButton, self.t("stop_generate"), self.stop_generation_callback),
-            (input_actions, 0, 3, SecondaryButton, self.t("clear"), self.clear_chat_callback),
-            (input_actions, 0, 4, SecondaryButton, "Voice", self._toggle_voice),
-            (chat_header, 0, 1, SecondaryButton, self.t("chat_window_context_button"), self.preview_context_callback),
+            (input_actions, 0, 0, SecondaryButton, "Voice", "🎤", self._toggle_voice),
+            (input_actions, 0, 1, PrimaryButton, self.t("send"), "↑", self._send_prompt),
+            (input_actions, 0, 0, SecondaryButton, self.t("stop_generate"), "■", self._stop_generation),
         ]
-        for parent, row, column, button_class, label, command in button_specs:
-            button = button_class(parent, text=label, command=command)
+        for parent, row, column, button_class, label, text, command in button_specs:
+            button = button_class(parent, text=text, command=command, width=40, height=36)
+            if label == self.t("send"):
+                button.configure(fg_color="#111827", hover_color="#374151", text_color="white", corner_radius=18)
+            else:
+                button.configure(fg_color="transparent", hover_color="#E5E7EB", text_color="#111827", corner_radius=18)
             button.grid(row=row, column=column, sticky="ew", padx=SPACING_SMALL, pady=SPACING_SMALL)
             self.buttons[label] = button
-        self.buttons[self.t("new_chat")] = new_chat_button
-        self.buttons[self.t("chat_window_search")] = search_button
-        self.buttons[self.t("more_actions")] = more_button
+        self.input_more_menu = Menu(self, tearoff=0)
+        self.input_more_menu.add_command(label=self.t("clear"), command=self.clear_chat_callback)
+        self.input_more_menu.add_separator()
+        self.input_more_menu.add_command(
+            label=self.t("chat_window_context_button"),
+            command=self.preview_context_callback
+        )
+        self.input_more_menu.add_checkbutton(
+            label=self.t("show_chat_context_debug_info"),
+            variable=self.debug_context_var
+        )
         self.buttons[self.t("stop_generate")].configure(state="disabled")
         if not self.voice_available:
             self.buttons["Voice"].configure(state="disabled")
         self.refresh_context_statuses()
+        self._show_idle_actions()
+
+    def _send_prompt(self):
+        self._show_generating_actions()
+        self.send_prompt_callback()
+
+    def _stop_generation(self):
+        self.stop_generation_callback()
+
+    def _show_input_more_menu(self):
+        button = self.buttons[self.t("more_actions")]
+        try:
+            x = button.winfo_rootx()
+            y = button.winfo_rooty() + button.winfo_height()
+            self.input_more_menu.tk_popup(x, y)
+        finally:
+            self.input_more_menu.grab_release()
+
+    def _grid_action(self, label, row=0, column=0):
+        button = self.buttons[label]
+        button.grid(row=row, column=column, sticky="ew", padx=SPACING_SMALL, pady=SPACING_SMALL)
+
+    def _hide_input_actions(self):
+        for label in ["Voice", self.t("send"), self.t("stop_generate")]:
+            button = self.buttons.get(label)
+            if button is not None:
+                button.grid_remove()
+        self.voice_state_label.grid_remove()
+
+    def _show_idle_actions(self):
+        self.input_mode = "idle"
+        self._hide_input_actions()
+        self._grid_action("Voice", 0, 0)
+        self._grid_action(self.t("send"), 0, 1)
+
+    def _show_voice_actions(self):
+        self.input_mode = "voice"
+        self._hide_input_actions()
+        self.voice_state_label.grid(row=0, column=0, sticky="e", padx=SPACING_SMALL, pady=SPACING_SMALL)
+        self._grid_action("Voice", 0, 1)
+
+    def _show_generating_actions(self):
+        self.input_mode = "generating"
+        self._hide_input_actions()
+        self._grid_action(self.t("stop_generate"), 0, 0)
 
     def _toggle_voice(self):
+        logger.info(
+            f"ChatPanel._toggle_voice clicked voice_available={self.voice_available} "
+            f"voice_runtime_callback={callable(self.voice_start_callback)}"
+        )
         if not self.voice_available:
+            logger.info("ChatPanel._toggle_voice ignored: Voice unavailable")
             return
-        if callable(self.voice_cancel_callback) and self.buttons["Voice"].cget("text") == "Cancel Voice":
+        if callable(self.voice_cancel_callback) and self.voice_active:
+            logger.info("ChatPanel._toggle_voice calling voice_cancel_callback")
             self.voice_cancel_callback()
             return
         if callable(self.voice_start_callback):
+            logger.info("ChatPanel._toggle_voice calling voice_start_callback")
             self.voice_start_callback()
+        else:
+            logger.warning("ChatPanel._toggle_voice ignored: voice_start_callback missing")
 
     def set_voice_state(self, state, text):
         self.voice_state_label.configure(text=f"{state}  {text}")
         if "Voice" not in self.buttons:
             return
-        active = state in {"LISTENING", "TRANSCRIBING", "THINKING", "SPEAKING"}
+        active = state in {"VOICE_READY", "LISTENING", "TRANSCRIBING", "THINKING", "SPEAKING"}
+        self.voice_active = active
         self.buttons["Voice"].configure(
-            text="Cancel Voice" if active else "Voice",
+            text="■" if active else "🎤",
             state="normal" if self.voice_available else "disabled"
         )
-
-    def show_conversation_actions_menu(self, button):
-        try:
-            x = button.winfo_rootx()
-            y = button.winfo_rooty() + button.winfo_height()
-            self.conversation_actions_menu.tk_popup(x, y)
-        finally:
-            self.conversation_actions_menu.grab_release()
+        if active:
+            self._show_voice_actions()
+        elif self.input_mode == "voice":
+            self._show_idle_actions()
 
     def add_sidebar_status(self, parent, row, text):
         status = StatusLabel(parent, status="healthy", text=text, anchor="w", justify="left")
@@ -360,17 +352,8 @@ class ChatPanel(ctk.CTkFrame):
             "healthy" if persona_enabled else "disabled",
             text=self.compact_status_text(self.t("persona"), persona_enabled)
         )
-        self.sidebar_persona_status.set_status(
-            "healthy" if persona_enabled else "disabled",
-            text=self.compact_status_text(self.t("persona"), persona_enabled)
-        )
         self.context_memory_status.set_status("healthy", text=self.compact_status_text(self.t("memory"), True))
-        self.sidebar_memory_status.set_status("healthy", text=self.compact_status_text(self.t("memory"), True))
         self.context_knowledge_status.set_status(
-            "healthy" if knowledge_enabled else "disabled",
-            text=self.compact_status_text(self.t("knowledge"), knowledge_enabled)
-        )
-        self.sidebar_knowledge_status.set_status(
             "healthy" if knowledge_enabled else "disabled",
             text=self.compact_status_text(self.t("knowledge"), knowledge_enabled)
         )
@@ -380,7 +363,6 @@ class ChatPanel(ctk.CTkFrame):
         header_text = f"{text} \u25cf {self.t('local_model_status')}" if model_name else text
         self.model_inline_label.configure(text=text)
         self.context_model_status.set_status(status, text=text)
-        self.sidebar_model_status.set_status(status, text=f"{self.t('model')}: {text}")
 
     def update_model_selector(self, values, selected):
         self.model_selector.configure(values=values)
@@ -412,15 +394,42 @@ class ChatPanel(ctk.CTkFrame):
 
     def focus_input(self):
         try:
+            self._sync_input_action_mode()
             self.input_box.focus_set()
         except Exception:
             return
+
+    def _sync_input_action_mode(self):
+        if self.voice_active:
+            self._show_voice_actions()
+            return
+        stop_button = self.buttons.get(self.t("stop_generate"))
+        try:
+            stop_enabled = stop_button is not None and stop_button.cget("state") != "disabled"
+        except Exception:
+            stop_enabled = False
+        if stop_enabled:
+            self._show_generating_actions()
+        else:
+            self._show_idle_actions()
 
     def resize_input_box(self, _event=None):
         try:
             content = self.input_box.get("1.0", "end-1c")
             line_count = max(3, min(6, content.count("\n") + 1))
             self.input_box.configure(height=max(self.input_default_height, line_count * self.input_line_height + 24))
+            self._refresh_input_placeholder()
+        except Exception:
+            return
+
+    def _refresh_input_placeholder(self, _event=None):
+        try:
+            content = self.input_box.get("1.0", "end-1c").strip()
+            if content:
+                self.input_placeholder_label.grid_remove()
+            else:
+                self.input_placeholder_label.grid()
+                self.input_placeholder_label.lift()
         except Exception:
             return
 
@@ -488,7 +497,7 @@ class ChatPanel(ctk.CTkFrame):
         self.show_empty_state()
 
     def handle_input_return(self, _event=None):
-        self.send_prompt_callback()
+        self._send_prompt()
         return "break"
 
     def handle_input_shift_return(self, _event=None):

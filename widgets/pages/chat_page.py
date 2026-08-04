@@ -34,6 +34,7 @@ class ChatPage(ctk.CTkFrame):
         set_active_conversation_id=None,
         register_load_callback=None,
         voice_runtime=None,
+        companion_state=None,
         **kwargs
     ):
         kwargs.setdefault("fg_color", "transparent")
@@ -54,7 +55,9 @@ class ChatPage(ctk.CTkFrame):
         self.set_active_conversation_id = set_active_conversation_id or (lambda _value: None)
         self.register_load_callback = register_load_callback
         self.voice_runtime = voice_runtime
-        self.companion_state = CompanionStateStore()
+        if not isinstance(companion_state, CompanionStateStore):
+            raise TypeError("companion_state must be the application CompanionStateStore")
+        self.companion_state = companion_state
 
         self.selected_model = {"name": ""}
         self.session = ChatSession(self._initial_context())
@@ -68,6 +71,9 @@ class ChatPage(ctk.CTkFrame):
             "stop_event": None
         }
         self.conversation_records = []
+        self.conversation_labels = []
+        self.conversation_search_entry = None
+        self.conversation_selector = None
         self.debug_context_var = ctk.BooleanVar(value=False)
 
         self.build()
@@ -122,8 +128,6 @@ class ChatPage(ctk.CTkFrame):
             "context_memory_status",
             "context_model_status",
             "context_persona_status",
-            "conversation_search_entry",
-            "conversation_selector",
             "current_title_label",
             "header_model_label",
             "input_box",
@@ -136,6 +140,11 @@ class ChatPage(ctk.CTkFrame):
         for name in widget_names:
             setattr(self, name, getattr(self.panel, name))
 
+    def attach_sidebar_conversation_controls(self, search_entry, conversation_selector):
+        self.conversation_search_entry = search_entry
+        self.conversation_selector = conversation_selector
+        self.refresh_conversations()
+
     def _on_voice_state(self, event):
         try:
             self.after(0, lambda: self._on_voice_state_value(event.current_state))
@@ -145,6 +154,7 @@ class ChatPage(ctk.CTkFrame):
     def _on_voice_state_value(self, state):
         labels = {
             CompanionState.IDLE: "Aurora Ready",
+            CompanionState.VOICE_READY: "正在聆听...",
             CompanionState.LISTENING: "正在聆听...",
             CompanionState.TRANSCRIBING: "正在理解...",
             CompanionState.THINKING: "正在思考...",
@@ -155,9 +165,27 @@ class ChatPage(ctk.CTkFrame):
         self.panel.set_voice_state(current.value, labels.get(current, current.value))
 
     def start_voice_session(self):
+        self.logger.info(
+            f"ChatPage.start_voice_session called voice_runtime_exists={self.voice_runtime is not None} "
+            f"voice_enabled={bool(self.settings.get('voice.enabled', False))}"
+        )
         if self.voice_runtime is None or not bool(self.settings.get("voice.enabled", False)):
+            self.logger.info("ChatPage.start_voice_session blocked: Voice Runtime unavailable or disabled")
+            return False
+        if self.companion_state.current_state in {
+            CompanionState.VOICE_READY,
+            CompanionState.LISTENING,
+            CompanionState.TRANSCRIBING,
+            CompanionState.THINKING,
+            CompanionState.SPEAKING,
+        }:
+            self.logger.info(
+                f"ChatPage.start_voice_session blocked: active state="
+                f"{self.companion_state.current_state.value}"
+            )
             return False
         try:
+            self.logger.info("ChatPage.start_voice_session calling voice_runtime.start_voice_session()")
             return self.voice_runtime.start_voice_session()
         except Exception as error:
             self.logger.error(f"Voice session start failed: {error}")
@@ -262,11 +290,18 @@ class ChatPage(ctk.CTkFrame):
             count = seen.get(base_label, 0) + 1
             seen[base_label] = count
             labels.append(base_label if count == 1 else f"{base_label} {count}")
+        self.conversation_labels = labels
+        if self.conversation_selector is None:
+            self.update_current_title()
+            return
         self.conversation_selector.configure(values=labels or [self.t("no_conversations")])
         self.conversation_selector.set(labels[0] if labels else self.t("no_conversations"))
         self.update_current_title()
 
     def search_conversation_list(self):
+        if self.conversation_search_entry is None:
+            self.refresh_conversations()
+            return
         self.refresh_conversations(self.conversation_search_entry.get())
         self.logger.info("Conversation searched")
 
@@ -355,6 +390,8 @@ class ChatPage(ctk.CTkFrame):
         if self.stream_state["running"]:
             self.set_status(self.t("chat_window_stop_before_loading"), "warning")
             return
+        if self.conversation_selector is None:
+            return
         selected = self.conversation_selector.get()
         values = self.conversation_selector.cget("values")
         index = values.index(selected) if selected in values else -1
@@ -416,6 +453,8 @@ class ChatPage(ctk.CTkFrame):
         )
 
     def delete_conversation(self):
+        if self.conversation_selector is None:
+            return
         selected = self.conversation_selector.get()
         values = self.conversation_selector.cget("values")
         index = values.index(selected) if selected in values else -1

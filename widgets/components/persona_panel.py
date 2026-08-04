@@ -18,7 +18,8 @@ from widgets.ui_components import (
     PrimaryButton,
     SecondaryButton,
     SectionCard,
-    StatusLabel
+    StatusLabel,
+    bind_text_edit_shortcuts
 )
 from widgets.components.workspace_header import WorkspaceHeader
 from widgets.components.workspace_empty_state import WorkspaceEmptyState
@@ -119,11 +120,13 @@ class PersonaPanel(ctk.CTkFrame):
 
         ctk.CTkLabel(self.details_card.body, text=self.t("persona_page_description"), font=FONT_NORMAL_BOLD).pack(anchor="w", pady=(SPACING_MEDIUM, SPACING_SMALL))
         self.description_box = ctk.CTkTextbox(self.details_card.body, height=80, wrap="word")
+        bind_text_edit_shortcuts(self.description_box)
         self.description_box.pack(fill="x", pady=(0, SPACING_SMALL))
         self.description_box.insert("1.0", self.persona.get("description", ""))
 
         ctk.CTkLabel(self.details_card.body, text=self.t("persona_page_style"), font=FONT_NORMAL_BOLD).pack(anchor="w", pady=(SPACING_MEDIUM, SPACING_SMALL))
         self.style_box = ctk.CTkTextbox(self.details_card.body, height=80, wrap="word")
+        bind_text_edit_shortcuts(self.style_box)
         self.style_box.pack(fill="x", pady=(0, SPACING_SMALL))
         self.style_box.insert("1.0", self.persona.get("style", ""))
 
@@ -132,6 +135,7 @@ class PersonaPanel(ctk.CTkFrame):
         self.rules_card.body.grid_columnconfigure(0, weight=1)
         self.rules_card.body.grid_rowconfigure(0, weight=1)
         self.rules_box = ctk.CTkTextbox(self.rules_card.body, height=220, wrap="word")
+        bind_text_edit_shortcuts(self.rules_box)
         self.rules_box.grid(row=0, column=0, sticky="nsew", pady=(0, SPACING_SMALL))
         self.rules_box.insert("1.0", "\n".join(self.persona.get("rules", [])))
         self.character_label = StatusLabel(self.rules_card.body, status="disabled", text="", anchor="w", justify="left")

@@ -15,7 +15,8 @@ from widgets.ui_components import (
     PrimaryButton,
     SecondaryButton,
     SectionCard,
-    StatusLabel
+    StatusLabel,
+    bind_text_edit_shortcuts
 )
 from widgets.components.workspace_header import WorkspaceHeader
 from widgets.components.workspace_empty_state import WorkspaceEmptyState
@@ -120,6 +121,7 @@ class MemoryPanel(ctk.CTkFrame):
         self.type_box = self.type_row.add_option(self.memory_type_options(), self.memory_type_label("fact"))
         self.content_box = ctk.CTkTextbox(form_card.body, height=120, wrap="word")
         self.content_box.grid(row=1, column=0, sticky="nsew", pady=(SPACING_SMALL, SPACING_MEDIUM))
+        bind_text_edit_shortcuts(self.content_box)
         self.attach_text_menu(self.content_box)
         self.importance_row = FormRow(form_card.body, self.t("memory_window_importance"))
         self.importance_row.grid(row=2, column=0, sticky="ew", pady=SPACING_SMALL)

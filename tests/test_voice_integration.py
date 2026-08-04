@@ -22,6 +22,7 @@ def voice_settings(enabled=True):
     return {
         "voice": {
             "enabled": enabled,
+            "recorder": {"device_name": "test-device"},
             "stt": {"provider": "fake"},
             "tts": {"provider": "fake"},
             "playback": {"backend": "pygame", "wait_for_completion": True},
@@ -73,6 +74,25 @@ def test_enabled_runtime_uses_real_provider_defaults_without_loading_them():
     assert runtime.orchestrator.stt_provider.__class__.__name__ == "FasterWhisperProvider"
     assert runtime.orchestrator.tts_provider.__class__.__name__ == "EdgeTTSProvider"
     assert runtime.orchestrator.playback.__class__.__name__ == "RealPlaybackController"
+
+
+def test_frame_pipeline_runtime_uses_session_manager_with_shared_state():
+    state_store = CompanionStateStore()
+    runtime = create_voice_runtime(
+        voice_settings(),
+        recorder=FakeRecorder(AudioInput(kind="bytes", data=b"input")),
+        text_input_handler=lambda _text: "reply",
+        state_store=state_store,
+        stt_provider=FakeSpeechToTextProvider(TranscriptionResult(text="hello")),
+        tts_provider=FakeTextToSpeechProvider(SpeechResult(audio_bytes=b"speech")),
+        playback=FakePlayback(auto_complete=True),
+        use_frame_pipeline=True,
+    )
+
+    assert runtime is not None
+    assert runtime.session_manager is not None
+    assert runtime.session_manager.state_store is state_store
+    assert runtime.orchestrator.state_store is state_store
 
 
 @pytest.mark.skipif(not RUN_REAL_VOICE_E2E, reason="set AURORA_RUN_REAL_VOICE_E2E=1")

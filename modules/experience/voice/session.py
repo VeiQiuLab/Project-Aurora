@@ -9,6 +9,7 @@ from typing import Callable, Mapping
 
 from modules.diagnostics import create_diagnostics
 from modules.experience.state import CompanionState, CompanionStateStore
+from modules.logger import logger
 from modules.experience.audio.frame_pipeline import AudioFrameBuffer
 from modules.experience.audio.frame_recorder import FrameRecorder
 from modules.experience.audio.vad import VADAdapter
@@ -51,7 +52,9 @@ class VoiceSessionManager:
         orchestrator_factory: PipelineOrchestratorFactory | None = None,
         frame_recorder_factory=None,
         pre_roll_ms: int = 500,
-        recording_window_seconds: float = 5.0,
+        maximum_recording_duration_seconds: float = 180.0,
+        silence_end_threshold_seconds: float = 10.0,
+        recording_window_seconds: float | None = None,
     ):
         pipeline_mode = vad_adapter is not None
         if (not pipeline_mode and not callable(wait_for_voice)) or (not callable(run_cycle) and not pipeline_mode):
@@ -68,9 +71,22 @@ class VoiceSessionManager:
         self.audio_buffer = audio_buffer
         self.audio_source = audio_source
         self.orchestrator_factory = orchestrator_factory
-        self.frame_recorder_factory = frame_recorder_factory or (lambda reader: FrameRecorder(reader))
         self.pre_roll_ms = max(int(pre_roll_ms), 0)
-        self.recording_window_seconds = max(float(recording_window_seconds), 0.1)
+        self.maximum_recording_duration_seconds = max(float(maximum_recording_duration_seconds), 0.1)
+        self.silence_end_threshold_seconds = max(float(silence_end_threshold_seconds), 0.1)
+        self.recording_window_seconds = (
+            max(float(recording_window_seconds), 0.1)
+            if recording_window_seconds is not None
+            else None
+        )
+        if frame_recorder_factory is None:
+            self.frame_recorder_factory = lambda reader: FrameRecorder(
+                reader,
+                max_duration_ms=int(self.maximum_recording_duration_seconds * 1000),
+                silence_end_threshold_ms=int(self.silence_end_threshold_seconds * 1000),
+            )
+        else:
+            self.frame_recorder_factory = frame_recorder_factory
         self._lock = RLock()
         self._cancel_event = Event()
         self._running = False
@@ -88,6 +104,10 @@ class VoiceSessionManager:
             return self._last_result
 
     def start_session(self) -> bool:
+        logger.info(
+            f"VoiceSessionManager.start_session time={monotonic():.3f} "
+            f"current_state={self.state_store.current_state.value}"
+        )
         with self._lock:
             if self._running:
                 return False
@@ -97,7 +117,15 @@ class VoiceSessionManager:
                 source="voice_session_manager",
             )
             if not transition.success:
+                logger.warning(
+                    f"VoiceSessionManager VOICE_READY transition failed: "
+                    f"{transition.diagnostics}"
+                )
                 return False
+            logger.info(
+                f"VoiceSessionManager state transition completed "
+                f"state={self.state_store.current_state.value}"
+            )
             self._cancel_event.clear()
             self._last_result = None
             self._running = True
@@ -105,7 +133,9 @@ class VoiceSessionManager:
             thread = self._thread
         try:
             if self.vad_adapter is not None and self.audio_source is not None:
+                logger.info("VoiceSessionManager audio_source.start called")
                 self.audio_source.start()
+                logger.info("VoiceSessionManager audio_source.start returned successfully")
             thread.start()
         except Exception:
             with self._lock:
@@ -219,9 +249,18 @@ class VoiceSessionManager:
         reader = self.audio_buffer.subscribe(pre_roll_ms=self.pre_roll_ms)
         recorder = self.frame_recorder_factory(reader)
         recorder.start()
-        deadline = monotonic() + self.recording_window_seconds
-        while not self._cancel_event.is_set() and monotonic() < deadline:
-            sleep(min(0.05, max(deadline - monotonic(), 0.0)))
+        deadline = monotonic() + (
+            self.recording_window_seconds
+            if self.recording_window_seconds is not None
+            else self.maximum_recording_duration_seconds
+        )
+        while (
+            not self._cancel_event.is_set()
+            and recorder.recording
+            and not recorder.completed
+            and monotonic() < deadline
+        ):
+            sleep(0.05)
         if self._cancel_event.is_set():
             recorder.cancel()
             return VoiceOrchestrationResult(success=False, cancelled=True, stage="cancelled"), {
@@ -233,6 +272,9 @@ class VoiceSessionManager:
         return result, {
             "vad_latency_ms": vad_latency_ms,
             "recording_duration_ms": audio_input.duration_ms,
+            "recording_duration": audio_input.diagnostics.get("recording_duration", audio_input.duration_ms),
+            "silence_detected_time": audio_input.diagnostics.get("silence_detected_time"),
+            "stop_reason": audio_input.diagnostics.get("stop_reason", "manual_stop"),
             "frame_count": audio_input.diagnostics.get("frame_count", 0),
             "pre_roll_frames": audio_input.diagnostics.get("pre_roll_frames", 0),
         }

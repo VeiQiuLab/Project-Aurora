@@ -1,4 +1,7 @@
 customtkinter
 psutil
-requests
 pyinstaller
+pygame
+edge-tts
+faster-whisper
+sounddevice

@@ -26,6 +26,29 @@ class Settings:
             },
             "voice": {
                 "enabled": False,
+                "recorder": {
+                    "device_name": r"@device_cm_{33D9A762-90C8-11D0-BD43-00A0C911CE86}\wave_{C50E681C-D780-458E-ADCE-5F46F249D8D0}",
+                    "preferred_device_keyword": "INZONE H9",
+                    "last_successful_device_guid": "",
+                    "backend": "frame_pipeline",
+                    "sample_rate": 16000,
+                    "channels": 1,
+                    "ffmpeg_path": "ffmpeg",
+                    "pre_roll_ms": 500,
+                    "pre_roll_buffer_ms": 1000,
+                    "maximum_recording_duration": 180.0,
+                    "silence_end_threshold": 10.0,
+                    "min_duration_ms": 750
+                },
+                "vad": {
+                    "threshold": 0.014,
+                    "frame_duration_ms": 20,
+                    "minimum_active_duration_ms": 100,
+                    "peak_threshold": 0.03
+                },
+                "session": {
+                    "inactivity_timeout_seconds": 180.0
+                },
                 "stt": {
                     "provider": "faster_whisper",
                     "model_size": "small",
@@ -60,66 +83,6 @@ class Settings:
             },
             "chat_model": "qwen3:8b",
             "embedding_model": "nomic-embed-text:latest",
-            "mobile_chat_timeout": 60,
-            "mobile_debug_mode": False,
-            "mobile_response_limit": 12000,
-            "network": {
-                "preferred_interface": "",
-                "ignore_virtual_adapter": True
-            },
-            "remote": {
-                "enabled": False,
-                "mode": "local",
-                "auth_required": True,
-                "authentication_configured": False,
-                "authentication_required": True,
-                "authentication_type": "none",
-                "auth_enabled": False,
-                "token_configured": False,
-                "last_token_update": None,
-                "credential_storage": "windows_credential_manager",
-                "secure_storage_configured": False,
-                "secure_storage_available": False,
-                "credential_test_passed": False,
-                "credential_last_check": None,
-                "credential_last_result": None,
-                "credential_command_status": "Unavailable",
-                "credential_last_operation": None,
-                "credential_operation_result": None,
-                "credential_duration_ms": 0,
-                "credential_error_suggestion": None,
-                "last_storage_error": None,
-                "credential_history": [],
-                "credential_steps": [],
-                "network_history": [],
-                "security_history": [],
-                "authentication_history": [],
-                "remote_history": [],
-                "lan_status_page_enabled": False,
-                "lan_status_port": 8765,
-                "lan_status_user_confirmed": False,
-                "lan_chat_enabled": False,
-                "lan_chat_port": 8765,
-                "mobile_access_confirmed": False,
-                "mobile_debug_mode": False,
-                "mobile_response_limit": 12000,
-                "selected_lan_ip": "",
-                "selected_adapter": "",
-                "last_mobile_error": "",
-                "last_mobile_stage": "",
-                "last_mobile_status": "",
-                "last_mobile_duration_ms": 0,
-                "last_mobile_model": "",
-                "last_mobile_capability": "",
-                "last_mobile_ollama_url": "",
-                "last_mobile_client": "",
-                "last_mobile_time": "",
-                "lan_ready": False,
-                "ios_access_ready": False,
-                "tailscale_ready": False,
-                "user_confirmed": False,
-                "security_confirmed": False
-            },
             "window": {
                 "width": 1200,
                 "height": 760
@@ -178,6 +141,8 @@ class Settings:
             changed = True
         if self._migrate_language_settings():
             changed = True
+        if self._remove_legacy_remote_settings():
+            changed = True
         if changed:
             try:
                 self.save()
@@ -194,6 +159,16 @@ class Settings:
             return True
         return False
 
+    def _remove_legacy_remote_settings(self):
+        """Remove settings belonging to the retired LAN/mobile feature."""
+
+        changed = False
+        for key in ("remote", "network", "mobile_chat_timeout", "mobile_debug_mode", "mobile_response_limit"):
+            if key in self.data:
+                del self.data[key]
+                changed = True
+        return changed
+
     @staticmethod
     def normalize_language(language):
         value = str(language or "").strip().lower().replace("-", "_")
@@ -207,10 +182,10 @@ class Settings:
         changed = False
         if not isinstance(self.data, dict):
             return False
-        legacy_mobile = self.data.get("mobile", {})
+        legacy_config = self.data.get("mobile", {})
         legacy_model = str(
             self.data.get("model")
-            or (legacy_mobile.get("model", "") if isinstance(legacy_mobile, dict) else "")
+            or (legacy_config.get("model", "") if isinstance(legacy_config, dict) else "")
             or ""
         ).strip()
         current_chat_model = str(self.data.get("chat_model", "") or "").strip()

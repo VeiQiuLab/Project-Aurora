@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from pathlib import Path
+from array import array
 from threading import Event, RLock, Thread
 import tempfile
 import time
@@ -22,17 +23,25 @@ class FrameRecorder:
         *,
         output_dir: str | Path | None = None,
         min_duration_ms: int = 750,
-        max_duration_ms: int = 30000,
+        max_duration_ms: int = 180000,
+        silence_end_threshold_ms: int = 10000,
+        activity_rms_threshold: float = 0.014,
+        activity_peak_threshold: float | None = 0.03,
         read_timeout_seconds: float = 0.1,
     ):
         if not isinstance(reader, AudioFrameReader):
             raise TypeError("reader must be an AudioFrameReader")
-        if min_duration_ms < 0 or max_duration_ms <= 0:
+        if min_duration_ms < 0 or max_duration_ms <= 0 or silence_end_threshold_ms <= 0:
             raise ValueError("invalid recorder duration configuration")
         self.reader = reader
         self.output_dir = Path(output_dir) if output_dir else None
         self.min_duration_ms = int(min_duration_ms)
         self.max_duration_ms = int(max_duration_ms)
+        self.silence_end_threshold_ms = int(silence_end_threshold_ms)
+        self.activity_rms_threshold = max(float(activity_rms_threshold), 0.0)
+        self.activity_peak_threshold = (
+            None if activity_peak_threshold is None else max(float(activity_peak_threshold), 0.0)
+        )
         self.read_timeout_seconds = max(float(read_timeout_seconds), 0.01)
         self._lock = RLock()
         self._stop_event = Event()
@@ -40,12 +49,23 @@ class FrameRecorder:
         self._recording = False
         self._cancelled = False
         self._timed_out = False
+        self._completed = False
+        self._stop_reason = "manual_stop"
+        self._silence_detected_time_ms: int | None = None
+        self._started_at: float | None = None
         self._frames: list[AudioFrame] = []
 
     @property
     def recording(self) -> bool:
         with self._lock:
             return self._recording
+
+    @property
+    def completed(self) -> bool:
+        """Whether the recorder reached an automatic stop condition."""
+
+        with self._lock:
+            return self._completed
 
     def start(self) -> None:
         with self._lock:
@@ -54,6 +74,10 @@ class FrameRecorder:
             self._stop_event.clear()
             self._cancelled = False
             self._timed_out = False
+            self._completed = False
+            self._stop_reason = "manual_stop"
+            self._silence_detected_time_ms = None
+            self._started_at = time.monotonic()
             self._frames = []
             self._recording = True
             self._thread = Thread(target=self._collect, name="aurora-frame-recorder", daemon=True)
@@ -65,15 +89,28 @@ class FrameRecorder:
                 raise RuntimeError("frame recording is not active")
             thread = self._thread
             self._stop_event.set()
+            if (
+                self._started_at is not None
+                and (time.monotonic() - self._started_at) * 1000 >= self.max_duration_ms
+            ):
+                self._timed_out = True
+                self._stop_reason = "maximum_recording_duration"
         self.reader.close()
         if thread is not None:
             thread.join(timeout=5)
         with self._lock:
             frames = list(self._frames)
             timed_out = self._timed_out
+            stop_reason = self._stop_reason
+            silence_detected_time_ms = self._silence_detected_time_ms
             self._recording = False
             self._thread = None
-        return self._write_audio(frames, timed_out=timed_out)
+        return self._write_audio(
+            frames,
+            timed_out=timed_out,
+            stop_reason=stop_reason,
+            silence_detected_time_ms=silence_detected_time_ms,
+        )
 
     def cancel(self) -> None:
         with self._lock:
@@ -81,6 +118,7 @@ class FrameRecorder:
                 return
             self._cancelled = True
             self._stop_event.set()
+            self._stop_reason = "cancelled"
             thread = self._thread
             self._recording = False
             self._thread = None
@@ -92,23 +130,52 @@ class FrameRecorder:
 
     def _collect(self) -> None:
         started = time.monotonic()
+        last_active_at = started
         try:
             while not self._stop_event.is_set():
-                if (time.monotonic() - started) * 1000 >= self.max_duration_ms:
-                    self._timed_out = True
+                now = time.monotonic()
+                elapsed_ms = int((now - started) * 1000)
+                if elapsed_ms >= self.max_duration_ms:
+                    with self._lock:
+                        self._timed_out = True
+                        self._stop_reason = "maximum_recording_duration"
+                        self._completed = True
                     self._stop_event.set()
                     break
                 frame = self.reader.read_frame(self._stop_event, self.read_timeout_seconds)
                 if frame is None:
+                    now = time.monotonic()
+                    if (now - last_active_at) * 1000 >= self.silence_end_threshold_ms:
+                        with self._lock:
+                            self._stop_reason = "silence_detected"
+                            self._silence_detected_time_ms = int((now - started) * 1000)
+                            self._completed = True
+                        self._stop_event.set()
                     continue
+                if self._is_active(frame.data):
+                    last_active_at = time.monotonic()
                 with self._lock:
                     if self._frames and frame.sequence <= self._frames[-1].sequence:
                         continue
                     self._frames.append(frame)
+                if (time.monotonic() - last_active_at) * 1000 >= self.silence_end_threshold_ms:
+                    now = time.monotonic()
+                    with self._lock:
+                        self._stop_reason = "silence_detected"
+                        self._silence_detected_time_ms = int((now - started) * 1000)
+                        self._completed = True
+                    self._stop_event.set()
         finally:
             return
 
-    def _write_audio(self, frames: list[AudioFrame], *, timed_out: bool) -> AudioInput:
+    def _write_audio(
+        self,
+        frames: list[AudioFrame],
+        *,
+        timed_out: bool,
+        stop_reason: str,
+        silence_detected_time_ms: int | None,
+    ) -> AudioInput:
         if not frames:
             raise RuntimeError("no audio frames were collected")
         sample_rate = frames[0].sample_rate
@@ -152,5 +219,31 @@ class FrameRecorder:
                 "last_sequence": frames[-1].sequence,
                 "pre_roll_frames": sum(1 for frame in frames if frame.diagnostics.get("pre_roll")),
                 "timed_out": timed_out,
+                "recording_duration": duration_ms,
+                "recording_duration_ms": duration_ms,
+                "silence_detected_time": silence_detected_time_ms,
+                "silence_detected_time_ms": silence_detected_time_ms,
+                "stop_reason": stop_reason,
+                "maximum_recording_duration_ms": self.max_duration_ms,
+                "silence_end_threshold_ms": self.silence_end_threshold_ms,
             },
+        )
+
+    def _is_active(self, data: bytes) -> bool:
+        samples = array("h")
+        usable = len(data) - (len(data) % 2)
+        samples.frombytes(data[:usable])
+        if not samples:
+            return False
+        normalized = (sample / 32768.0 for sample in samples)
+        total = 0.0
+        peak = 0.0
+        count = 0
+        for value in normalized:
+            total += value * value
+            peak = max(peak, abs(value))
+            count += 1
+        rms = (total / count) ** 0.5 if count else 0.0
+        return rms >= self.activity_rms_threshold or (
+            self.activity_peak_threshold is not None and peak >= self.activity_peak_threshold
         )

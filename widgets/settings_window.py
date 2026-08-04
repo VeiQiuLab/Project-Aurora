@@ -30,8 +30,7 @@ class SettingsWindow(ctk.CTkToplevel):
         "Memory": "memory",
         "Knowledge": "knowledge",
         "Vector Index": "vector_index",
-        "Conversation Store": "conversation",
-        "Remote": "remote"
+        "Conversation Store": "conversation"
     }
 
     def __init__(
@@ -100,7 +99,6 @@ class SettingsWindow(ctk.CTkToplevel):
         self.build_ai_section()
         self.build_voice_section()
         self.build_developer_section()
-        self.build_remote_section()
         self.build_persona_section()
         self.build_memory_section()
         self.build_knowledge_section()
@@ -260,53 +258,8 @@ class SettingsWindow(ctk.CTkToplevel):
             self.t("refresh_interval"),
             self.settings.get("status.refresh_interval", 3)
         )
-        self.add_status_row(
-            self.t("debug_mode"),
-            self.t("enabled") if self.settings.get("mobile_debug_mode", False) else self.t("disabled"),
-            "enabled" if self.settings.get("mobile_debug_mode", False) else "disabled"
-        )
+        self.add_status_row(self.t("debug_mode"), self.t("disabled"), "disabled")
         self.add_status_row(self.t("log_level"), self.settings.get("log.level", "INFO"))
-
-    def build_remote_section(self):
-        self.add_section_title(self.t("remote"))
-        self.remote_enabled_var = ctk.BooleanVar(
-            value=bool(self.settings.get("remote.enabled", False))
-        )
-        self.add_switch(self.t("remote_access_enable"), self.remote_enabled_var)
-        self.remote_mode_option = self.add_option_row(
-            self.t("remote_mode"),
-            ["local"],
-            self.settings.get("remote.mode", "local")
-        )
-        self.add_status_row(self.t("public_access"), self.t("not_available_this_version"), "warning")
-        self.preferred_interface_entry = self.add_entry_row(
-            self.t("preferred_interface"),
-            self.settings.get("network.preferred_interface", "")
-        )
-        self.ignore_virtual_adapter_var = ctk.BooleanVar(
-            value=bool(self.settings.get("network.ignore_virtual_adapter", True))
-        )
-        self.add_switch(self.t("ignore_virtual_adapter"), self.ignore_virtual_adapter_var)
-        self.lan_chat_enabled_var = ctk.BooleanVar(
-            value=bool(self.settings.get("remote.lan_chat_enabled", False))
-        )
-        self.add_switch(self.t("lan_chat_enable"), self.lan_chat_enabled_var)
-        self.mobile_access_confirmed_var = ctk.BooleanVar(
-            value=bool(self.settings.get("remote.mobile_access_confirmed", False))
-        )
-        self.add_switch(self.t("mobile_access_confirm"), self.mobile_access_confirmed_var)
-        self.mobile_chat_timeout_entry = self.add_entry_row(
-            self.t("mobile_chat_timeout"),
-            self.settings.get("mobile_chat_timeout", 60)
-        )
-        self.mobile_debug_mode_var = ctk.BooleanVar(
-            value=bool(self.settings.get("mobile_debug_mode", False))
-        )
-        self.add_switch(self.t("mobile_debug_mode"), self.mobile_debug_mode_var)
-        self.mobile_response_limit_entry = self.add_entry_row(
-            self.t("mobile_response_limit"),
-            self.settings.get("mobile_response_limit", 12000)
-        )
 
     def build_persona_section(self):
         self.add_section_title(self.t("persona"))
@@ -368,8 +321,7 @@ class SettingsWindow(ctk.CTkToplevel):
             "Memory",
             "Knowledge",
             "Vector Index",
-            "Conversation Store",
-            "Remote"
+            "Conversation Store"
         ]:
             item = health_items.get(status_name, {})
             value = item.get("status", self.t("settings_window_unknown_status"))
@@ -381,11 +333,6 @@ class SettingsWindow(ctk.CTkToplevel):
         self.add_status_row(self.t("memory_count"), memory_details.get("records", 0))
         self.add_status_row(self.t("knowledge_documents"), knowledge_details.get("total", 0))
         self.add_status_row(self.t("conversation_count"), conversation_details.get("records", 0))
-        self.add_status_row(
-            self.t("remote_enabled"),
-            self.t("yes") if self.settings.get("remote.enabled", False) else self.t("no"),
-            "enabled" if self.settings.get("remote.enabled", False) else "disabled"
-        )
         self.add_status_row(self.t("log_level"), self.settings.get("log.level", "INFO"))
 
     def build_service_test_controls(self):
@@ -487,9 +434,6 @@ class SettingsWindow(ctk.CTkToplevel):
             self.t("appearance_dark"): "Dark"
         }.get(self.appearance_option.get(), "System")
         selected_language = self.language_code(self.language_option.get())
-        mobile_chat_timeout = self.mobile_chat_timeout_entry.get().strip()
-        mobile_response_limit = self.mobile_response_limit_entry.get().strip()
-
         return {
             "appearance": selected_appearance,
             "theme": self.theme_option.get(),
@@ -504,8 +448,6 @@ class SettingsWindow(ctk.CTkToplevel):
             "services.docker.path": self.docker_path_entry.get().strip(),
             "services.docker.startup_timeout": self.docker_timeout_entry.get().strip(),
             "status.refresh_interval": self.refresh_interval_entry.get().strip(),
-            "network.preferred_interface": self.preferred_interface_entry.get().strip(),
-            "network.ignore_virtual_adapter": bool(self.ignore_virtual_adapter_var.get()),
             "chat_model": self.chat_model_entry.get().strip(),
             "embedding_model": self.embedding_model_entry.get().strip(),
             "voice.enabled": bool(self.voice_enabled_var.get()),
@@ -513,18 +455,6 @@ class SettingsWindow(ctk.CTkToplevel):
             "voice.tts.provider": "edge_tts",
             "voice.tts.voice": self.voice_entry.get().strip(),
             "voice.playback.enabled": bool(self.voice_playback_var.get()),
-            "remote.enabled": bool(self.settings.get("remote.enabled", False)) and bool(self.remote_enabled_var.get()),
-            "remote.mode": self.remote_mode_option.get(),
-            "remote.auth_required": True,
-            "remote.authentication_required": True,
-            "remote.lan_chat_enabled": bool(self.lan_chat_enabled_var.get()),
-            "remote.mobile_access_confirmed": bool(self.mobile_access_confirmed_var.get()),
-            "remote.mobile_chat_timeout": mobile_chat_timeout,
-            "remote.mobile_debug_mode": bool(self.mobile_debug_mode_var.get()),
-            "remote.mobile_response_limit": mobile_response_limit,
-            "mobile_chat_timeout": mobile_chat_timeout,
-            "mobile_debug_mode": bool(self.mobile_debug_mode_var.get()),
-            "mobile_response_limit": mobile_response_limit,
             "memory.max_injection": self.max_injection_entry.get().strip(),
             "memory.min_importance": self.min_importance_entry.get().strip(),
             "persona.enabled": bool(self.persona_enabled_var.get()),
@@ -549,7 +479,6 @@ class SettingsWindow(ctk.CTkToplevel):
         self.settings_title.configure(text=self.t("settings"))
         self.save_button.configure(text=self.t("save"))
         self.close_button.configure(text=self.t("close"))
-        self.remote_enabled_var.set(bool(saved_values.get("remote.enabled", False)))
         self.refresh_main_texts()
         self.logger.info("Settings UI refreshed")
 
@@ -579,7 +508,6 @@ class SettingsWindow(ctk.CTkToplevel):
         self.refresh_after_settings_change(saved_values)
         self.logger.info("Settings saved")
         self.logger.info("Language changed")
-        self.logger.info("Remote configuration saved without starting remote services")
         if (
             self.model_capability_provider
             and self.model_capability_provider(saved_values.get("chat_model", "")) != "Chat Supported"

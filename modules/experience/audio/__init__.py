@@ -18,6 +18,12 @@ from .vad import (
 )
 from .frame_pipeline import AudioFrame, AudioFrameBuffer, AudioFrameReader
 from .ffmpeg_source import FFmpegAudioFrameSource, FakeFFmpegAudioFrameSource
+from .device_discovery import (
+    AudioDeviceDiscoveryError,
+    DiscoveredAudioDevice,
+    enumerate_dshow_audio_devices,
+    resolve_voice_input_device,
+)
 from .frame_recorder import FrameRecorder
 from .recorder import AudioRecorder, AudioRecorderError, FFmpegMicrophoneRecorder, MicrophoneRecorder
 
@@ -44,5 +50,9 @@ __all__ = [
     "AudioFrameReader",
     "FFmpegAudioFrameSource",
     "FakeFFmpegAudioFrameSource",
+    "AudioDeviceDiscoveryError",
+    "DiscoveredAudioDevice",
+    "enumerate_dshow_audio_devices",
+    "resolve_voice_input_device",
     "FrameRecorder",
 ]
