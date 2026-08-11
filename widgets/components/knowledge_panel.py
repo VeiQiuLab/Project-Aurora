@@ -4,6 +4,7 @@ from tkinter import Menu, filedialog, messagebox
 
 import customtkinter as ctk
 
+from modules.app_paths import resolve_user_data_path
 from modules.ui_theme import (
     FORM_CONTROL_WIDTH,
     FORM_LABEL_WRAP,
@@ -767,10 +768,10 @@ class KnowledgePanel(ctk.CTkFrame):
         )
 
     def backup_directory(self):
-        configured = Path(str(self.settings.get("knowledge.backup_path", "data/knowledge/backups")))
+        configured = Path(str(self.settings.get("knowledge.backup_path", "knowledge/backups")))
         if configured.is_absolute():
             return configured
-        return Path(__file__).resolve().parent.parent / configured
+        return resolve_user_data_path(configured)
 
     def refresh_backup_history(self):
         self.backup_records = self.knowledge_store.list_backups(self.backup_directory())
@@ -793,7 +794,7 @@ class KnowledgePanel(ctk.CTkFrame):
             "preview_limit": self.settings.get("knowledge.preview_limit", 5000),
             "sort_field": self.settings.get("knowledge.sort_field", "Updated Time"),
             "sort_direction": self.settings.get("knowledge.sort_direction", "Descending"),
-            "backup_path": self.settings.get("knowledge.backup_path", "data/knowledge/backups"),
+            "backup_path": self.settings.get("knowledge.backup_path", "knowledge/backups"),
             "max_backup_count": self.settings.get("knowledge.max_backup_count", 10)
         }
 

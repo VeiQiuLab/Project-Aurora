@@ -11,7 +11,9 @@ def get_voice_input_device_name(settings: Any, explicit_name: str | None = None)
 
     value = explicit_name or _get_setting(settings, "voice.recorder.device_name", "")
     if not isinstance(value, str) or not value.strip():
-        raise ValueError("voice.recorder.device_name must be configured")
+        value = _get_setting(settings, "voice.recorder.last_successful_device_guid", "")
+    if not isinstance(value, str) or not value.strip():
+        raise ValueError("voice.recorder.device_name must be selected or resolved")
     return value.strip()
 
 

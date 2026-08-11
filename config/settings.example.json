@@ -10,10 +10,6 @@
     "host": "http://127.0.0.1:11434",
     "auto_start": false
   },
-  "openwebui": {
-    "host": "http://127.0.0.1:8080",
-    "auto_start": false
-  },
   "status": {
     "refresh_interval": 3.0
   },
@@ -25,9 +21,6 @@
   "services": {
     "ollama": {
       "command": "ollama serve"
-    },
-    "openwebui": {
-      "command": "open-webui serve"
     }
   }
 }

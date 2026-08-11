@@ -8,6 +8,7 @@ import uuid
 from datetime import datetime
 from pathlib import Path
 
+from modules.app_paths import KNOWLEDGE_DIR
 from modules.embedding import EmbeddingError, get_embedding_provider
 
 
@@ -24,8 +25,7 @@ class KnowledgeStore:
     """Manage local knowledge files and metadata for keyword retrieval."""
 
     def __init__(self, base_path=None):
-        root = Path(__file__).resolve().parent.parent
-        self.base_path = Path(base_path) if base_path else root / "data" / "knowledge"
+        self.base_path = Path(base_path) if base_path else KNOWLEDGE_DIR
         self.files_path = self.base_path / "files"
         self.metadata_file = self.base_path / "metadata.json"
         self.vector_index_file = self.base_path / "vector_index.json"

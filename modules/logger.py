@@ -1,13 +1,13 @@
-from pathlib import Path
 from datetime import datetime
 from collections import deque
 import logging
 
+from modules.app_paths import LOG_DIR
+
 
 class AuroraLogger:
     def __init__(self):
-        self.base_dir = Path(__file__).resolve().parent.parent
-        self.log_dir = self.base_dir / "logs"
+        self.log_dir = LOG_DIR
         self.log_dir.mkdir(parents=True, exist_ok=True)
 
         self.log_file = self.log_dir / "aurora.log"
@@ -75,7 +75,7 @@ class AuroraLogger:
 
     def startup(self):
         self.separator()
-        self.info("Project Aurora · Xu")
+        self.info("Project Aurora")
         self.info(
             f"Startup Time : {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}"
         )

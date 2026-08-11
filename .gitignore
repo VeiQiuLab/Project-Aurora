@@ -61,3 +61,8 @@ __pycache__/
 .venv/
 AGENTS.md
 
+# Local release and packaging artifacts
+installer/Aurora-v3.7.2-Setup.exe
+tools/ffmpeg.exe
+packaging_test/AppData/Aurora/
+

@@ -8,6 +8,9 @@ import re
 import subprocess
 from typing import Any, Callable
 
+from modules.app_paths import find_bundled_tool
+from modules.experience.subprocess_utils import with_hidden_console
+
 
 class AudioDeviceDiscoveryError(RuntimeError):
     """Raised when FFmpeg cannot enumerate a usable audio input device."""
@@ -38,7 +41,7 @@ def enumerate_dshow_audio_devices(
     """Enumerate DirectShow audio devices using FFmpeg's stderr listing."""
 
     command = [
-        ffmpeg_path,
+        _resolve_ffmpeg_path(ffmpeg_path),
         "-hide_banner",
         "-list_devices",
         "true",
@@ -57,6 +60,7 @@ def enumerate_dshow_audio_devices(
             errors="replace",
             timeout=timeout_seconds,
             check=False,
+            **with_hidden_console(),
         )
     except (OSError, subprocess.SubprocessError) as error:
         raise AudioDeviceDiscoveryError(
@@ -95,6 +99,12 @@ def enumerate_dshow_audio_devices(
     return devices
 
 
+def resolve_ffmpeg_path(ffmpeg_path: str = "ffmpeg") -> str:
+    """Return a configured, PATH, or bundled FFmpeg executable path."""
+
+    return _resolve_ffmpeg_path(ffmpeg_path)
+
+
 def resolve_voice_input_device(
     settings: Any,
     explicit_name: str | None = None,
@@ -107,10 +117,10 @@ def resolve_voice_input_device(
         return explicit_name.strip()
 
     ffmpeg_path = str(_get_setting(settings, "voice.recorder.ffmpeg_path", "ffmpeg"))
+    configured_name = str(_get_setting(settings, "voice.recorder.device_name", "")).strip()
     cached_guid = str(
         _get_setting(settings, "voice.recorder.last_successful_device_guid", "")
     ).strip()
-    configured_name = str(_get_setting(settings, "voice.recorder.device_name", "")).strip()
     keyword = str(
         _get_setting(settings, "voice.recorder.preferred_device_keyword", "")
     ).strip().casefold()
@@ -118,19 +128,11 @@ def resolve_voice_input_device(
     try:
         devices = enumerate_dshow_audio_devices(ffmpeg_path, run=run)
     except AudioDeviceDiscoveryError:
-        if cached_guid:
-            return cached_guid
         if configured_name:
             return configured_name
+        if cached_guid:
+            return cached_guid
         raise
-
-    if cached_guid:
-        cached_match = next(
-            (device for device in devices if device.alternative_name == cached_guid),
-            None,
-        )
-        if cached_match:
-            return _cache_device(settings, cached_match)
 
     if configured_name:
         configured_match = next(
@@ -143,6 +145,18 @@ def resolve_voice_input_device(
         )
         if configured_match:
             return _cache_device(settings, configured_match)
+
+    if cached_guid:
+        cached_match = next(
+            (device for device in devices if device.alternative_name == cached_guid),
+            None,
+        )
+        if cached_match:
+            return _cache_device(settings, cached_match)
+
+    default_match = _match_windows_default_input(devices)
+    if default_match:
+        return _cache_device(settings, default_match)
 
     if keyword:
         keyword_match = next(
@@ -158,8 +172,19 @@ def resolve_voice_input_device(
             return _cache_device(settings, keyword_match)
 
     raise AudioDeviceDiscoveryError(
-        f"No dshow audio device matched preferred keyword {keyword!r}"
+        "No usable dshow audio input device was resolved. Please select a microphone in Settings."
     )
+
+
+def select_voice_input_device(settings: Any, device_name: str) -> str:
+    """Persist a user-selected microphone while keeping cached GUID compatibility."""
+
+    selected = str(device_name or "").strip()
+    if not selected:
+        raise ValueError("device_name must not be empty")
+    _set_setting(settings, "voice.recorder.device_name", selected)
+    _set_setting(settings, "voice.recorder.last_successful_device_guid", "")
+    return selected
 
 
 def _cache_device(settings: Any, device: DiscoveredAudioDevice) -> str:
@@ -167,6 +192,44 @@ def _cache_device(settings: Any, device: DiscoveredAudioDevice) -> str:
     if device.alternative_name.startswith("@device_"):
         _set_setting(settings, "voice.recorder.last_successful_device_guid", resolved)
     return resolved
+
+
+def _match_windows_default_input(devices: list[DiscoveredAudioDevice]) -> DiscoveredAudioDevice | None:
+    default_name = _windows_default_input_name()
+    if not default_name:
+        return devices[0] if devices else None
+    default_key = default_name.casefold()
+    return next(
+        (
+            device
+            for device in devices
+            if default_key in device.name.casefold()
+            or device.name.casefold() in default_key
+        ),
+        devices[0] if devices else None,
+    )
+
+
+def _windows_default_input_name() -> str:
+    try:
+        import sounddevice
+    except Exception:
+        return ""
+    try:
+        device = sounddevice.query_devices(kind="input")
+    except Exception:
+        return ""
+    if not isinstance(device, dict):
+        return ""
+    return str(device.get("name", "") or "").strip()
+
+
+def _resolve_ffmpeg_path(ffmpeg_path: str) -> str:
+    configured = str(ffmpeg_path or "ffmpeg").strip() or "ffmpeg"
+    if configured != "ffmpeg":
+        return configured
+    bundled = find_bundled_tool("ffmpeg")
+    return str(bundled) if bundled else configured
 
 
 def _get_setting(settings: Any, key: str, default: Any) -> Any:

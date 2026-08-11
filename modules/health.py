@@ -9,7 +9,6 @@ from modules.models import infer_model_capability
 
 
 DEFAULT_OLLAMA_HOST = "http://127.0.0.1:11434"
-DEFAULT_OPENWEBUI_URL = "http://localhost:8080"
 HEALTH_ORDER = {"Healthy": 0, "Warning": 1, "Error": 2}
 
 
@@ -136,17 +135,6 @@ def check_ollama_diagnostics(url=DEFAULT_OLLAMA_HOST, model="", timeout=3):
     if selected_model and not diagnostics["chat_support"]:
         diagnostics["error_detail"] = "Model cannot chat. Please select a chat model."
     return diagnostics
-
-
-def check_http_service(url=DEFAULT_OPENWEBUI_URL, timeout=3):
-    """Check whether an HTTP service responds without changing existing checks."""
-    try:
-        with urllib.request.urlopen(url, timeout=timeout) as response:
-            return {"available": True, "status": "Online", "reason": "HTTP available", "http_status": response.status}
-    except urllib.error.HTTPError as error:
-        return {"available": False, "status": "Error", "reason": f"HTTP {error.code}", "http_status": error.code}
-    except (urllib.error.URLError, OSError, TimeoutError, ValueError) as error:
-        return {"available": False, "status": "Offline", "reason": str(error)}
 
 
 def _health_item(name, status="Healthy", message="", details=None):
@@ -297,25 +285,15 @@ def system_self_check(timeout=3):
 
 def check_all():
     ollama_url = settings.get("ollama.host", DEFAULT_OLLAMA_HOST)
-    openwebui_url = settings.get(
-        "openwebui.host",
-        DEFAULT_OPENWEBUI_URL
-    )
 
     ollama_host, ollama_port = endpoint_from_url(
         ollama_url,
         "127.0.0.1",
         11434
     )
-    webui_host, webui_port = endpoint_from_url(
-        openwebui_url,
-        "localhost",
-        8080
-    )
 
     status = {
         "ollama": process_running("ollama"),
-        "webui": port_open(webui_port, webui_host),
         "api": port_open(ollama_port, ollama_host)
     }
 

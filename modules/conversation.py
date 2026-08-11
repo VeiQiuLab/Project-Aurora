@@ -8,13 +8,14 @@ from copy import deepcopy
 from datetime import datetime, timezone
 from pathlib import Path
 
+from modules.app_paths import CONVERSATIONS_DIR
+
 
 class ConversationManager:
     """Save, load, list, and delete chat conversations as JSON files."""
 
     def __init__(self, base_path=None):
-        project_root = Path(__file__).resolve().parent.parent
-        self.directory = Path(base_path) if base_path else project_root / "data" / "conversations"
+        self.directory = Path(base_path) if base_path else CONVERSATIONS_DIR
         self.directory.mkdir(parents=True, exist_ok=True)
         self._lock = threading.Lock()
 

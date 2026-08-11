@@ -11,6 +11,7 @@ import tempfile
 import time
 import wave
 
+from modules.experience.subprocess_utils import with_hidden_console
 from modules.experience.voice.models import AudioInput
 
 
@@ -266,6 +267,7 @@ class FFmpegMicrophoneRecorder(AudioRecorder):
                     stdin=subprocess.PIPE,
                     stdout=subprocess.DEVNULL,
                     stderr=subprocess.PIPE,
+                    **with_hidden_console(),
                 )
                 if self.warmup_seconds:
                     time.sleep(self.warmup_seconds)

@@ -5,7 +5,6 @@ A Windows local AI control center built with Python and CustomTkinter.
 ## Features
 
 - Ollama integration
-- Open WebUI detection
 - Local model management
 - Persona system
 - Knowledge base

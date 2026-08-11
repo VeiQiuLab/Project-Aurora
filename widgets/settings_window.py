@@ -197,35 +197,6 @@ class SettingsWindow(ctk.CTkToplevel):
             self.t("embedding_model"),
             self.settings.get("embedding_model", "nomic-embed-text:latest")
         )
-        self.openwebui_url_entry = self.add_entry_row(
-            self.t("openwebui_url"),
-            self.settings.get("openwebui.host", "http://localhost:8080")
-        )
-        self.openwebui_type_option = self.add_option_row(
-            self.t("openwebui_type"),
-            ["docker"],
-            self.settings.get("openwebui.type", "docker")
-        )
-        self.openwebui_container_entry = self.add_entry_row(
-            self.t("container_name"),
-            self.settings.get("openwebui.container_name", "open-webui")
-        )
-        self.auto_start_openwebui_var = ctk.BooleanVar(
-            value=bool(self.settings.get("openwebui.auto_start", False))
-        )
-        self.add_switch(self.t("auto_start_openwebui"), self.auto_start_openwebui_var)
-        self.docker_auto_start_var = ctk.BooleanVar(
-            value=bool(self.settings.get("services.docker.auto_start", True))
-        )
-        self.add_switch(self.t("docker_desktop_auto_start"), self.docker_auto_start_var)
-        self.docker_path_entry = self.add_entry_row(
-            self.t("docker_desktop_path"),
-            self.settings.get("services.docker.path", r"C:\Program Files\Docker\Docker\Docker Desktop.exe")
-        )
-        self.docker_timeout_entry = self.add_entry_row(
-            self.t("docker_startup_timeout"),
-            self.settings.get("services.docker.startup_timeout", 60)
-        )
 
     def build_voice_section(self):
         self.add_section_title("Voice")
@@ -344,14 +315,6 @@ class SettingsWindow(ctk.CTkToplevel):
         )
         self.ollama_result_label.pack(anchor="e", padx=10, pady=(0, 2))
 
-        self.openwebui_result_label = ctk.CTkLabel(
-            self.content,
-            text="",
-            font=FONT_SMALL,
-            text_color=status_color("disabled")
-        )
-        self.openwebui_result_label.pack(anchor="e", padx=10, pady=(0, 8))
-
         self.ollama_test_button = PrimaryButton(
             self.ollama_host_entry.master,
             text=self.t("test"),
@@ -364,19 +327,6 @@ class SettingsWindow(ctk.CTkToplevel):
             )
         )
         self.ollama_test_button.pack(side="right", padx=(0, 8))
-
-        self.openwebui_test_button = PrimaryButton(
-            self.openwebui_url_entry.master,
-            text=self.t("test"),
-            width=FORM_CONTROL_WIDTH // 3,
-            command=lambda: self.test_service(
-                "Open WebUI",
-                self.openwebui_url_entry.get().strip(),
-                self.openwebui_result_label,
-                self.openwebui_test_button
-            )
-        )
-        self.openwebui_test_button.pack(side="right", padx=(0, 8))
 
     def build_footer(self):
         self.result_label = self.footer.message
@@ -440,13 +390,6 @@ class SettingsWindow(ctk.CTkToplevel):
             "ollama.host": self.ollama_host_entry.get().strip(),
             "ollama.auto_start": bool(self.auto_start_ollama_var.get()),
             "services.ollama.command": self.ollama_command_entry.get().strip(),
-            "openwebui.host": self.openwebui_url_entry.get().strip(),
-            "openwebui.type": self.openwebui_type_option.get(),
-            "openwebui.container_name": self.openwebui_container_entry.get().strip(),
-            "openwebui.auto_start": bool(self.auto_start_openwebui_var.get()),
-            "services.docker.auto_start": bool(self.docker_auto_start_var.get()),
-            "services.docker.path": self.docker_path_entry.get().strip(),
-            "services.docker.startup_timeout": self.docker_timeout_entry.get().strip(),
             "status.refresh_interval": self.refresh_interval_entry.get().strip(),
             "chat_model": self.chat_model_entry.get().strip(),
             "embedding_model": self.embedding_model_entry.get().strip(),
@@ -485,7 +428,6 @@ class SettingsWindow(ctk.CTkToplevel):
     def save(self):
         self.save_button.configure(state="disabled")
         self.ollama_test_button.configure(state="disabled")
-        self.openwebui_test_button.configure(state="disabled")
         self.result_label.configure(
             text=self.t("saving"),
             text_color=status_color("disabled")
@@ -494,7 +436,6 @@ class SettingsWindow(ctk.CTkToplevel):
         result = self.controller.save(self.collect_settings())
         self.save_button.configure(state="normal")
         self.ollama_test_button.configure(state="normal")
-        self.openwebui_test_button.configure(state="normal")
 
         if not result.get("ok"):
             self.result_label.configure(

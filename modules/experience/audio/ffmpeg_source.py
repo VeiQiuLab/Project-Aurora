@@ -10,6 +10,7 @@ from time import time
 from typing import Callable, Sequence
 
 from modules.logger import logger
+from modules.experience.subprocess_utils import with_hidden_console
 
 from .frame_pipeline import AudioFrameBuffer
 
@@ -92,6 +93,7 @@ class FFmpegAudioFrameSource:
                     stdin=subprocess.PIPE,
                     stdout=subprocess.PIPE,
                     stderr=subprocess.PIPE,
+                    **with_hidden_console(),
                 )
             except Exception:
                 logger.exception(

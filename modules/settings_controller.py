@@ -39,7 +39,7 @@ class SettingsController:
                 errors.append("Invalid language.")
             normalized["language"] = language
 
-        for key in ("ollama.host", "openwebui.host"):
+        for key in ("ollama.host",):
             if key in normalized and not self._is_valid_url(normalized.get(key)):
                 errors.append(f"Invalid URL: {key}")
 
@@ -47,7 +47,6 @@ class SettingsController:
             if key in normalized and not str(normalized.get(key) or "").strip():
                 errors.append(f"Missing value: {key}")
 
-        self._validate_number(normalized, errors, "services.docker.startup_timeout", minimum=1, numeric_type=int)
         self._validate_number(normalized, errors, "status.refresh_interval", minimum=0.01, numeric_type=float)
         self._validate_number(normalized, errors, "memory.max_injection", minimum=1, numeric_type=int)
         self._validate_number(normalized, errors, "memory.min_importance", minimum=0, numeric_type=float)

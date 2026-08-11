@@ -4,6 +4,8 @@ import json
 from datetime import datetime
 from pathlib import Path
 
+from modules.app_paths import PERSONA_DIR
+
 
 DEFAULT_PERSONA = {
     "name": "Aurora",
@@ -25,12 +27,11 @@ class PersonaStore:
     """Load, save, update, and reset the local Persona configuration."""
 
     def __init__(self, file_path=None):
-        root = Path(__file__).resolve().parent.parent
         if file_path:
             self.file_path = Path(file_path)
             self.directory = self.file_path.parent
         else:
-            self.directory = root / "data" / "persona"
+            self.directory = PERSONA_DIR
             self.file_path = self.directory / "persona.json"
         self.directory.mkdir(parents=True, exist_ok=True)
         if not self.file_path.exists():

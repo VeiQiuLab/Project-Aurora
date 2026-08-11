@@ -1,11 +1,11 @@
 """
-Project Aurora \u00b7 Xu
+Project Aurora
 Version Information
 """
 
-APP_NAME = "Project Aurora \u00b7 Xu"
+APP_NAME = "Project Aurora"
 
-VERSION = "3.7.0"
+VERSION = "3.7.2"
 
 BUILD_DATE = "2026-08-04"
 

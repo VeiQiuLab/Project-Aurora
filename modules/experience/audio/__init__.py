@@ -22,7 +22,9 @@ from .device_discovery import (
     AudioDeviceDiscoveryError,
     DiscoveredAudioDevice,
     enumerate_dshow_audio_devices,
+    resolve_ffmpeg_path,
     resolve_voice_input_device,
+    select_voice_input_device,
 )
 from .frame_recorder import FrameRecorder
 from .recorder import AudioRecorder, AudioRecorderError, FFmpegMicrophoneRecorder, MicrophoneRecorder
@@ -53,6 +55,8 @@ __all__ = [
     "AudioDeviceDiscoveryError",
     "DiscoveredAudioDevice",
     "enumerate_dshow_audio_devices",
+    "resolve_ffmpeg_path",
     "resolve_voice_input_device",
+    "select_voice_input_device",
     "FrameRecorder",
 ]

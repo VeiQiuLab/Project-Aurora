@@ -42,7 +42,8 @@ class FirstRunWizard(ctk.CTkToplevel):
         model_fetcher,
         persona_status_provider,
         on_complete,
-        logger
+        logger,
+        initialization_check_provider=None
     ):
         super().__init__(parent)
         self.release = release
@@ -52,14 +53,15 @@ class FirstRunWizard(ctk.CTkToplevel):
         self.settings_get = settings_get
         self.model_fetcher = model_fetcher
         self.persona_status_provider = persona_status_provider
+        self.initialization_check_provider = initialization_check_provider
         self.on_complete = on_complete
         self.logger = logger
         self.state = {
             "step": 0,
             "models": [],
             "ollama_ok": False,
-            "chat_model": str(self.settings_get("chat_model", "qwen3:8b") or "qwen3:8b"),
-            "embedding_model": str(self.settings_get("embedding_model", "nomic-embed-text:latest") or "nomic-embed-text:latest")
+            "chat_model": str(self.settings_get("chat_model", "") or ""),
+            "embedding_model": str(self.settings_get("embedding_model", "") or "")
         }
 
         self.title(self.t("first_run_window_title"))
@@ -169,6 +171,14 @@ class FirstRunWizard(ctk.CTkToplevel):
             ctk.CTkLabel(self.content_card.body, text="Aurora", font=FONT_APP_TITLE).pack(anchor="w", pady=(12, 6))
             self.text_row(self.t("first_run_version_build").format(release=self.release, build=self.build), status="healthy")
             self.text_row(self.t("first_run_welcome_message"), size=15)
+            if callable(self.initialization_check_provider):
+                for item in self.initialization_check_provider():
+                    status = item.get("status", "disabled")
+                    marker = "✓" if status == "healthy" else "!"
+                    self.text_row(
+                        f"{marker} {item.get('name', '')}: {item.get('detail', '')}",
+                        status=status
+                    )
         elif step == 1:
             self.title_label.configure(text=self.t("first_run_step_detect_ollama"))
             self.text_row(self.t("first_run_detect_ollama_hint"))

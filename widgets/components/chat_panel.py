@@ -77,6 +77,8 @@ class ChatPanel(ctk.CTkFrame):
         self.voice_active = False
         self.input_default_height = 72
         self.input_line_height = 24
+        self._input_has_focus = False
+        self._input_placeholder_visible = False
 
         self.build()
 
@@ -180,7 +182,8 @@ class ChatPanel(ctk.CTkFrame):
             font=FONT_BODY,
             border_spacing=12,
             fg_color="transparent",
-            border_width=0
+            border_width=0,
+            text_color="#111827"
         )
         self.input_box.grid(row=0, column=0, sticky="ew", padx=(SPACING_MEDIUM, SPACING_SMALL), pady=SPACING_SMALL)
         self.input_placeholder_label = ctk.CTkLabel(
@@ -191,13 +194,14 @@ class ChatPanel(ctk.CTkFrame):
             anchor="w"
         )
         self.input_placeholder_label.grid(row=0, column=0, sticky="w", padx=(SPACING_LARGE, SPACING_SMALL))
+        self._input_placeholder_visible = True
         self.input_placeholder_label.bind("<Button-1>", lambda _event=None: self.focus_input())
         bind_text_edit_shortcuts(self.input_box)
         self.input_box.bind("<Return>", self.handle_input_return)
         self.input_box.bind("<Shift-Return>", self.handle_input_shift_return)
         self.input_box.bind("<KeyRelease>", self.resize_input_box)
-        self.input_box.bind("<FocusIn>", self._refresh_input_placeholder, add="+")
-        self.input_box.bind("<FocusOut>", self._refresh_input_placeholder, add="+")
+        self.input_box.bind("<FocusIn>", self._handle_input_focus_in, add="+")
+        self.input_box.bind("<FocusOut>", self._handle_input_focus_out, add="+")
         self.attach_text_menu(self.input_box)
 
         input_actions = ctk.CTkFrame(input_card, fg_color="transparent")
@@ -396,6 +400,7 @@ class ChatPanel(ctk.CTkFrame):
         try:
             self._sync_input_action_mode()
             self.input_box.focus_set()
+            self._handle_input_focus_in()
         except Exception:
             return
 
@@ -425,13 +430,28 @@ class ChatPanel(ctk.CTkFrame):
     def _refresh_input_placeholder(self, _event=None):
         try:
             content = self.input_box.get("1.0", "end-1c").strip()
-            if content:
-                self.input_placeholder_label.grid_remove()
-            else:
-                self.input_placeholder_label.grid()
-                self.input_placeholder_label.lift()
+            self._set_input_placeholder_visible(not self._input_has_focus and not content)
         except Exception:
             return
+
+    def _handle_input_focus_in(self, _event=None):
+        self._input_has_focus = True
+        self._set_input_placeholder_visible(False)
+
+    def _handle_input_focus_out(self, _event=None):
+        self._input_has_focus = False
+        self._refresh_input_placeholder()
+
+    def _set_input_placeholder_visible(self, visible):
+        visible = bool(visible)
+        if visible == self._input_placeholder_visible:
+            return
+        if visible:
+            self.input_placeholder_label.grid()
+            self.input_placeholder_label.lift()
+        else:
+            self.input_placeholder_label.grid_remove()
+        self._input_placeholder_visible = visible
 
     def reset_input_box_height(self):
         try:

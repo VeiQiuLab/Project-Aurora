@@ -7,6 +7,8 @@ import uuid
 from datetime import datetime, timezone
 from pathlib import Path
 
+from modules.app_paths import MEMORY_DIR
+
 
 MEMORY_TYPES = {"preference", "fact", "instruction"}
 MEMORY_METADATA_FIELDS = {
@@ -116,12 +118,11 @@ class MemoryStore:
     """Manage manually curated memories without automatic chat analysis."""
 
     def __init__(self, file_path=None):
-        root = Path(__file__).resolve().parent.parent
         if file_path:
             candidate = Path(file_path)
             self.file_path = candidate / "memories.json" if candidate.suffix.lower() != ".json" else candidate
         else:
-            self.file_path = root / "data" / "memory" / "memories.json"
+            self.file_path = MEMORY_DIR / "memories.json"
         self.candidates_file = self.file_path.parent / "memory_candidates.json"
         self.file_path.parent.mkdir(parents=True, exist_ok=True)
         self._lock = threading.Lock()

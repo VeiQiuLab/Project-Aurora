@@ -1,0 +1,91 @@
+{
+    "app_name": "Project Aurora",
+    "theme": "System",
+    "appearance": "System",
+    "language": "zh_CN",
+    "first_run": {
+        "completed": false
+    },
+    "memory": {
+        "max_injection": 5,
+        "min_importance": 0
+    },
+    "persona": {
+        "enabled": true
+    },
+    "voice": {
+        "enabled": false,
+        "recorder": {
+            "device_name": "",
+            "preferred_device_keyword": "",
+            "last_successful_device_guid": "",
+            "backend": "frame_pipeline",
+            "sample_rate": 16000,
+            "channels": 1,
+            "ffmpeg_path": "ffmpeg",
+            "pre_roll_ms": 500,
+            "pre_roll_buffer_ms": 1000,
+            "maximum_recording_duration": 180.0,
+            "silence_end_threshold": 10.0,
+            "min_duration_ms": 750
+        },
+        "vad": {
+            "threshold": 0.014,
+            "frame_duration_ms": 20,
+            "minimum_active_duration_ms": 100,
+            "peak_threshold": 0.03
+        },
+        "session": {
+            "inactivity_timeout_seconds": 180.0
+        },
+        "stt": {
+            "provider": "faster_whisper",
+            "model_size": "small",
+            "device": "auto",
+            "compute_type": "auto"
+        },
+        "tts": {
+            "provider": "edge_tts",
+            "voice": "zh-CN-XiaoxiaoNeural"
+        },
+        "playback": {
+            "backend": "pygame",
+            "enabled": true,
+            "wait_for_completion": true,
+            "timeout_seconds": 120.0
+        }
+    },
+    "knowledge": {
+        "enabled": true,
+        "max_results": 3,
+        "preview_limit": 5000,
+        "enabled_filter": "All",
+        "sort_field": "Updated Time",
+        "sort_direction": "Descending",
+        "backup_path": "knowledge/backups",
+        "max_backup_count": 10
+    },
+    "context": {
+        "warning_tokens": 6000,
+        "preview_limit": 4000,
+        "inspector_preview_limit": 4000
+    },
+    "chat_model": "",
+    "embedding_model": "",
+    "window": {
+        "width": 1200,
+        "height": 760
+    },
+    "status": {
+        "refresh_interval": 3
+    },
+    "ollama": {
+        "host": "http://127.0.0.1:11434",
+        "auto_start": false
+    },
+    "services": {
+        "ollama": {
+            "command": "ollama serve"
+        }
+    }
+}

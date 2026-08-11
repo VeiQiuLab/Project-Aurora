@@ -10,3 +10,22 @@
 - [ ] Health Dashboard 测试通过
 - [ ] Settings 测试通过
 - [ ] Service Connection 测试通过
+- [ ] 使用完整 Windows CPython 3.12 构建，`import tkinter` / `tkinter.ttk` / `tkinter.filedialog` 通过
+- [ ] `tools/ffmpeg.exe` 已放入发布资源
+- [ ] `assets/` 已放入发布资源
+- [ ] `./build_exe.ps1 -Python C:\Path\To\python.exe` 生成 `dist/Aurora/Aurora.exe`
+- [ ] `dist/Aurora/_internal` 存在
+- [ ] `dist/Aurora/assets` 存在
+- [ ] `dist/Aurora/tools/ffmpeg.exe` 存在
+- [ ] Inno Setup 6 `ISCC.exe` 可用
+- [ ] `./installer/build_installer.ps1 -ISCC C:\Path\To\ISCC.exe` 生成 `installer/Aurora-v3.7.2-Setup.exe`
+- [ ] 安装到用户测试目录
+- [ ] 首次启动生成 `%APPDATA%/Aurora/config/settings.json`
+- [ ] 首次启动生成 `%APPDATA%/Aurora/conversations`
+- [ ] 首次启动生成 `%APPDATA%/Aurora/memory`
+- [ ] 首次启动生成 `%APPDATA%/Aurora/knowledge`
+- [ ] 首次启动生成 `%APPDATA%/Aurora/persona`
+- [ ] 首次启动生成 `%APPDATA%/Aurora/logs`
+- [ ] Chat 页面启动通过
+- [ ] Settings 页面启动通过
+- [ ] Voice Environment 检测通过

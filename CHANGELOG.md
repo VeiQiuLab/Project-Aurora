@@ -1,5 +1,15 @@
 # Project Aurora Changelog
 
+## v3.7.2 - 2026-08-04
+
+### Release Preparation
+
+- Added AppData-based user configuration and data directory isolation for Windows installer builds.
+- Added default settings template generation for first launch without packaging personal configuration.
+- Updated Voice microphone discovery to prefer selected, cached, Windows default, and keyword-matched devices without requiring INZONE H9.
+- Added Settings Voice device selection and microphone test entry points.
+- Added Inno Setup script for `Aurora-v3.7.2-Setup.exe`.
+
 ## v3.7.0 - 2026-08-04
 
 ### Chat-first UI

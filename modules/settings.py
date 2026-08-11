@@ -1,16 +1,22 @@
 import copy
 import json
-from pathlib import Path
+
+from modules.app_paths import CONFIG_DIR, CONFIG_FILE, DEFAULT_SETTINGS_FILE
 
 
 class Settings:
     def __init__(self):
-        self.base_dir = Path(__file__).resolve().parent.parent
-        self.config_dir = self.base_dir / "config"
-        self.config_file = self.config_dir / "settings.json"
+        self.config_dir = CONFIG_DIR
+        self.config_file = CONFIG_FILE
 
-        self.default_settings = {
-            "app_name": "Project Aurora \u00b7 Xu",
+        self.default_settings = self._load_default_settings()
+        self.data = {}
+        self.load()
+
+    @staticmethod
+    def _fallback_default_settings():
+        return {
+            "app_name": "Project Aurora",
             "theme": "System",
             "appearance": "System",
             "language": "zh_CN",
@@ -27,8 +33,8 @@ class Settings:
             "voice": {
                 "enabled": False,
                 "recorder": {
-                    "device_name": r"@device_cm_{33D9A762-90C8-11D0-BD43-00A0C911CE86}\wave_{C50E681C-D780-458E-ADCE-5F46F249D8D0}",
-                    "preferred_device_keyword": "INZONE H9",
+                    "device_name": "",
+                    "preferred_device_keyword": "",
                     "last_successful_device_guid": "",
                     "backend": "frame_pipeline",
                     "sample_rate": 16000,
@@ -73,7 +79,7 @@ class Settings:
                 "enabled_filter": "All",
                 "sort_field": "Updated Time",
                 "sort_direction": "Descending",
-                "backup_path": "data/knowledge/backups",
+                "backup_path": "knowledge/backups",
                 "max_backup_count": 10
             },
             "context": {
@@ -81,47 +87,53 @@ class Settings:
                 "preview_limit": 4000,
                 "inspector_preview_limit": 4000
             },
-            "chat_model": "qwen3:8b",
-            "embedding_model": "nomic-embed-text:latest",
+            "chat_model": "",
+            "embedding_model": "",
             "window": {
                 "width": 1200,
                 "height": 760
             },
+            "status": {
+                "refresh_interval": 3
+            },
             "ollama": {
                 "host": "http://127.0.0.1:11434",
-                "auto_start": True
-            },
-            "openwebui": {
-                "host": "http://localhost:8080",
-                "auto_start": True,
-                "type": "docker",
-                "container_name": "open-webui",
-                "quit_docker_on_close": False
+                "auto_start": False
             },
             "services": {
                 "ollama": {
                     "command": "ollama serve"
-                },
-                "openwebui": {
-                    "command": "docker start open-webui"
-                },
-                "docker": {
-                    "start_command": "docker desktop start",
-                    "stop_command": "docker desktop stop",
-                    "auto_start": True,
-                    "path": r"C:\Program Files\Docker\Docker\Docker Desktop.exe",
-                    "startup_timeout": 60
                 }
             }
         }
 
-        self.data = {}
-        self.load()
+    @classmethod
+    def _load_default_settings(cls):
+        if DEFAULT_SETTINGS_FILE.exists():
+            try:
+                with DEFAULT_SETTINGS_FILE.open("r", encoding="utf-8") as file:
+                    data = json.load(file)
+                if isinstance(data, dict):
+                    return data
+            except Exception:
+                pass
+        return cls._fallback_default_settings()
 
     def load(self):
         self.config_dir.mkdir(parents=True, exist_ok=True)
 
         if not self.config_file.exists():
+            if DEFAULT_SETTINGS_FILE.exists():
+                try:
+                    self.config_file.write_text(
+                        DEFAULT_SETTINGS_FILE.read_text(encoding="utf-8"),
+                        encoding="utf-8"
+                    )
+                    with self.config_file.open("r", encoding="utf-8") as file:
+                        self.data = json.load(file)
+                    return
+                except Exception:
+                    pass
             self.data = copy.deepcopy(self.default_settings)
             self.save()
             return
@@ -142,6 +154,8 @@ class Settings:
         if self._migrate_language_settings():
             changed = True
         if self._remove_legacy_remote_settings():
+            changed = True
+        if self._remove_legacy_openwebui_settings():
             changed = True
         if changed:
             try:
@@ -169,6 +183,23 @@ class Settings:
                 changed = True
         return changed
 
+    def _remove_legacy_openwebui_settings(self):
+        """Remove settings belonging to the retired Open WebUI integration."""
+
+        if not isinstance(self.data, dict):
+            return False
+        changed = False
+        if "openwebui" in self.data:
+            del self.data["openwebui"]
+            changed = True
+        services = self.data.get("services")
+        if isinstance(services, dict):
+            for key in ("openwebui", "docker"):
+                if key in services:
+                    del services[key]
+                    changed = True
+        return changed
+
     @staticmethod
     def normalize_language(language):
         value = str(language or "").strip().lower().replace("-", "_")
@@ -192,10 +223,12 @@ class Settings:
         if legacy_model and (not current_chat_model or current_chat_model == self.default_settings["chat_model"]):
             self.data["chat_model"] = legacy_model
             changed = True
-        if not str(self.data.get("chat_model", "") or "").strip():
+        default_chat_model = str(self.default_settings.get("chat_model", "") or "").strip()
+        default_embedding_model = str(self.default_settings.get("embedding_model", "") or "").strip()
+        if default_chat_model and not str(self.data.get("chat_model", "") or "").strip():
             self.data["chat_model"] = self.default_settings["chat_model"]
             changed = True
-        if not str(self.data.get("embedding_model", "") or "").strip():
+        if default_embedding_model and not str(self.data.get("embedding_model", "") or "").strip():
             self.data["embedding_model"] = self.default_settings["embedding_model"]
             changed = True
         return changed

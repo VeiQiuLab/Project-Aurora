@@ -10,7 +10,7 @@ from modules.experience.audio.recorder import AudioRecorder
 from modules.experience.audio.real_playback import RealPlaybackController
 from modules.experience.audio.ffmpeg_source import FFmpegAudioFrameSource
 from modules.experience.audio.frame_pipeline import AudioFrameBuffer
-from modules.experience.audio.device_discovery import resolve_voice_input_device
+from modules.experience.audio.device_discovery import resolve_ffmpeg_path, resolve_voice_input_device
 from modules.experience.audio.vad import RMSVADAdapter
 from modules.experience.state import CompanionStateStore
 
@@ -91,7 +91,7 @@ def create_voice_runtime(
             sample_rate=int(_get_setting(settings, "voice.recorder.sample_rate", 16000)),
             channels=int(_get_setting(settings, "voice.recorder.channels", 1)),
             frame_duration_ms=int(_get_setting(settings, "voice.vad.frame_duration_ms", 20)),
-            ffmpeg_path=str(_get_setting(settings, "voice.recorder.ffmpeg_path", "ffmpeg")),
+            ffmpeg_path=resolve_ffmpeg_path(str(_get_setting(settings, "voice.recorder.ffmpeg_path", "ffmpeg"))),
         )
         vad = RMSVADAdapter(
             buffer.subscribe(pre_roll_ms=0),

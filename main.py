@@ -14,15 +14,14 @@ from tkinter import filedialog, messagebox, StringVar
 
 from modules.version import *
 from modules.logger import logger
+from modules.app_paths import CONFIG_FILE, DEFAULT_SETTINGS_FILE, ensure_user_data_directories
 
 
-configuration_file = Path(__file__).resolve().parent / "config" / "settings.json"
+configuration_file = CONFIG_FILE
 
 
 def ensure_runtime_directories():
-    project_root = Path(__file__).resolve().parent
-    for relative_path in ("data", "data/conversations", "data/memory", "data/knowledge", "data/persona", "config", "logs"):
-        (project_root / relative_path).mkdir(parents=True, exist_ok=True)
+    ensure_user_data_directories()
 
 
 ensure_runtime_directories()
@@ -47,8 +46,6 @@ def inspect_configuration_file():
         "window.height",
         "ollama.host",
         "ollama.auto_start",
-        "openwebui.host",
-        "openwebui.auto_start",
         "status.refresh_interval",
         "persona.enabled",
         "knowledge.enabled",
@@ -65,8 +62,6 @@ def inspect_configuration_file():
         "first_run.completed",
         "chat_model",
         "embedding_model",
-        "network.preferred_interface",
-        "network.ignore_virtual_adapter",
     ]
 
     for path in required_paths:
@@ -83,8 +78,7 @@ configuration_issue = inspect_configuration_file()
 
 from modules.settings import settings
 from modules.settings_controller import SettingsController
-from modules.health import check_all, check_ollama_api, check_http_service, system_self_check
-from modules.launcher import open_webui
+from modules.health import check_all, system_self_check
 from modules.models import get_model_records, get_models, infer_model_capability
 from modules.chat import (
     ChatError,
@@ -104,6 +98,7 @@ from modules.knowledge import KnowledgeStore
 from modules.persona import PersonaStore
 from modules.language import TEXT, set_language as set_legacy_language
 from modules.i18n import normalize_language, set_language as set_i18n_language, t
+from modules.startup_diagnostics import initialization_check
 from modules.ui_theme import (
     button_style,
     COLOR_ERROR,
@@ -125,9 +120,10 @@ from modules.memory_retrieval import format_memory_context, retrieve_memories
 from modules.retrieval import format_knowledge_context, search_knowledge, retrieval_summary
 from modules.service_manager import ServiceManager
 from modules.shutdown_manager import ShutdownManager
-from modules.experience.audio.device_discovery import resolve_voice_input_device
+from modules.experience.audio.device_discovery import resolve_ffmpeg_path, resolve_voice_input_device
 from modules.experience.audio.recorder import FFmpegMicrophoneRecorder
 from modules.experience.state import CompanionStateStore
+from modules.experience.voice.dependency_manager import check_dependencies as check_voice_dependencies
 from modules.experience.voice.integration import create_voice_runtime
 from widgets.app_shell import AppShell
 from widgets.chat_window import ChatWindow
@@ -363,9 +359,7 @@ persona_store = PersonaStore()
 service_manager = ServiceManager()
 shutdown_manager = ShutdownManager(logger=logger)
 service_lifecycle = {
-    "ollama_started_by_app": False,
-    "openwebui_started_by_app": False,
-    "openwebui_process_started_by_app": False
+    "ollama_started_by_app": False
 }
 
 
@@ -383,10 +377,6 @@ def mark_service_started_by_app(service_name):
             "Ollama started by Aurora: "
             f"pid={metadata.get('pid')}, executable={metadata.get('executable_path')}"
         )
-    elif service_name == "openwebui":
-        service_lifecycle["openwebui_started_by_app"] = True
-    elif service_name == "openwebui_process":
-        service_lifecycle["openwebui_process_started_by_app"] = True
 
 
 def fetch_ollama_models_from_api(timeout=5):
@@ -452,6 +442,7 @@ def show_first_run_wizard():
         settings_get=settings.get,
         model_fetcher=fetch_ollama_models_from_api,
         persona_status_provider=current_persona_status,
+        initialization_check_provider=lambda: initialization_check(settings),
         on_complete=complete_first_run,
         logger=logger
     )
@@ -470,7 +461,7 @@ dashboard_last_check_label = ctk.CTkLabel(
     text_color=COLOR_MUTED
 )
 
-for name in ["Ollama", "Open WebUI", "API 11434"]:
+for name in ["Ollama", "API 11434"]:
 
     row = ctk.CTkFrame(
         status_frame,
@@ -495,16 +486,6 @@ for name in ["Ollama", "Open WebUI", "API 11434"]:
     state.pack(side="right")
 
     status_labels[name] = (lbl, state)
-
-docker_status_labels = {}
-for name in ["Docker Desktop", "Docker Engine"]:
-    row = ctk.CTkFrame(status_frame, fg_color="transparent")
-    row.pack(fill="x", padx=15, pady=2)
-    lbl = ctk.CTkLabel(row, text=name, anchor="w", font=FONT_NORMAL)
-    lbl.pack(side="left")
-    state = ctk.CTkLabel(row, text=t("checking"), font=FONT_SMALL, text_color=COLOR_MUTED)
-    state.pack(side="right")
-    docker_status_labels[name] = state
 
 status_summary_label.pack(pady=(8, 2))
 dashboard_last_check_label.pack(pady=(0, 10))
@@ -714,27 +695,13 @@ def run_diagnostic():
 
     def worker():
         logger.info("Ollama API check")
-        logger.info("Docker Engine check")
-        logger.info("Open WebUI check")
-        result = service_manager.diagnose_all(
-            settings.get("ollama.host", "http://127.0.0.1:11434"),
-            settings.get("openwebui.host", "http://localhost:8080"),
-            settings.get("openwebui.container_name", "open-webui")
+        ollama = service_manager.diagnose_ollama(
+            settings.get("ollama.host", "http://127.0.0.1:11434")
         )
         lines = ["AI Environment Diagnostic"]
-        ollama = result["ollama"]
-        docker = result["docker"]
-        webui = result["openwebui"]
         lines.append(f"{'OK' if ollama['available'] else 'FAIL'} Ollama API: {ollama['status']} - {ollama['reason']}")
-        lines.append(f"{'OK' if docker['engine_ready'] else 'FAIL'} Docker Engine: {docker['status']}")
-        lines.append(f"{'OK' if webui['container'] == 'running' else 'FAIL'} Open WebUI Container: {webui['container']}")
-        lines.append(f"{'OK' if webui['available'] else 'FAIL'} Open WebUI HTTP: {webui['status']} - {webui['reason']}")
         if not ollama["available"]:
             logger.error("Ollama API unavailable")
-        if not docker["engine_ready"]:
-            logger.error("Docker Engine unavailable")
-        if not webui["available"]:
-            logger.error("Open WebUI connection failed")
         logger.info("Diagnostic completed")
 
         def finish():
@@ -770,81 +737,6 @@ def start_ollama_manual():
         settings.get("services.ollama.command", "ollama serve"),
         settings.get("ollama.host", "http://127.0.0.1:11434"),
         callback=ollama_manual_event
-    )
-
-
-def restart_openwebui_manual():
-    container = settings.get("openwebui.container_name", "open-webui")
-    url = settings.get("openwebui.host", "http://localhost:8080")
-    service_manager.stop_open_webui_docker(container, callback=lambda event: launch_open_webui() if event == "stopped" else None)
-
-
-def restart_container_manual():
-    restart_openwebui_manual()
-
-
-def launch_open_webui():
-    """Open WebUI on demand, starting Docker only when the service is requested."""
-    if settings.get("openwebui.type", "docker") != "docker":
-        open_webui()
-        return
-
-    container = settings.get("openwebui.container_name", "open-webui")
-    url = settings.get("openwebui.host", "http://localhost:8080")
-
-    def event(name):
-        if name == "starting_docker":
-            logger.info("Starting Docker Desktop")
-        elif name in {"desktop_started", "docker_started"}:
-            logger.info("Docker Desktop started")
-        elif name == "waiting_engine":
-            logger.info("Waiting Docker Engine")
-        elif name == "engine_ready":
-            logger.info("Docker Engine ready")
-        elif name in {"starting_container", "container_started"}:
-            logger.info("Starting Open WebUI")
-            if name == "container_started":
-                mark_service_started_by_app("openwebui")
-        elif name in {"started", "online"}:
-            logger.info("Open WebUI started")
-            if not shutdown_manager.shutting_down:
-                app.after(0, open_webui)
-        elif name == "engine_timeout":
-            logger.error("Docker Engine timeout")
-        elif name in {"docker_unavailable", "command_not_found", "docker_start_failed", "path_not_found", "container_not_found", "container_start_failed", "timeout"}:
-            logger.error(f"Open WebUI start failed: {name}")
-
-    service_manager.start_open_webui_docker_with_engine(
-        container, url,
-        docker_command=settings.get("services.docker.start_command", "docker desktop start"),
-        docker_path=settings.get("services.docker.path", r"C:\Program Files\Docker\Docker\Docker Desktop.exe"),
-        engine_timeout=settings.get("services.docker.startup_timeout", 60),
-        callback=event
-    )
-
-
-def close_open_webui():
-    """Stop the Open WebUI container and optionally Docker Desktop."""
-    if settings.get("openwebui.type", "docker") != "docker":
-        logger.info("Stopping Open WebUI")
-        return
-    logger.info("Stopping Open WebUI")
-
-    def event(name):
-        if name == "stopping_container":
-            logger.info("Stopping Open WebUI container")
-        elif name == "stopped":
-            logger.info("Open WebUI stopped")
-            if settings.get("openwebui.quit_docker_on_close", False):
-                logger.info("Stopping Docker")
-                service_manager.stop_docker_desktop(
-                    settings.get("services.docker.stop_command", "docker desktop stop")
-                )
-        elif name in {"stop_failed", "docker_unavailable", "not_found"}:
-            logger.error(f"Open WebUI stop failed: {name}")
-
-    service_manager.stop_open_webui_docker(
-        settings.get("openwebui.container_name", "open-webui"), callback=event
     )
 
 
@@ -1387,12 +1279,13 @@ def create_application_voice_runtime():
     if not settings.get("voice.enabled", False):
         return None
     device_name = resolve_voice_input_device(settings)
+    ffmpeg_path = resolve_ffmpeg_path(settings.get("voice.recorder.ffmpeg_path", "ffmpeg"))
     logger.info(f"Voice input device: {device_name}")
     recorder = FFmpegMicrophoneRecorder(
         device_name=device_name,
         sample_rate=int(settings.get("voice.recorder.sample_rate", 16000)),
         channels=int(settings.get("voice.recorder.channels", 1)),
-        ffmpeg_path=settings.get("voice.recorder.ffmpeg_path", "ffmpeg"),
+        ffmpeg_path=ffmpeg_path,
         min_duration_ms=int(settings.get("voice.recorder.min_duration_ms", 750)),
     )
     return create_voice_runtime(
@@ -1560,15 +1453,6 @@ action_title = ctk.CTkLabel(
 action_title.pack(anchor="w", padx=15, pady=(5, 10))
 
 
-btn1 = ui_button(
-    actions_frame,
-    text=t("open_webui"),
-    command=launch_open_webui,
-    kind="primary"
-)
-btn1.pack(fill="x", padx=40, pady=8)
-
-
 btn_diagnostic = ui_button(
     actions_frame,
     text=t("runtime_environment_diagnostics"),
@@ -1584,31 +1468,6 @@ btn_start_ollama = ui_button(
     kind="primary"
 )
 btn_start_ollama.pack(fill="x", padx=40, pady=8)
-
-
-btn_restart_webui = ui_button(
-    actions_frame,
-    text=t("restart_openwebui"),
-    command=restart_openwebui_manual
-)
-btn_restart_webui.pack(fill="x", padx=40, pady=8)
-
-
-btn_restart_container = ui_button(
-    actions_frame,
-    text=t("restart_container"),
-    command=restart_container_manual
-)
-btn_restart_container.pack(fill="x", padx=40, pady=8)
-
-
-btn_close_webui = ui_button(
-    actions_frame,
-    text=t("close_openwebui"),
-    command=close_open_webui,
-    kind="danger"
-)
-btn_close_webui.pack(fill="x", padx=40, pady=8)
 
 
 btn2 = ui_button(
@@ -1713,12 +1572,8 @@ def refresh_main_texts():
     status_title.configure(text=t("system_status"))
     startup_title.configure(text=t("startup_status"))
     action_title.configure(text=t("compatibility_tools"))
-    btn1.configure(text=t("open_webui"))
     btn_diagnostic.configure(text=t("runtime_environment_diagnostics"))
     btn_start_ollama.configure(text=t("start_ollama"))
-    btn_restart_webui.configure(text=t("restart_openwebui"))
-    btn_restart_container.configure(text=t("restart_container"))
-    btn_close_webui.configure(text=t("close_openwebui"))
     btn2.configure(text=t("models"))
     btn_chat.configure(text=t("chat"))
     btn_conversation_browser.configure(text=t("conversation_browser"))
@@ -1828,28 +1683,6 @@ def cleanup_callbacks():
             pass
 
 
-def terminate_tracked_process(service_name):
-    metadata = service_manager.service_process_metadata(service_name)
-    logger.info(
-        f"{service_name} shutdown ownership: "
-        f"pid={metadata.get('pid')}, executable={metadata.get('executable_path')}"
-    )
-    try:
-        result = service_manager.stop_tracked_process_tree(service_name)
-    except Exception as error:
-        logger.error(f"{service_name} process shutdown failed: {error}")
-        return
-    logger.info(
-        f"{service_name} shutdown result: "
-        f"state={result.get('state')}, root={result.get('pid')}, "
-        f"children={result.get('children')}, killed={result.get('killed')}"
-    )
-    if result.get("still_running"):
-        logger.error(f"{service_name} residual processes: {result.get('still_running')}")
-    elif result.get("pid"):
-        logger.info(f"{service_name} process tree stopped")
-
-
 def cleanup_started_services():
     if service_lifecycle.get("ollama_started_by_app"):
         logger.info("Ollama cleanup callback started")
@@ -1872,17 +1705,6 @@ def cleanup_started_services():
         if not result.get("ok"):
             logger.error(f"Ollama shutdown incomplete: {result.get('remaining_owned_candidates')}")
         logger.info("Ollama cleanup callback finished")
-    if service_lifecycle.get("openwebui_process_started_by_app"):
-        terminate_tracked_process("openwebui")
-    if service_lifecycle.get("openwebui_started_by_app"):
-        thread = service_manager.stop_open_webui_docker(
-            settings.get("openwebui.container_name", "open-webui"),
-            callback=lambda event: logger.info("Open WebUI stopped") if event == "stopped" else None
-        )
-        try:
-            thread.join(timeout=8)
-        except Exception:
-            pass
 
 
 def cleanup_settings():
@@ -1981,20 +1803,13 @@ def refresh_status():
     def run_check():
         try:
             result = check_all()
-            result["docker"] = service_manager.docker_engine_ready()
-            result["docker_desktop"] = service_manager.docker_desktop_running()
             ollama_diag = service_manager.diagnose_ollama(
                 settings.get("ollama.host", "http://127.0.0.1:11434")
             )
-            webui_diag = service_manager.diagnose_openwebui(
-                settings.get("openwebui.container_name", "open-webui"),
-                settings.get("openwebui.host", "http://localhost:8080")
-            )
             result["ollama"] = ollama_diag["available"]
-            result["webui"] = webui_diag["available"]
         except Exception as error:
             logger.error(f"Status check failed: {error}")
-            result = {"ollama": False, "webui": False, "api": False, "docker": False, "docker_desktop": False}
+            result = {"ollama": False, "api": False}
 
         def finish_check():
             global status_check_running
@@ -2011,13 +1826,11 @@ def apply_status(status):
 
     mapping = {
         "Ollama": status["ollama"],
-        "Open WebUI": status["webui"],
         "API 11434": status["api"]
     }
 
     endpoints = {
         "Ollama": ServiceManager.endpoint(settings.get("ollama.host", "http://127.0.0.1:11434")),
-        "Open WebUI": ServiceManager.endpoint(settings.get("openwebui.host", "http://localhost:8080")),
         "API 11434": ServiceManager.endpoint(settings.get("ollama.host", "http://127.0.0.1:11434"), default_port=11434)
     }
 
@@ -2062,18 +1875,6 @@ def apply_status(status):
         text_color=COLOR_MUTED
     )
 
-    docker_ready = bool(status.get("docker", False))
-    docker_desktop = bool(status.get("docker_desktop", docker_ready))
-    if "Docker Desktop" in docker_status_labels:
-        docker_status_labels["Docker Desktop"].configure(
-            text=t("online") if docker_desktop else t("offline"),
-            text_color=COLOR_SUCCESS if docker_desktop else COLOR_ERROR
-        )
-        docker_status_labels["Docker Engine"].configure(
-            text=t("ready") if docker_ready else t("not_ready"),
-            text_color=COLOR_SUCCESS if docker_ready else COLOR_ERROR
-        )
-
     try:
         refresh_interval = float(
             settings.get("status.refresh_interval", 3)
@@ -2097,7 +1898,7 @@ def startup_check():
         project_root / "modules" / "knowledge.py",
         project_root / "modules" / "retrieval.py",
         project_root / "modules" / "persona.py",
-        project_root / "config" / "settings.json"
+        DEFAULT_SETTINGS_FILE
     ]
     missing = [str(path.name) for path in required_paths if not path.exists()]
     if missing:
@@ -2109,6 +1910,14 @@ def startup_check():
     logger.info("Configuration loaded")
     logger.info("Logger initialized")
     logger.info("Required modules loaded")
+    voice_dependency_report = check_voice_dependencies(settings)
+    if voice_dependency_report["ready"]:
+        logger.info("Voice dependencies ready")
+    else:
+        missing = [item["name"] for item in voice_dependency_report["missing"]]
+        logger.warning("Voice dependency missing:")
+        for dependency_name in missing:
+            logger.warning(f"- {dependency_name}")
 
     def check_services():
         service_started = time.perf_counter()
@@ -2162,73 +1971,8 @@ def startup_check():
                     callback=ollama_event
                 )
 
-        if status.get("webui", False):
-            logger.info("Open WebUI connected")
-        else:
-            logger.info("Open WebUI unavailable")
-            if settings.get("openwebui.auto_start", False):
-                def service_event(event):
-                    if event == "starting":
-                        logger.info("Starting Open WebUI")
-                    elif event == "starting_container":
-                        logger.info("Starting Open WebUI container")
-                    elif event == "started":
-                        if settings.get("openwebui.type", "docker") != "docker":
-                            mark_service_started_by_app("openwebui_process")
-                        logger.info("Open WebUI started")
-                        if not shutdown_manager.shutting_down:
-                            app.after(0, refresh_status)
-                    elif event == "container_started":
-                        mark_service_started_by_app("openwebui")
-                        logger.info("Open WebUI container started")
-                    elif event == "docker_unavailable":
-                        logger.error("Open WebUI start failed: Docker Desktop unavailable")
-                    elif event == "container_not_found":
-                        logger.error("Open WebUI start failed: container not found")
-                    elif event == "container_start_failed":
-                        logger.error("Docker container start failed")
-                    elif event == "timeout":
-                        logger.error("Open WebUI start failed: port timeout")
-                    elif event == "command_not_found":
-                        logger.error("Open WebUI start failed: command not found")
-                    elif event == "failed":
-                        logger.error("Open WebUI start failed")
-
-                if settings.get("openwebui.type", "docker") == "docker" and settings.get("services.docker.auto_start", True):
-                    def docker_event(event):
-                        if event == "starting_docker":
-                            logger.info("Starting Docker Desktop")
-                        elif event == "desktop_started":
-                            logger.info("Docker Desktop started")
-                        elif event == "waiting_engine":
-                            logger.info("Waiting Docker Engine")
-                        elif event == "engine_ready":
-                            logger.info("Docker Engine ready")
-                        elif event == "engine_timeout":
-                            logger.error("Docker Engine timeout")
-                        service_event(event)
-
-                    service_manager.start_open_webui_docker_with_engine(
-                        settings.get("openwebui.container_name", "open-webui"),
-                        settings.get("openwebui.host", "http://localhost:8080"),
-                        docker_command=settings.get("services.docker.start_command", "docker desktop start"),
-                        docker_path=settings.get("services.docker.path", r"C:\Program Files\Docker\Docker\Docker Desktop.exe"),
-                        engine_timeout=settings.get("services.docker.startup_timeout", 60),
-                        callback=docker_event
-                    )
-                elif settings.get("openwebui.type", "docker") == "docker":
-                    logger.info("Docker skipped (Open WebUI disabled)")
-                else:
-                    service_manager.start_open_webui(
-                        settings.get("services.openwebui.command", "open-webui serve"),
-                        settings.get("openwebui.host", "http://localhost:8080"),
-                        callback=service_event
-                    )
-            else:
-                logger.info("Docker skipped (Open WebUI disabled)")
         logger.info("Startup Diagnostic:")
         logger.info(f"Ollama: {'Ready' if ollama_connected else 'Offline'}")
-        logger.info(f"Open WebUI: {'Ready' if status.get('webui', False) else 'Offline'}")
         logger.info("Startup diagnostic completed")
         logger.info(
             f"Service check duration: {int((time.perf_counter() - service_started) * 1000)}ms"

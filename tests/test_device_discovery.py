@@ -2,6 +2,7 @@ from modules.experience.audio.device_discovery import (
     enumerate_dshow_audio_devices,
     resolve_voice_input_device,
 )
+from modules.experience.subprocess_utils import with_hidden_console
 
 
 DSHOW_OUTPUT = '''
@@ -20,6 +21,19 @@ def test_enumerate_dshow_audio_devices_parses_guid():
     assert len(devices) == 1
     assert "INZONE H9" in devices[0].name
     assert devices[0].device_name.endswith("D8D0}")
+
+
+def test_enumerate_dshow_audio_devices_hides_windows_console():
+    captured = {}
+
+    def capturing_run(*_args, **kwargs):
+        captured.update(kwargs)
+        return type("Result", (), {"stdout": "", "stderr": DSHOW_OUTPUT, "returncode": 1})()
+
+    enumerate_dshow_audio_devices(run=capturing_run)
+
+    for key, value in with_hidden_console().items():
+        assert captured[key] == value
 
 
 def test_resolve_prefers_keyword_and_caches_guid():
