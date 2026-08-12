@@ -1,5 +1,6 @@
 import pytest
 
+import modules.experience.voice.sentence_splitter as sentence_splitter_module
 from modules.experience.voice.sentence_splitter import SentenceSplitter
 
 
@@ -32,12 +33,14 @@ def test_sentence_splitter_rejects_non_string_chunks():
         SentenceSplitter().feed(None)
 
 
-def test_sentence_splitter_flushes_expired_unterminated_buffer():
-    splitter = SentenceSplitter(max_wait_seconds=0.001)
+def test_sentence_splitter_flushes_expired_unterminated_buffer(monkeypatch):
+    timestamps = iter((100.0, 102.0, 102.0))
+    monkeypatch.setattr(sentence_splitter_module, "monotonic", lambda: next(timestamps))
+    splitter = SentenceSplitter(max_wait_seconds=1.5)
     assert splitter.feed("a long streamed response") == []
-    import time
-    time.sleep(0.01)
-    assert splitter.feed(" continues") == ["a long streamed response continues"]
+    assert splitter.feed(" continues") == ["a long streamed response"]
+    assert splitter.pending_text == " continues"
+    assert splitter.flush() == ["continues"]
     assert splitter.pending_text == ""
 
 

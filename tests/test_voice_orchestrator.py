@@ -74,7 +74,8 @@ def test_stt_failure_falls_back_through_error_to_idle():
     result = orchestrator.run()
 
     assert result.success is False
-    assert result.stage == "voice_pipeline"
+    assert result.stage == "stt"
+    assert "stt unavailable" in result.diagnostics["reason"]
     assert orchestrator.state_store.current_state is CompanionState.IDLE
     assert [event.current_state for event in events][-2:] == [
         CompanionState.ERROR,
