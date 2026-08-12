@@ -7,6 +7,58 @@ features that were later removed from the current product direction.
 
 No uncommitted experimental work is recorded as completed release behavior.
 
+## v3.8.0-alpha - Release Candidate - 2026-08-12
+
+This alpha is the first Project Aurora v3.8 Windows installer release. It is a
+pre-release and must not be treated as a stable release.
+
+### Chat and Conversation
+
+- Unified text and Voice turns through the shared ChatPage pipeline and a
+  non-blocking single-active-turn gate.
+- Added asynchronous semantic Conversation titles with rule fallback, manual
+  title protection, stale-task protection, and live Sidebar refresh.
+- Modernized message presentation with right-aligned user bubbles, open
+  assistant text, one streaming message widget, and improved dark-theme
+  readability.
+
+### Voice Experience (Experimental)
+
+- Hardened interrupt, session, generation, cancellation, and stale-output
+  lifecycle handling.
+- Added 800 ms VAD silence auto-stop, incremental SentenceSplitter processing,
+  FIFO TTSQueue playback, and latency diagnostics.
+- Preserved the existing Faster-Whisper, Edge-TTS, Playback, Conversation,
+  Memory, Knowledge/RAG, and Persona boundaries.
+
+### Repository and Distribution
+
+- Consolidated current repository documentation and archived historical design
+  documents without restoring removed product directions.
+- Improved Windows Python 3.12 build discovery and unified version metadata for
+  PyInstaller and Inno Setup.
+
+### Known Limitations
+
+- Voice remains experimental and turn-based; it is not realtime or full-duplex.
+- Interrupt stops queued TTS and playback, but an in-flight Ollama request may
+  continue generating text until the current turn exits its streaming loop.
+- Long-running validation on real microphone and playback devices remains
+  limited.
+- The Windows installer is unsigned, so Windows SmartScreen may display a
+  warning.
+- Uninstall removes application files but preserves user data under
+  `%APPDATA%\Aurora`.
+- Ollama remains required for the local chat model runtime. FFmpeg is bundled
+  in the Windows installer for Voice media processing.
+
+### Windows Installer
+
+- Artifact: `Aurora-v3.8.0-alpha-Setup.exe`
+- SHA256: `7DEEB26723B7182B2475734438D61A3E26C101CCAFB2E3438F3F4F907FCF81A2`
+- PyInstaller, packaged application, Inno Setup, installation, launch,
+  shortcut, and uninstall smoke tests passed for this alpha candidate.
+
 ## v3.7.2 - Release Preparation - 2026-08-04
 
 ### Release Preparation

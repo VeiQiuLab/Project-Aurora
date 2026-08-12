@@ -11,13 +11,11 @@ Open WebUI control center, or Remote/LAN/Mobile service.
 
 ## Version State
 
-- Committed baseline: `cb7abca` (`release: prepare Aurora v3.7.2 distribution`)
-- Code and packaging version at that baseline: `3.7.2`
-- Latest Git tag: `v3.7.0`
-- Current uncommitted development: post-3.7.2 work in the v3.8 direction
+- Release tag: `v3.8.0-alpha`
+- Release version: `3.8.0-alpha`
+- Release state: alpha pre-release
 
-Version 3.7.2 is a release-preparation baseline. It does not have a matching Git
-tag and must not be described as a completed tagged release.
+Version 3.8.0-alpha is an alpha pre-release and must not be described as stable.
 
 ## Current Architecture
 
@@ -81,8 +79,7 @@ callbacks. They are not registered as current top-level AppShell pages.
 
 ## Experimental Components
 
-The current dirty workspace contains post-3.7.2 development. These capabilities
-must not be presented as released v3.7.2 behavior:
+The v3.8.0-alpha candidate includes these experimental capabilities:
 
 - LLM-assisted semantic Conversation titles
 - Chat Bubble UI and streaming message presentation
@@ -124,8 +121,12 @@ generated logs.
   stability validation.
 - `tools/ffmpeg.exe` is required by the Windows packaging flow but is ignored by
   Git; the build environment must provide it separately.
-- Version 3.7.2 has no Git tag.
-- The working tree contains substantial uncommitted post-3.7.2 development.
+- The unsigned Windows installer may trigger a Windows SmartScreen warning.
+- Uninstall preserves user data under `%APPDATA%\Aurora`.
+- The release installer is `Aurora-v3.8.0-alpha-Setup.exe` with SHA256
+  `7DEEB26723B7182B2475734438D61A3E26C101CCAFB2E3438F3F4F907FCF81A2`.
+- PyInstaller, packaged application, Inno Setup, installation, launch,
+  shortcut, and uninstall smoke tests passed for this alpha.
 
 ## Development Rules
 
@@ -149,9 +150,7 @@ generated logs.
 
 ## Next Direction
 
-The current direction is repository and current-state consolidation followed by
-v3.8 Voice/Chat stabilization. Near-term work should focus on reliable shared
-Chat turns, real-device Voice lifecycle validation, and preparation for future
-CompanionState-driven Live2D integration.
+The current direction is v3.8.0-alpha pre-release publication and continued
+real-device Voice validation before any later Experience Layer expansion.
 
 P0/P1/P2 labels are task-local engineering phases, not product version numbers.

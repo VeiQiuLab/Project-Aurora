@@ -27,8 +27,8 @@ platform, general-purpose Agent, or desktop automation framework.
 - ContextBuilder-based prompt context
 - Asynchronous Conversation Intelligence metadata
 
-Semantic Conversation Titles are part of post-3.7.2 development and are not a
-released v3.7.2 capability.
+Semantic Conversation Titles are included in the v3.8.0-alpha release
+candidate. They remain subject to alpha validation.
 
 ### Voice (Experimental)
 
@@ -111,12 +111,17 @@ logs, device identifiers, or user settings containing private information.
 
 ## Project Status
 
-- Latest Git tag: `v3.7.0`
-- Current committed code: `3.7.2` release-preparation baseline at `cb7abca`
-- Current development: post-3.7.2 work in the v3.8 direction
+- Release tag: `v3.8.0-alpha`
+- Release version: `3.8.0-alpha`
+- Release state: alpha pre-release
 
-Version 3.7.2 has not been published as a matching Git tag in this repository.
-Uncommitted development must not be interpreted as released behavior.
+Version 3.8.0-alpha is an alpha pre-release and must not be described as stable.
+The Windows installer is `Aurora-v3.8.0-alpha-Setup.exe` with SHA256
+`7DEEB26723B7182B2475734438D61A3E26C101CCAFB2E3438F3F4F907FCF81A2`.
+It is currently unsigned, so Windows SmartScreen may display a warning.
+Uninstall removes application files while preserving user data under
+`%APPDATA%\Aurora`. FFmpeg is bundled in the installer; Ollama remains required
+for the local chat model runtime.
 
 ## Removed and Historical Features
 

@@ -64,7 +64,7 @@ tests/output/
 AGENTS.md
 
 # Local release and packaging artifacts
-installer/Aurora-v3.7.2-Setup.exe
+installer/Aurora-v*-Setup.exe
 tools/ffmpeg.exe
 packaging_test/AppData/Aurora/
 

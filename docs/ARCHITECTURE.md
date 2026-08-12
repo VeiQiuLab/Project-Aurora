@@ -6,9 +6,8 @@ Project Aurora is a Chat-first, Local-first personal AI companion for Windows.
 The current architecture centers all text and voice input on one ChatPage,
 ChatSession, context pipeline, and Conversation store.
 
-The committed baseline is `cb7abca`, an Aurora 3.7.2 release-preparation
-commit. The latest Git tag is `v3.7.0`. Features present only in the dirty
-post-3.7.2 working tree are marked experimental below.
+The current release is the `v3.8.0-alpha` pre-release. Voice lifecycle and
+streaming capabilities marked below remain experimental.
 
 ## UI Layer
 
@@ -76,9 +75,8 @@ Memory signals. It may trigger Conversation-derived Memory candidate analysis
 without changing the Conversation storage format.
 
 LLM-assisted semantic Conversation titles and their asynchronous Sidebar refresh
-belong to the current post-3.7.2 experimental workspace. They are not part of a
-tagged 3.7.2 release. Manual titles must remain protected from automatic
-replacement.
+are included in the v3.8.0-alpha candidate. Manual titles must remain protected
+from automatic replacement.
 
 ## Voice Experience
 
@@ -116,7 +114,7 @@ mature realtime full-duplex voice interaction.
 THINKING, SPEAKING, and ERROR. Optional UI or future visual layers may observe
 this state but must not create independent global state ownership.
 
-The post-3.7.2 Voice work binds asynchronous work to `session_id` and
+The v3.8.0-alpha Voice work binds asynchronous work to `session_id` and
 `generation_id`, uses cancellation events, and discards stale output. The
 Unified Chat Turn Gate uses a non-blocking single-active-turn rule so text and
 voice cannot mutate the same ChatSession concurrently. These protections remain
@@ -145,7 +143,7 @@ or committed.
 The Windows distribution flow uses:
 
 - `Project Aurora.spec` and PyInstaller for `dist/Aurora/`
-- Inno Setup for `installer/Aurora-v3.7.2-Setup.exe`
+- Inno Setup for `installer/Aurora-v3.8.0-alpha-Setup.exe`
 - project-managed Inno Setup language resources
 - full Windows CPython 3.12 with Tcl/Tk
 

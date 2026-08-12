@@ -1,5 +1,10 @@
 #define MyAppName "Project Aurora"
-#define MyAppVersion "3.7.2"
+#ifndef MyAppVersion
+  #error MyAppVersion must be supplied by build_installer.ps1
+#endif
+#ifndef MyAppWindowsVersion
+  #error MyAppWindowsVersion must be supplied by build_installer.ps1
+#endif
 #define MyAppPublisher "Project Aurora"
 #define MyAppExeName "Aurora.exe"
 
@@ -7,12 +12,15 @@
 AppId={{B8E983B4-31F8-43A4-8C22-A8F2F68A28F7}
 AppName={#MyAppName}
 AppVersion={#MyAppVersion}
+VersionInfoVersion={#MyAppWindowsVersion}
+VersionInfoTextVersion={#MyAppVersion}
+VersionInfoProductTextVersion={#MyAppVersion}
 AppPublisher={#MyAppPublisher}
 DefaultDirName={localappdata}\Aurora
 DefaultGroupName=Project Aurora
 DisableProgramGroupPage=no
 OutputDir=.
-OutputBaseFilename=Aurora-v3.7.2-Setup
+OutputBaseFilename=Aurora-v{#MyAppVersion}-Setup
 Compression=lzma
 SolidCompression=yes
 WizardStyle=modern

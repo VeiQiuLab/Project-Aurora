@@ -9,6 +9,7 @@ remain usable when Voice dependencies or audio hardware are unavailable.
 - [ ] Confirm the intended release version from `modules/version.py`
 - [ ] Update VERSION and BUILD metadata only for an approved release
 - [ ] Synchronize CHANGELOG and release metadata
+- [ ] Confirm display VERSION and derived numeric Windows version agree
 - [ ] Confirm the release commit and intended Git tag agree
 - [ ] Confirm the staging set contains no private data or unrelated binaries
 - [ ] Run `git diff --check`
@@ -96,10 +97,16 @@ not depend on a developer's personal absolute Python path.
 ## Inno Setup Build
 
 - [ ] Inno Setup 6 `ISCC.exe` is available
-- [ ] The installer script and output name use the approved release version
+- [ ] The installer script and output name use the approved display version
+- [ ] Windows FileVersion/ProductVersion numeric fields use the derived
+      four-part version
 - [ ] The installer consumes the complete `dist/Aurora/` directory
 - [ ] Build the installer with `installer/build_installer.ps1`
 - [ ] Confirm the generated Setup executable exists
+- [ ] Confirm the installer is named `Aurora-v3.8.0-alpha-Setup.exe`
+- [ ] Record installer SHA256:
+      `7DEEB26723B7182B2475734438D61A3E26C101CCAFB2E3438F3F4F907FCF81A2`
+- [ ] Document that the installer is unsigned and SmartScreen may warn
 - [ ] Install to a user-selected test directory
 - [ ] Desktop and Start Menu shortcuts work
 - [ ] Uninstall completes successfully
@@ -114,5 +121,8 @@ encode `v3.7.2` as the release process for future versions.
 - [ ] Chat and Ollama work from the installed application
 - [ ] Conversation save and restore work after restart
 - [ ] Settings opens and saves supported options
+- [ ] Confirm uninstall preserves `%APPDATA%\Aurora` user data
+- [ ] Confirm bundled `tools/ffmpeg.exe` is present after installation
+- [ ] Confirm Ollama is documented as required for local chat runtime
 - [ ] Optional Voice Environment diagnostics run without breaking startup
 - [ ] Logs contain no startup attempts for removed Open WebUI, Docker, Remote, or Mobile services
