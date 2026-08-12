@@ -6,6 +6,8 @@ import customtkinter as ctk
 from modules.logger import logger
 from modules.ui_theme import (
     COLOR_MUTED,
+    COLOR_TEXT_ON_LIGHT,
+    COLOR_TEXT_PRIMARY,
     FONT_BODY,
     FONT_HEADER,
     FONT_NORMAL_BOLD,
@@ -79,6 +81,9 @@ class ChatPanel(ctk.CTkFrame):
         self.input_line_height = 24
         self._input_has_focus = False
         self._input_placeholder_visible = False
+        self.message_rows = []
+        self._streaming_assistant_label = None
+        self._streaming_assistant_text = ""
 
         self.build()
 
@@ -134,17 +139,13 @@ class ChatPanel(ctk.CTkFrame):
         message_area.grid(row=1, column=0, sticky="nsew", pady=(0, SPACING_MEDIUM))
         message_area.grid_rowconfigure(0, weight=1)
         message_area.grid_columnconfigure(0, weight=1)
-        self.chat_display = ctk.CTkTextbox(
+        self.chat_display = ctk.CTkScrollableFrame(
             message_area,
-            wrap="word",
-            font=FONT_BODY,
-            border_spacing=14,
             fg_color="transparent",
-            border_width=0
         )
         self.chat_display.grid(row=0, column=0, sticky="nsew")
-        self.configure_chat_tags()
-        self.chat_display.configure(state="disabled")
+        self.chat_display.grid_columnconfigure(0, weight=1)
+        self.chat_display.bind("<Configure>", self._resize_message_bubbles, add="+")
         self.empty_state = ctk.CTkFrame(message_area, fg_color="transparent")
         self.empty_state.grid_columnconfigure(0, weight=1)
         self.empty_state.grid_rowconfigure(0, weight=1)
@@ -330,13 +331,7 @@ class ChatPanel(ctk.CTkFrame):
         return status
 
     def configure_chat_tags(self):
-        try:
-            self.chat_display.tag_config("role_user", foreground="#2563EB", font=FONT_NORMAL_BOLD)
-            self.chat_display.tag_config("role_assistant", foreground="#2E7D32", font=FONT_NORMAL_BOLD)
-            self.chat_display.tag_config("role_notice", foreground=COLOR_MUTED, font=FONT_BODY)
-            self.chat_display.tag_config("message_body", lmargin1=8, lmargin2=8, spacing1=4, spacing3=12)
-        except Exception:
-            return
+        return
 
     def set_status(self, text, status="disabled"):
         self.chat_status.set_status(status, text=text)
@@ -373,8 +368,11 @@ class ChatPanel(ctk.CTkFrame):
         self.model_selector.set(selected)
 
     def render_messages(self, messages):
-        self.chat_display.configure(state="normal")
-        self.chat_display.delete("1.0", "end")
+        for row in self.message_rows:
+            row.destroy()
+        self.message_rows = []
+        self._streaming_assistant_label = None
+        self._streaming_assistant_text = ""
         visible_count = 0
         for message in messages or []:
             if not isinstance(message, dict) or message.get("role") == "system":
@@ -382,8 +380,7 @@ class ChatPanel(ctk.CTkFrame):
             role = "user" if message.get("role") == "user" else "assistant"
             self.insert_message(role, message.get("content", ""))
             visible_count += 1
-        self.chat_display.see("end")
-        self.chat_display.configure(state="disabled")
+        self._scroll_messages()
         if visible_count:
             self.hide_empty_state()
         else:
@@ -460,61 +457,93 @@ class ChatPanel(ctk.CTkFrame):
             return
 
     @staticmethod
-    def text_at_bottom(textbox):
-        try:
-            _first, last = textbox.yview()
-            return last >= 0.98
-        except Exception:
-            return True
+    def _message_role_color(role):
+        return "#E5E7EB" if role == "user" else "transparent"
 
     def insert_message(self, role, content=""):
-        role_label = self.t("chat_window_user_label") if role == "user" else "Aurora"
-        role_tag = "role_user" if role == "user" else "role_assistant"
-        self.chat_display.insert("end", f"{role_label}:\n", role_tag)
-        if content:
-            self.chat_display.insert("end", f"{self.display_text(content)}\n\n", "message_body")
+        row = ctk.CTkFrame(self.chat_display, fg_color="transparent")
+        row.grid(row=len(self.message_rows), column=0, sticky="ew", padx=SPACING_MEDIUM, pady=(0, SPACING_MEDIUM))
+        row.grid_columnconfigure(0, weight=1)
+        bubble = ctk.CTkLabel(
+            row,
+            text=self.display_text(content),
+            font=FONT_BODY,
+            anchor="w",
+            justify="left",
+            wraplength=520,
+            fg_color=self._message_role_color(role),
+            text_color=COLOR_TEXT_ON_LIGHT if role == "user" else COLOR_TEXT_PRIMARY,
+            corner_radius=14 if role == "user" else 0,
+        )
+        if role == "user":
+            bubble.grid(row=0, column=0, sticky="e", padx=(0, SPACING_LARGE), ipadx=10, ipady=8)
+        else:
+            bubble.grid(row=0, column=0, sticky="w", padx=(SPACING_SMALL, 0), ipadx=2, ipady=2)
+        self.message_rows.append(row)
+        if role == "assistant" and content == "":
+            self._streaming_assistant_label = bubble
+            self._streaming_assistant_text = ""
+        self._resize_message_bubbles()
+        return bubble
 
     def append_message(self, role, content):
         self.hide_empty_state()
-        self.chat_display.configure(state="normal")
         self.insert_message(role, content)
-        self.chat_display.see("end")
-        self.chat_display.configure(state="disabled")
+        self._scroll_messages()
 
     def append_assistant_header(self):
         self.hide_empty_state()
-        self.chat_display.configure(state="normal")
         self.insert_message("assistant")
-        self.chat_display.see("end")
-        self.chat_display.configure(state="disabled")
+        self._scroll_messages()
 
     def finish_stream_message(self):
-        self.chat_display.configure(state="normal")
-        self.chat_display.insert("end", "\n\n", "message_body")
-        self.chat_display.see("end")
-        self.chat_display.configure(state="disabled")
+        self._streaming_assistant_label = None
+        self._streaming_assistant_text = ""
+        self._scroll_messages()
 
     def append_text(self, text):
         self.hide_empty_state()
-        self.chat_display.configure(state="normal")
-        self.chat_display.insert("end", self.display_text(text) + "\n\n", "role_notice")
-        self.chat_display.see("end")
-        self.chat_display.configure(state="disabled")
+        row = ctk.CTkFrame(self.chat_display, fg_color="transparent")
+        row.grid(row=len(self.message_rows), column=0, sticky="ew", padx=SPACING_MEDIUM, pady=(0, SPACING_MEDIUM))
+        label = ctk.CTkLabel(row, text=self.display_text(text), font=FONT_BODY, text_color=COLOR_MUTED, anchor="w", justify="left", wraplength=520)
+        label.pack(anchor="w", padx=SPACING_SMALL)
+        self.message_rows.append(row)
+        self._resize_message_bubbles()
+        self._scroll_messages()
 
     def append_stream_chunk(self, chunk):
         self.hide_empty_state()
-        auto_scroll = self.text_at_bottom(self.chat_display)
-        self.chat_display.configure(state="normal")
-        self.chat_display.insert("end", self.display_text(chunk), "message_body")
-        if auto_scroll:
-            self.chat_display.see("end")
-        self.chat_display.configure(state="disabled")
+        if self._streaming_assistant_label is None:
+            self.insert_message("assistant")
+        self._streaming_assistant_text += self.display_text(chunk)
+        self._streaming_assistant_label.configure(text=self._streaming_assistant_text)
+        self._resize_message_bubbles()
+        self._scroll_messages()
 
     def clear_display(self):
-        self.chat_display.configure(state="normal")
-        self.chat_display.delete("1.0", "end")
-        self.chat_display.configure(state="disabled")
+        for row in self.message_rows:
+            row.destroy()
+        self.message_rows = []
+        self._streaming_assistant_label = None
+        self._streaming_assistant_text = ""
         self.show_empty_state()
+
+    def _resize_message_bubbles(self, _event=None):
+        try:
+            width = max(320, self.chat_display.winfo_width())
+            wraplength = max(220, int(width * 0.72))
+            for row in self.message_rows:
+                for child in row.winfo_children():
+                    if isinstance(child, ctk.CTkLabel):
+                        child.configure(wraplength=wraplength)
+        except Exception:
+            return
+
+    def _scroll_messages(self):
+        try:
+            self.chat_display.after_idle(lambda: self.chat_display._parent_canvas.yview_moveto(1.0))
+        except Exception:
+            return
 
     def handle_input_return(self, _event=None):
         self._send_prompt()
