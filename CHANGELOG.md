@@ -1,8 +1,18 @@
 # Project Aurora Changelog
 
-## v3.7.2 - 2026-08-04
+Historical entries describe Aurora as it existed at that time and may include
+features that were later removed from the current product direction.
+
+## Unreleased
+
+No uncommitted experimental work is recorded as completed release behavior.
+
+## v3.7.2 - Release Preparation - 2026-08-04
 
 ### Release Preparation
+
+This code and packaging baseline exists at commit `cb7abca`, but no matching
+`v3.7.2` Git tag has been created.
 
 - Added AppData-based user configuration and data directory isolation for Windows installer builds.
 - Added default settings template generation for first launch without packaging personal configuration.

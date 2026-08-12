@@ -1,176 +1,191 @@
 # Project Aurora Architecture
 
-## Current Baseline
+## Overview
 
-Project Aurora v2.6.0 Stable is the current frozen architecture baseline for
-v2.7 planning.
+Project Aurora is a Chat-first, Local-first personal AI companion for Windows.
+The current architecture centers all text and voice input on one ChatPage,
+ChatSession, context pipeline, and Conversation store.
 
-The v2.6 architecture completed the transition from a collection of large UI
-windows toward a structured local AI control center with:
+The committed baseline is `cb7abca`, an Aurora 3.7.2 release-preparation
+commit. The latest Git tag is `v3.7.0`. Features present only in the dirty
+post-3.7.2 working tree are marked experimental below.
 
-- AppShell
-- Pages Layer
-- Windows Layer
-- i18n system
-- Theme system
-- Shared modules
-- Locale files
-- Runtime data directories
+## UI Layer
 
-## AppShell
+`AppShell` is the production application frame. It currently registers two
+top-level pages:
 
-The AppShell is the primary application frame. It owns the high-level layout
-and navigation structure instead of placing the whole product inside one large
-window implementation.
-
-Responsibilities:
-
-- Provide the main application shell.
-- Route between primary pages.
-- Keep global navigation separate from page-specific UI.
-- Preserve a consistent visual frame for Aurora.
-
-The AppShell should remain the center of the v2.6 structure during v2.7 work.
-
-## Pages Layer
-
-The Pages Layer contains user-facing application pages.
-
-Responsibilities:
-
-- Keep each major workflow separated by page.
-- Render page-specific controls and state.
-- Use existing service modules instead of duplicating business logic.
-- Keep default views focused on common user actions.
-
-Expected page boundaries include:
-
-- Home
 - Chat
-- Library / Knowledge
-- Memory
-- Persona
-- Remote
 - Settings
 
-Pages should not become large mixed surfaces for unrelated diagnostics,
-developer tools, and user workflows.
+Chat is the initial page. Its Sidebar owns new-chat, search, Conversation
+history, and Settings navigation. Settings groups AI, Voice, Appearance, Data,
+and Developer surfaces; Persona, Memory, and Knowledge/RAG are reached through
+Settings.
 
-## Windows Layer
+Home, Library, Learning Center, standalone Persona/Memory pages, old dashboard
+widgets, and several standalone windows remain only as legacy or compatibility
+code. They are not current top-level AppShell routes.
 
-The Windows Layer contains focused secondary windows and dialogs.
+## Chat Core
 
-Responsibilities:
+The production text flow is:
 
-- Provide focused editors, confirmations, setup flows, and diagnostics when a
-  full page is not appropriate.
-- Keep window-specific layout and behavior outside the main shell.
-- Preserve compatibility with legacy workflows during migration.
+```text
+ChatPanel input
+  -> ChatPage
+  -> ChatSession
+  -> context preparation
+  -> stream_chat()
+  -> Ollama /api/chat
+  -> streaming ChatPanel update
+  -> ChatSession assistant message
+  -> Conversation persistence
+```
 
-Windows should remain separated from pages. New v2.7 work should avoid moving
-unrelated page behavior into dialog windows or placing large window workflows
-back into `main.py`.
+`ChatSession` owns the ordered system, user, and assistant messages for the
+active Conversation. `stream_chat()` appends the user and completed assistant
+messages and queues Memory candidates after a successful, non-cancelled turn.
 
-## i18n System
+`ConversationManager` persists and restores the same role/content message
+structure. Conversation identity comes from its ID, not its title.
 
-Aurora uses locale keys for user-facing strings.
+## Context Layer
 
-Rules:
+Before each Chat turn, `ChatPage` calls the injected context preparation
+boundary. That boundary retrieves and assembles:
 
-- All user-facing strings must use the i18n system.
-- New UI strings must be added to both `locales/zh_CN.json` and
-  `locales/en_US.json` when runtime UI work begins.
-- `zh_CN` and `en_US` locale keys must remain aligned.
-- Missing translation keys should not crash the app.
-- Do not reintroduce legacy `TEXT` dictionaries.
+- Persona context
+- relevant Memory records
+- relevant Knowledge records
+- optional normalized/ranked RAG results
+- current Conversation messages
 
-Logs, exception details, debug payload keys, and API field names do not require
-localization unless they are displayed directly in the UI.
+`ContextBuilder` assembles system-context sections and diagnostics. Conversation
+history remains in `ChatSession.messages` and is sent to Ollama as chat messages;
+it is not flattened into a replacement Memory or RAG store.
 
-## Theme System
+RAG is optional and has a fallback path. Failure in optional ranking or context
+optimization must preserve usable base Memory and Knowledge retrieval.
 
-Aurora uses the shared theme system for common visual tokens.
+## Conversation Intelligence
 
-Responsibilities:
+Conversation Intelligence runs asynchronously after Conversation persistence.
+It stores analysis metadata such as summary, topics, events, message counts, and
+Memory signals. It may trigger Conversation-derived Memory candidate analysis
+without changing the Conversation storage format.
 
-- Keep fonts, colors, and common styles centralized.
-- Avoid one-off hard-coded button, label, and status styles.
-- Preserve visual consistency across pages and windows.
+LLM-assisted semantic Conversation titles and their asynchronous Sidebar refresh
+belong to the current post-3.7.2 experimental workspace. They are not part of a
+tagged 3.7.2 release. Manual titles must remain protected from automatic
+replacement.
 
-New UI work should use existing theme helpers and tokens instead of adding
-unrelated per-page styling.
+## Voice Experience
 
-## Modules
+The current Voice architecture is:
 
-The `modules/` directory contains shared application logic and service
-boundaries.
+```text
+Microphone
+  -> audio source and frame buffer
+  -> RMS VAD / FrameRecorder
+  -> Faster-Whisper STT
+  -> ChatPage.handle_external_prompt()
+  -> shared ChatSession and context pipeline
+  -> Ollama streaming response
+  -> text UI and Conversation persistence
+  -> SentenceSplitter / TTSQueue
+  -> Edge-TTS
+  -> PlaybackController
+```
 
-Current module responsibilities include areas such as:
+Voice recognized text enters the same ChatPage business path as keyboard input.
+There is no independent Voice ChatSession, Conversation store, Memory pipeline,
+RAG pipeline, or Voice-only message UI.
 
-- Version information
-- Settings
-- Models
-- Health checks
-- Launcher behavior
-- Logging
-- Theme support
-- Memory, knowledge, conversation, persona, and remote capabilities where
-  present
+Faster-Whisper and Edge-TTS are provider implementations behind Voice
+interfaces. Text chat must remain usable when recording, STT, TTS, or playback
+is unavailable.
 
-Architecture rules:
+VAD auto-stop, sentence-based TTS queueing, cancellation hardening, and
+real-device stability work are experimental. Aurora does not currently provide
+mature realtime full-duplex voice interaction.
 
-- Extend existing modules before creating parallel systems.
-- Keep business logic out of page layout code when practical.
-- Do not change stable data formats without a migration plan.
-- `modules/version.py` remains the source of version information.
+## State and Concurrency
 
-## Locales
+`CompanionStateStore` coordinates states such as IDLE, LISTENING, TRANSCRIBING,
+THINKING, SPEAKING, and ERROR. Optional UI or future visual layers may observe
+this state but must not create independent global state ownership.
 
-The `locales/` directory contains translation JSON files.
+The post-3.7.2 Voice work binds asynchronous work to `session_id` and
+`generation_id`, uses cancellation events, and discards stale output. The
+Unified Chat Turn Gate uses a non-blocking single-active-turn rule so text and
+voice cannot mutate the same ChatSession concurrently. These protections remain
+experimental until committed and validated on real devices.
 
-Expected files include:
+## Persistence
 
-- `locales/zh_CN.json`
-- `locales/en_US.json`
+Release builds keep user data under `%APPDATA%/Aurora/`:
 
-Rules:
+```text
+Aurora/
+  config/settings.json
+  conversations/
+  memory/
+  knowledge/
+  persona/
+  logs/
+```
 
-- Keep locale JSON valid UTF-8.
-- Keep key sets aligned between supported locales.
-- Add locale keys in the same phase as UI text changes.
-- Do not use hard-coded user-facing Chinese or English text in runtime UI.
+`config/default_settings.json` is the distributable first-run template. Private
+runtime data, local settings, device identifiers, and logs must not be packaged
+or committed.
 
-## Data Directory
+## Packaging
 
-The project contains a `data/` directory for runtime data.
+The Windows distribution flow uses:
 
-Typical runtime data areas may include:
+- `Project Aurora.spec` and PyInstaller for `dist/Aurora/`
+- Inno Setup for `installer/Aurora-v3.7.2-Setup.exe`
+- project-managed Inno Setup language resources
+- full Windows CPython 3.12 with Tcl/Tk
 
-- Memory
-- Knowledge
-- Conversations
-- Persona
-- Remote data
+The expected PyInstaller output contains:
 
-Rules:
+```text
+Aurora/
+  Aurora.exe
+  _internal/
+  assets/
+  tools/ffmpeg.exe
+```
 
-- Runtime data should not be committed unless it is an approved template or
-  example.
-- Do not move or rename runtime data paths during v2.7 work without a dedicated
-  migration plan.
-- Expensive data operations must not block the GUI thread.
+`tools/ffmpeg.exe` is a required local release resource but is intentionally
+ignored by Git. A clean build environment must provide it separately; future
+automation should download a pinned binary only with SHA256 verification.
 
-## Architectural Principles
+## Removed Architecture
 
-- Keep UI pages separated.
-- Keep windows separated.
-- Preserve the AppShell as the main application structure.
-- Do not reintroduce legacy `TEXT` dictionaries.
-- All user-facing strings must use i18n.
-- Keep `zh_CN` and `en_US` locale keys aligned.
-- Avoid large unrelated rewrites.
-- Prefer small, scoped changes that match existing architecture.
-- Keep runtime behavior compatible with v2.6.0 Stable unless a phase explicitly
-  changes it.
-- Use background threads for network, process, indexing, file, and other
-  expensive operations that could block the GUI.
+The following systems are not part of the current architecture:
+
+- Open WebUI integration
+- Docker and Docker Desktop integration
+- Remote and LAN services
+- Mobile Chat and Mobile UI
+- old Dashboard/Home production routing
+- independent Voice conversation or Memory systems
+
+They may appear in historical documents, old locale keys, migration helpers, or
+legacy UI code. Such references are historical or compatibility artifacts and
+must not be treated as production entry points or restored without explicit
+product approval.
+
+## Architecture Principles
+
+- Keep ChatPage and ChatSession as the shared text/voice turn boundary.
+- Extend existing Conversation, Persona, Memory, Knowledge/RAG, ContextBuilder,
+  Settings, state, and Voice interfaces instead of creating parallel systems.
+- Keep optional Experience Layer failures isolated from text chat and core data.
+- Do not block the GUI thread with network, model, process, audio, indexing, or
+  heavy file work.
+- Preserve existing data formats or provide an explicit migration.
+- Distinguish committed active behavior from dirty experimental development.

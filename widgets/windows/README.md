@@ -1,15 +1,36 @@
 # Project Aurora Window Modules
 
-This directory is reserved for the v2.6 window-module layout.
+The production user entry point is:
 
-Current window modules remain in `widgets/` for compatibility:
+```text
+AppShell
+  -> Chat
+  -> Settings
+```
+
+The `widgets/windows/` directory remains reserved for a possible organized
+window-module layout. Existing window classes are still located directly under
+`widgets/` and have mixed status.
+
+## Active Compatibility / Utility
+
+- `settings_window.py`: opened from the current Settings page for existing
+  detailed settings editors.
+
+## Legacy / Needs Review
 
 - `chat_window.py`
-- `settings_window.py`
+- `conversation_browser.py`
+- `health_window.py`
+- `models_window.py`
 - `knowledge_window.py`
 - `memory_window.py`
 - `persona_window.py`
-- `conversation_browser.py`
 
-Do not move these files until imports, PyInstaller packaging, and legacy entry
-points are migrated in a dedicated phase.
+Some classes remain imported or referenced by legacy callbacks in `main.py`;
+others may remain useful as focused editors or diagnostics. They are not current
+primary navigation and must not be declared dead or deleted without a dedicated
+reachability, packaging, and callback review.
+
+Do not move or remove these modules casually. Any cleanup must preserve active
+Settings callbacks, PyInstaller imports, and user data operations.

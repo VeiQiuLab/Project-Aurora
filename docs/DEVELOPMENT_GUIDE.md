@@ -1,151 +1,104 @@
 # Project Aurora Development Guide
 
-This guide defines stabilization rules for Project Aurora development. It is
-intended to keep future v2.5 architecture work small, compatible, and easy to
-review.
-
 ## Development Scope
 
-- Work incrementally on the current project.
-- Do not regenerate the application.
-- Do not duplicate existing systems.
-- Keep Chat, Memory, Knowledge, Conversation, Remote, Authentication, Persona,
-  and Mobile Chat boundaries stable.
-- Each new feature must declare its owning module, settings keys, locale keys,
-  and test requirements.
+Aurora development should be incremental, compatible, and easy to review.
+Before changing a feature, identify its owner, configuration keys, persisted
+data, user-visible behavior, and required tests.
 
-## UI Text Rules
+Current module boundaries are:
 
-User-visible UI text must use localization keys.
+- Chat: ChatPage, ChatPanel, ChatSession, and Ollama streaming
+- Conversation: persistence, restore, search, metadata, and intelligence
+- Context: ContextBuilder and prompt-context integration
+- Persona: user-controlled assistant identity and system context
+- Memory: retrieval, candidates, review, and persistence
+- Knowledge/RAG: local knowledge retrieval and optional ranking pipeline
+- Voice Experience: microphone, VAD, STT, shared Chat input, TTS, and playback
+- Settings: configuration, migration, and current UI entry points
+- Packaging: AppData isolation, PyInstaller, Inno Setup, assets, and FFmpeg
 
-Do not add:
+Do not regenerate the application or create parallel versions of these systems.
+Remote, LAN, Mobile, Open WebUI, Docker, and the old Dashboard are historical or
+removed product directions, not current development boundaries.
 
-```python
-text="中文"
-text="English"
-```
+## Chat and Voice Boundary
 
-Use:
+Voice is an input/output Experience Layer around Chat, not a second Chat Core.
+Recognized Voice text must enter through ChatPage and reuse ChatSession,
+Conversation, ContextBuilder, Persona, Memory, Knowledge/RAG, and the normal text
+message UI.
 
-```python
-text=t("key")
-```
+Voice, STT, TTS, playback, or device failures must fail safely and leave text
+chat usable. Keep provider interfaces replaceable and preserve cancellation,
+session/generation ownership, and stale-output checks when modifying asynchronous
+Voice code.
 
-Required rules:
+## UI Text and Theme
 
-- Add every new key to `locales/zh_CN.json`.
-- Add every new key to `locales/en_US.json`.
-- Locale files must be valid UTF-8 JSON.
-- Missing translation keys must not crash the app.
-- Logs, exception details, debug payload keys, and API field names do not need
-  localization unless they are displayed directly in the UI.
+Use `modules/ui_theme.py` for shared visual tokens. Prefer existing font, color,
+spacing, and button helpers over page-specific hard-coded styles.
 
-Before committing UI text changes, run:
+Where a surface uses localization, add new user-visible keys to both
+`locales/zh_CN.json` and `locales/en_US.json`. Locale files must remain valid
+UTF-8 JSON. Missing translation keys must not crash the application.
+
+Run the i18n alignment check when locale keys change:
 
 ```powershell
 python scripts/check_i18n.py
 ```
 
-If Python is unavailable in the current execution environment, run equivalent
-static checks and record the limitation.
+## Settings and Configuration
 
-## Theme Rules
+- Reuse `modules/settings.py` and `SettingsController`.
+- Prefer `settings.update_many()` for related updates.
+- Preserve unknown keys and existing user values during default merging.
+- Do not change the settings schema without a compatibility migration.
+- Keep configuration access at integration boundaries where practical.
+- UI save actions must report success or failure clearly.
+- Do not create a second configuration model.
 
-Use `modules/ui_theme.py` for shared UI tokens.
+## Error Isolation
 
-Do not add:
+- Optional Voice failure must not break Chat.
+- RAG optimization failure must preserve a usable retrieval fallback.
+- Conversation Intelligence and title failures must not break persistence.
+- Missing audio devices or dependencies must produce actionable diagnostics.
+- Background failures must return shared state to a usable condition.
+- Network, process, indexing, model, audio, and heavy file work must not block
+  the Tkinter UI thread.
 
-```python
-font=("Microsoft YaHei", 13)
-```
+## Runtime Data and Privacy
 
-Use existing tokens:
+Release runtime data belongs under `%APPDATA%/Aurora/`. Do not commit or package
+user settings containing private information, Conversations, Memory records,
+Knowledge data, private Persona data, logs, device identifiers, installers,
+FFmpeg, model files, or other large local binaries.
 
-```python
-FONT_TITLE
-FONT_BODY
-FONT_SMALL
-COLOR_SUCCESS
-COLOR_WARNING
-COLOR_ERROR
-COLOR_MUTED
-```
+Approved defaults, examples, source code, and documentation may be tracked.
+Data-directory or schema changes require a dedicated migration plan.
 
-Button styling should use shared helpers or `button_style()` instead of direct
-per-window colors.
+## Windows Compatibility
 
-## Settings Rules
+- Use a complete Windows CPython 3.12 installation with Tcl/Tk for GUI builds.
+- Do not assume the Windows Python Launcher is functional.
+- Keep subprocess windows hidden for background production processes.
+- Preserve source and packaged executable path handling.
+- Treat FFmpeg as an explicit local build resource and verify its source and
+  checksum where available.
+- Verify behavior from source and from the packaged application when required.
 
-Prefer batch updates when saving multiple values:
+## Validation
 
-```python
-settings.update_many({
-    "language": "zh_CN",
-    "theme": "blue",
-})
-```
-
-Avoid long runs of repeated `settings.set()` calls in one save handler.
-
-Rules:
-
-- Keep `settings.set()` backward compatible.
-- Do not change `config/settings.json` format without a migration.
-- Do not couple normal Settings save behavior to new Remote functionality.
-- UI save buttons must write settings to disk and show success or failure state.
-
-## Runtime Data Rules
-
-Runtime data must not be committed.
-
-Do not commit:
-
-- `config/settings.json`
-- `data/persona/*.json`
-- `data/memory/*`
-- `data/knowledge/*`
-- `data/conversations/*`
-- `data/remote/*.json`
-- `__pycache__/`
-- `*.pyc`
-
-Allowed:
-
-- `*.example.json`
-- Documentation
-- Source code
-- Stable configuration templates
-
-Do not move existing runtime data paths during stabilization work. Directory
-layout migrations require a separate confirmed phase.
-
-## Module Rules
-
-Before adding or changing a feature, identify:
-
-- Owning module.
-- Config keys.
-- Locale keys.
-- Data files touched.
-- User-visible behavior.
-- Required tests or checks.
-
-Do not create a second Memory, Knowledge, Conversation, Remote, or Settings
-system. Extend the existing module unless a refactor phase explicitly approves
-extraction.
-
-## Stabilization Checks
-
-Recommended checks before commit:
+Choose checks proportional to the change. Typical static validation is:
 
 ```powershell
 git diff --check
+python -m compileall main.py modules widgets
 python scripts/check_i18n.py
 ```
 
-Also scan for common mojibake fragments from corrupted Chinese text and
-replacement characters. Keep the bad sample strings out of documentation so
-the scan itself does not produce false positives.
-
-If Python is unavailable, report that limitation and complete the available
-static checks.
+Use focused tests for changed contracts and failure paths. Mock tests do not
+replace real GUI, Ollama, microphone, Edge-TTS, playback, or installer smoke
+tests. Report skipped checks and environmental limitations explicitly.

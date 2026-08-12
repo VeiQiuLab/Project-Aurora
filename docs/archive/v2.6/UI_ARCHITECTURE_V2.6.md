@@ -482,4 +482,3 @@ v2.6 must start from the v2.4.4 stable baseline and preserve the current module 
 - `data/` for runtime data.
 - `config/` for local configuration.
 - `docs/` for planning and handoff documents.
-
