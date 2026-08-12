@@ -182,6 +182,81 @@ class ConversationIntelligencePipelineTests(unittest.TestCase):
 
         self.assertEqual("modules.memory" in sys.modules, memory_module_loaded)
 
+    def test_first_turn_title_is_persisted(self):
+        manager = self.make_manager()
+        conversation = manager.save(
+            None,
+            "model",
+            [
+                {"role": "user", "content": "请帮我规划 Aurora 语音测试。"},
+                {"role": "assistant", "content": "可以先进行设备诊断。"},
+            ],
+            title="Aurora对话",
+        )
+        schedule_conversation_intelligence(
+            manager,
+            conversation["id"],
+            conversation["messages"],
+            expected_updated_time=conversation["updated_time"],
+            expected_title="Aurora对话",
+            generate_title=True,
+            analyzer=lambda _messages: {"title_summary": "语音测试规划"},
+            thread_factory=ImmediateThread,
+        )
+
+        self.assertEqual(manager.load(conversation["id"])["title"], "语音测试规划")
+
+    def test_manual_rename_blocks_automatic_title(self):
+        manager = self.make_manager()
+        conversation = manager.save(
+            None,
+            "model",
+            [
+                {"role": "user", "content": "原始内容"},
+                {"role": "assistant", "content": "回复"},
+            ],
+            title="临时标题",
+        )
+        renamed = manager.rename(conversation["id"], "我的标题")
+        schedule_conversation_intelligence(
+            manager,
+            renamed["id"],
+            renamed["messages"],
+            expected_updated_time=renamed["updated_time"],
+            expected_title="临时标题",
+            generate_title=True,
+            analyzer=lambda _messages: {"title_summary": "自动标题"},
+            thread_factory=ImmediateThread,
+        )
+
+        saved = manager.load(conversation["id"])
+        self.assertEqual(saved["title"], "我的标题")
+        self.assertTrue(saved["metadata"]["title_manual"])
+
+    def test_invalid_title_keeps_fallback(self):
+        manager = self.make_manager()
+        conversation = manager.save(
+            None,
+            "model",
+            [
+                {"role": "user", "content": "短内容"},
+                {"role": "assistant", "content": "回复"},
+            ],
+            title="短内容",
+        )
+        schedule_conversation_intelligence(
+            manager,
+            conversation["id"],
+            conversation["messages"],
+            expected_updated_time=conversation["updated_time"],
+            expected_title="短内容",
+            generate_title=True,
+            analyzer=lambda _messages: {"title_summary": "标题太长" * 10},
+            thread_factory=ImmediateThread,
+        )
+
+        self.assertEqual(manager.load(conversation["id"])["title"], "短内容")
+
 
 if __name__ == "__main__":
     unittest.main()

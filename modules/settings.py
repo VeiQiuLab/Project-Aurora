@@ -43,7 +43,7 @@ class Settings:
                     "pre_roll_ms": 500,
                     "pre_roll_buffer_ms": 1000,
                     "maximum_recording_duration": 180.0,
-                    "silence_end_threshold": 10.0,
+                    "silence_end_threshold": 0.8,
                     "min_duration_ms": 750
                 },
                 "vad": {
@@ -63,7 +63,8 @@ class Settings:
                 },
                 "tts": {
                     "provider": "edge_tts",
-                    "voice": "zh-CN-XiaoxiaoNeural"
+                    "voice": "zh-CN-XiaoxiaoNeural",
+                    "timeout_seconds": 30.0
                 },
                 "playback": {
                     "backend": "pygame",

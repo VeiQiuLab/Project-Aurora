@@ -6,6 +6,7 @@ import customtkinter as ctk
 
 from modules.chat import ChatError, ChatSession
 from modules.conversation import ConversationManager, schedule_conversation_intelligence
+from modules.conversation_intelligence import fallback_title
 from modules.experience.state import CompanionState, CompanionStateStore
 from modules.search import search_conversations
 from widgets.components.chat_panel import ChatPanel
@@ -70,6 +71,9 @@ class ChatPage(ctk.CTkFrame):
             "running": False,
             "stop_event": None
         }
+        self._turn_lock = threading.Lock()
+        self._external_message_lock = self._turn_lock
+        self._turn_counter = 0
         self.conversation_records = []
         self.conversation_labels = []
         self.conversation_search_entry = None
@@ -193,13 +197,16 @@ class ChatPage(ctk.CTkFrame):
             return False
 
     def cancel_voice_session(self):
+        # Restore the input affordance before waiting for background cleanup.
+        self._on_voice_state_value(CompanionState.IDLE)
         if self.voice_runtime is None:
-            return False
+            return True
         try:
-            return self.voice_runtime.cancel_voice_session()
+            self.voice_runtime.cancel_voice_session()
+            return True
         except Exception as error:
             self.logger.error(f"Voice session cancel failed: {error}")
-            return False
+            return True
 
     def is_open(self):
         try:
@@ -284,12 +291,9 @@ class ChatPage(ctk.CTkFrame):
         else:
             self.conversation_records = self.conversation_manager.list_conversations()
         labels = []
-        seen = {}
         for item in self.conversation_records:
             base_label = self.conversation_label(item)
-            count = seen.get(base_label, 0) + 1
-            seen[base_label] = count
-            labels.append(base_label if count == 1 else f"{base_label} {count}")
+            labels.append(base_label)
         self.conversation_labels = labels
         if self.conversation_selector is None:
             self.update_current_title()
@@ -424,8 +428,13 @@ class ChatPage(ctk.CTkFrame):
             self.set_status(self.t("chat_window_no_content_to_save"), "warning")
             return
         title = self.conversation_state["title"]
+        first_turn = (
+            self.conversation_state["id"] is None
+            and sum(1 for item in messages if item.get("role") == "user") == 1
+            and sum(1 for item in messages if item.get("role") == "assistant") == 1
+        )
         if title == "New Conversation":
-            title = next((m.get("content", "") for m in messages if m.get("role") == "user"), title)
+            title = fallback_title(messages)
         data = self.conversation_manager.save(
             self.conversation_state["id"],
             self.selected_model["name"],
@@ -449,8 +458,26 @@ class ChatPage(ctk.CTkFrame):
             data["id"],
             messages,
             expected_updated_time=data.get("updated_time"),
+            expected_title=data.get("title"),
+            generate_title=first_turn,
+            title_model=self.selected_model.get("name") or self.settings.get("chat_model", ""),
+            on_title_updated=self._on_title_updated,
             logger=self.logger
         )
+
+    def _on_title_updated(self, data):
+        def refresh():
+            if not self.is_open() or data.get("id") != self.conversation_state.get("id"):
+                return
+            self.conversation_state["title"] = data.get("title", self.conversation_state["title"])
+            self.refresh_conversations()
+            self.update_current_title()
+
+        try:
+            self.after(0, refresh)
+            self.logger.info(f"sidebar_title_refresh conversation_id={data.get('id', '')}")
+        except Exception:
+            return
 
     def delete_conversation(self):
         if self.conversation_selector is None:
@@ -515,6 +542,10 @@ class ChatPage(ctk.CTkFrame):
         if not callable(self.prepare_prompt_context_callback) or not callable(self.stream_chat_callback):
             self.append_text(f"{self.t('error')}: {self.t('chat_window_service_unavailable')}")
             return
+        if not self._try_begin_turn("text"):
+            self.set_status(self.t("chat_window_stop_generation_first"), "warning")
+            self.focus_input()
+            return
 
         self.companion_state.transition(
             CompanionState.THINKING,
@@ -528,6 +559,7 @@ class ChatPage(ctk.CTkFrame):
                 self.debug_context_var.get(),
             )
         except Exception:
+            self._end_turn("text")
             self.companion_state.transition(
                 CompanionState.ERROR,
                 reason="chat_context_failed",
@@ -622,6 +654,7 @@ class ChatPage(ctk.CTkFrame):
                     if not error_message:
                         self.save_conversation(auto=True)
                 finally:
+                    self._end_turn("text")
                     self.companion_state.force_idle(
                         reason="chat_request_finished",
                         source="chat_page",
@@ -630,9 +663,116 @@ class ChatPage(ctk.CTkFrame):
             try:
                 self.after(0, update_chat)
             except Exception:
+                self._end_turn("text")
                 return
 
         threading.Thread(target=run_request, daemon=True).start()
+
+    def handle_external_prompt(self, prompt, *, on_chunk=None, cancel_event=None, source="voice"):
+        """Run a non-UI input through the active ChatPage session and save it."""
+        prompt = str(prompt or "").strip()
+        if not prompt:
+            raise ChatError("External chat input is empty.")
+        if not callable(self.prepare_prompt_context_callback) or not callable(self.stream_chat_callback):
+            raise ChatError("Chat service is unavailable.")
+        model = self.selected_model.get("name") or str(
+            self.settings.get("chat_model", "") or ""
+        ).strip()
+        if not model:
+            raise ChatError("No chat model is available.")
+
+        stop_event = cancel_event or threading.Event()
+        if not self._try_begin_turn(source):
+            raise ChatError("Chat turn busy.")
+        finalize_scheduled = False
+        try:
+            self.companion_state.transition(
+                CompanionState.THINKING,
+                reason=f"{source}_request_started",
+                source="chat_page",
+            )
+            context = self.prepare_prompt_context_callback(
+                prompt,
+                self.session.snapshot(),
+                False,
+            )
+            self.session.set_system_context(context.get("system_context", ""))
+
+            def prepare_display():
+                if self.is_open():
+                    self.append_message("user", prompt)
+                    self.append_assistant_header()
+
+            try:
+                self.after(0, prepare_display)
+            except Exception:
+                pass
+
+            response_parts = []
+
+            def append_chunk(chunk):
+                response_parts.append(chunk)
+                if callable(on_chunk):
+                    on_chunk(chunk)
+                try:
+                    self.after(0, lambda value=chunk: self.append_stream_chunk(value))
+                except Exception:
+                    pass
+
+            result = self.stream_chat_callback(
+                model,
+                prompt,
+                self.session,
+                append_chunk,
+                stop_event,
+            )
+            if result != "completed":
+                self.companion_state.force_idle(
+                    reason=f"{source}_request_stopped",
+                    source="chat_page",
+                )
+                return result
+
+            response = "".join(response_parts).strip()
+
+            def finalize_display():
+                try:
+                    if not self.is_open():
+                        return
+                    self.finish_stream_message()
+                    self.save_conversation(auto=True)
+                finally:
+                    self._end_turn(source)
+
+            try:
+                self.after(0, finalize_display)
+                finalize_scheduled = True
+            except Exception:
+                pass
+            self.companion_state.transition(
+                CompanionState.SPEAKING,
+                reason=f"{source}_response_ready",
+                source="chat_page",
+            )
+            return response
+        finally:
+            if not finalize_scheduled:
+                self._end_turn(source)
+
+    def _try_begin_turn(self, source):
+        if not self._turn_lock.acquire(blocking=False):
+            self.logger.info(f"chat_turn_busy source={source}")
+            return False
+        self._turn_counter += 1
+        self.logger.info(f"chat_turn_started source={source} turn={self._turn_counter}")
+        return True
+
+    def _end_turn(self, source):
+        try:
+            self._turn_lock.release()
+            self.logger.info(f"chat_turn_finished source={source}")
+        except RuntimeError:
+            return
 
     def clear_chat(self):
         if self.stream_state["running"]:

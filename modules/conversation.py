@@ -128,10 +128,55 @@ class ConversationManager:
         with self._lock:
             data = json.loads(path.read_text(encoding="utf-8"))
             data["title"] = title.strip() or "New Conversation"
+            metadata = data.get("metadata")
+            if not isinstance(metadata, dict):
+                metadata = {}
+            metadata["title_manual"] = True
+            data["metadata"] = metadata
             data["updated_at"] = self._now()
             data["updated_time"] = data["updated_at"]
             path.write_text(json.dumps(data, ensure_ascii=False, indent=2), encoding="utf-8")
         return data
+
+    def update_title_if_auto(
+        self,
+        conversation_id,
+        title,
+        *,
+        expected_title=None,
+        expected_updated_time=None,
+        logger=None,
+    ):
+        """Update an automatic title only while its original fallback is intact."""
+        def discard(reason):
+            if logger:
+                logger.info(f"title_update_discard conversation_id={conversation_id} reason={reason}")
+            return None
+
+        if logger:
+            logger.info(f"title_update_attempt conversation_id={conversation_id}")
+        title = str(title or "").strip()
+        if not title or len(title) > 10:
+            return discard("invalid_title")
+        path = self.directory / f"{conversation_id}.json"
+        with self._lock:
+            if not path.exists():
+                return discard("conversation_missing")
+            data = self._normalize(json.loads(path.read_text(encoding="utf-8")), conversation_id)
+            metadata = data.get("metadata", {})
+            if metadata.get("title_manual") is True:
+                return discard("title_manual")
+            if expected_title is not None and data.get("title") != expected_title:
+                return discard("title_changed")
+            if expected_updated_time and data.get("updated_time") != expected_updated_time:
+                return discard("conversation_changed")
+            data["title"] = title
+            data["updated_at"] = self._now()
+            data["updated_time"] = data["updated_at"]
+            path.write_text(json.dumps(data, ensure_ascii=False, indent=2), encoding="utf-8")
+        if logger:
+            logger.info(f"title_update_success conversation_id={conversation_id} title={title}")
+        return self._normalize(data, conversation_id)
 
     def delete(self, conversation_id):
         path = self.directory / f"{conversation_id}.json"
@@ -150,6 +195,11 @@ def schedule_conversation_intelligence(
     thread_factory=None,
     memory_store=None,
     min_message_count=2,
+    generate_title=False,
+    expected_title=None,
+    on_title_updated=None,
+    title_model=None,
+    title_generator=None,
 ):
     captured_messages = deepcopy(messages or [])
     expected_message_count = len(captured_messages)
@@ -163,6 +213,8 @@ def schedule_conversation_intelligence(
                 pass
 
     def run_analysis():
+        if logger and generate_title:
+            logger.info(f"title_generation_started conversation_id={conversation_id}")
         try:
             if analyzer is None:
                 from modules.conversation_intelligence import analyze_conversation
@@ -171,15 +223,61 @@ def schedule_conversation_intelligence(
                 analysis = analyzer(captured_messages)
         except Exception as error:
             log_error(f"Conversation intelligence analysis failed: {error}")
+            if logger and generate_title:
+                logger.info(f"title_generation_completed conversation_id={conversation_id} title_summary=")
             return
+
+        if generate_title:
+            try:
+                if title_generator is not None:
+                    title_summary, title_source = title_generator(captured_messages, title_model)
+                elif analyzer is None:
+                    from modules.conversation_intelligence import generate_title_summary
+                    title_summary, title_source = generate_title_summary(captured_messages, title_model)
+                else:
+                    title_summary = analysis.get("title_summary", "") if isinstance(analysis, dict) else ""
+                    title_source = "rule" if title_summary else "default"
+                analysis["title_summary"] = title_summary
+                analysis["title_source"] = title_source
+            except Exception as error:
+                if logger:
+                    logger.info(
+                        f"title_generation_failed conversation_id={conversation_id} "
+                        f"error={type(error).__name__}"
+                    )
+                analysis["title_summary"] = ""
+                analysis["title_source"] = "default"
+
+        if logger and generate_title:
+            logger.info(
+                f"title_generation_completed conversation_id={conversation_id} "
+                f"title_summary={analysis.get('title_summary', '') if isinstance(analysis, dict) else ''}"
+            )
+            logger.info(
+                f"title_generation_fallback conversation_id={conversation_id} "
+                f"title_source={analysis.get('title_source', 'default')}"
+            ) if analysis.get("title_source") != "llm" else None
 
         try:
             current = conversation_manager.load(conversation_id)
-            if len(current.get("messages", [])) != expected_message_count:
-                return
-            if expected_updated_time and current.get("updated_time") != expected_updated_time:
-                return
-            saved = conversation_manager.save_conversation_intelligence(conversation_id, analysis)
+            if generate_title:
+                saved = conversation_manager.save_conversation_intelligence(conversation_id, analysis)
+                title_summary = analysis.get("title_summary", "") if isinstance(analysis, dict) else ""
+                saved_title = conversation_manager.update_title_if_auto(
+                    conversation_id,
+                    title_summary,
+                    expected_title=expected_title,
+                    expected_updated_time=None,
+                    logger=logger,
+                )
+                if saved_title is not None and callable(on_title_updated):
+                    on_title_updated(saved_title)
+            else:
+                if len(current.get("messages", [])) != expected_message_count:
+                    return
+                if expected_updated_time and current.get("updated_time") != expected_updated_time:
+                    return
+                saved = conversation_manager.save_conversation_intelligence(conversation_id, analysis)
             trigger = _trigger_conversation_memory(
                 conversation_manager,
                 conversation_id,

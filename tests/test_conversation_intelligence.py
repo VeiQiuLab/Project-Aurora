@@ -12,6 +12,7 @@ from modules.conversation_intelligence import (
 
 REQUIRED_SCHEMA = {
     "summary",
+    "title_summary",
     "topics",
     "important_events",
     "memory_signals",
@@ -29,6 +30,7 @@ class ConversationIntelligenceTests(unittest.TestCase):
 
         self.assertEqual(set(result.keys()), REQUIRED_SCHEMA)
         self.assertEqual(result["summary"], "")
+        self.assertEqual(result["title_summary"], "")
         self.assertEqual(result["topics"], [])
         self.assertEqual(result["important_events"], [])
         self.assertEqual(result["memory_signals"], [])
@@ -42,6 +44,7 @@ class ConversationIntelligenceTests(unittest.TestCase):
         ])
 
         self.assertIn("Project Aurora memory lifecycle", result["summary"])
+        self.assertLessEqual(len(result["title_summary"]), 10)
         self.assertGreaterEqual(len(result["topics"]), 1)
         self.assertEqual(result["message_count"], 2)
         self.assertEqual(result["user_message_count"], 1)
@@ -127,6 +130,19 @@ class ConversationIntelligenceTests(unittest.TestCase):
         self.assertEqual(len(result["important_events"]), 1)
         self.assertEqual(result["important_events"][0]["importance"], "normal")
         self.assertEqual(result["memory_signals"], [])
+
+    def test_title_summary_is_short_and_topic_based(self):
+        result = analyze_conversation([{
+            "role": "user",
+            "content": "Aurora，帮我整理电脑桌面，然后继续处理语音功能。",
+        }])
+
+        self.assertLessEqual(len(result["title_summary"]), 10)
+        self.assertNotIn("帮我", result["title_summary"])
+        self.assertNotIn("。", result["title_summary"])
+
+    def test_title_summary_failure_input_is_empty(self):
+        self.assertEqual(analyze_conversation([])["title_summary"], "")
 
 
 if __name__ == "__main__":

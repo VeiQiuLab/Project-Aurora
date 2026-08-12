@@ -39,6 +39,26 @@ def test_frame_recorder_cancel_discards_frames(tmp_path):
     assert list(tmp_path.iterdir()) == []
 
 
+def test_frame_recorder_manual_stop_preserves_stop_reason(tmp_path):
+    buffer = AudioFrameBuffer()
+    reader = buffer.subscribe()
+    recorder = FrameRecorder(reader, output_dir=tmp_path, min_duration_ms=20)
+    recorder.start()
+    buffer.publish(pcm(2000))
+    time.sleep(0.03)
+    audio = recorder.stop()
+
+    assert audio.diagnostics["stop_reason"] == "manual_stop"
+
+
+def test_frame_recorder_default_silence_threshold_is_800ms(tmp_path):
+    buffer = AudioFrameBuffer()
+    reader = buffer.subscribe()
+    recorder = FrameRecorder(reader, output_dir=tmp_path)
+
+    assert recorder.silence_end_threshold_ms == 800
+
+
 def test_frame_recorder_timeout_marks_diagnostics(tmp_path):
     buffer = AudioFrameBuffer()
     reader = buffer.subscribe()

@@ -24,7 +24,7 @@ class FrameRecorder:
         output_dir: str | Path | None = None,
         min_duration_ms: int = 750,
         max_duration_ms: int = 180000,
-        silence_end_threshold_ms: int = 10000,
+        silence_end_threshold_ms: int = 800,
         activity_rms_threshold: float = 0.014,
         activity_peak_threshold: float | None = 0.03,
         read_timeout_seconds: float = 0.1,

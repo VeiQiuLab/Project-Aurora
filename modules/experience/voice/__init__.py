@@ -4,6 +4,8 @@ from .fake import FakeSpeechToTextProvider, FakeTextToSpeechProvider
 from .interfaces import SpeechToTextProvider, TextToSpeechProvider
 from .models import AudioInput, SpeechResult, TranscriptionResult, VoiceOptions
 from .session import VoiceSessionManager, VoiceSessionResult
+from .sentence_splitter import SentenceSplitter
+from .tts_queue import TTSQueue
 
 __all__ = [
     "AudioInput",
@@ -16,4 +18,6 @@ __all__ = [
     "VoiceOptions",
     "VoiceSessionManager",
     "VoiceSessionResult",
+    "SentenceSplitter",
+    "TTSQueue",
 ]

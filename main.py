@@ -82,7 +82,6 @@ from modules.health import check_all, system_self_check
 from modules.models import get_model_records, get_models, infer_model_capability
 from modules.chat import (
     ChatError,
-    ChatSession,
     DEFAULT_SYSTEM_CONTEXT,
     assemble_final_prompt,
     build_context_debug_report,
@@ -340,6 +339,7 @@ for startup_item in [
 status_labels = {}
 app_shell = None
 voice_runtime = None
+active_chat_page = None
 companion_state_store = CompanionStateStore()
 models_window = None
 health_window = None
@@ -1223,52 +1223,17 @@ def build_chat_runtime_callbacks():
 
 
 def build_voice_text_input_handler():
-    """Adapt the existing synchronous core chat boundary for Voice Runtime."""
+    """Route recognized voice text through the active ChatPage message path."""
 
-    def handle_voice_text(prompt):
-        callbacks = build_chat_runtime_callbacks()
-        conversation_messages = []
-        if active_conversation_id:
-            try:
-                conversation = ConversationManager().load(active_conversation_id)
-                conversation_messages = conversation.get("messages", [])
-            except Exception as error:
-                logger.warning(f"Voice conversation history unavailable: {error}")
-
-        context = callbacks["prepare_prompt_context_callback"](
-            prompt,
-            conversation_messages,
-            False,
-        )
-        system_context = context.get("system_context", "")
-        context_diagnostics = context.get("context_diagnostics", {})
-        session = ChatSession(system_context)
-        session.replace(conversation_messages)
-        session.set_system_context(system_context)
-        diagnostic_messages = session.snapshot() + [{"role": "user", "content": prompt}]
-        logger.info(
-            "Voice diagnostics: "
-            f"STT result={prompt!r}; "
-            f"ContextBuilder input summary={context_diagnostics}; "
-            f"model={settings.get('chat_model', '')}; "
-            f"system_context_chars={len(system_context)}; message_count={len(diagnostic_messages)}"
-        )
-        logger.info(f"Voice final system context: {system_context!r}")
-        logger.info(f"Voice final messages before Core: {diagnostic_messages!r}")
-        response_parts = []
-        result = stream_chat(
-            settings.get("chat_model", ""),
-            prompt,
-            session,
-            response_parts.append,
-            threading.Event(),
-        )
-        if result != "completed":
-            raise ChatError("Voice chat generation did not complete.")
-        response = "".join(response_parts).strip()
-        if not response:
-            raise ChatError("Voice chat returned an empty response.")
-        return response
+    def handle_voice_text(prompt, *, on_chunk=None, cancel_event=None):
+        if active_chat_page is not None:
+            return active_chat_page.handle_external_prompt(
+                prompt,
+                on_chunk=on_chunk,
+                cancel_event=cancel_event,
+                source="voice",
+            )
+        raise ChatError("Chat page is not ready for voice input.")
 
     return handle_voice_text
 
@@ -1288,10 +1253,12 @@ def create_application_voice_runtime():
         ffmpeg_path=ffmpeg_path,
         min_duration_ms=int(settings.get("voice.recorder.min_duration_ms", 750)),
     )
+    voice_text_handler = build_voice_text_input_handler()
     return create_voice_runtime(
         settings,
         recorder=recorder,
-        text_input_handler=build_voice_text_input_handler(),
+        text_input_handler=voice_text_handler,
+        stream_text_input_handler=voice_text_handler,
         state_store=companion_state_store,
         input_device_name=device_name,
         use_frame_pipeline=str(
@@ -2136,7 +2103,7 @@ def app_shell_conversation_provider():
 
 
 def create_app_shell():
-    global app_shell
+    global app_shell, active_chat_page
     if app_shell is not None:
         return app_shell
 
@@ -2185,6 +2152,7 @@ def create_app_shell():
         on_shutdown=shutdown_app
     )
     app_shell.pack(fill="both", expand=True)
+    active_chat_page = app_shell.page_frames.get("chat")
     logger.info("AppShell initialized")
     return app_shell
 

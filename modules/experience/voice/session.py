@@ -6,6 +6,7 @@ from dataclasses import dataclass, field
 from threading import Event, RLock, Thread
 from time import monotonic, sleep
 from typing import Callable, Mapping
+from uuid import uuid4
 
 from modules.diagnostics import create_diagnostics
 from modules.experience.state import CompanionState, CompanionStateStore
@@ -16,6 +17,7 @@ from modules.experience.audio.vad import VADAdapter
 from modules.experience.voice.models import AudioInput
 
 from .orchestrator import VoiceOrchestrationResult
+from .latency import VoiceTurnTrace
 
 
 VoiceWaiter = Callable[[Event, float], bool]
@@ -53,8 +55,9 @@ class VoiceSessionManager:
         frame_recorder_factory=None,
         pre_roll_ms: int = 500,
         maximum_recording_duration_seconds: float = 180.0,
-        silence_end_threshold_seconds: float = 10.0,
+        silence_end_threshold_seconds: float = 0.8,
         recording_window_seconds: float | None = None,
+        cancel_event: Event | None = None,
     ):
         pipeline_mode = vad_adapter is not None
         if (not pipeline_mode and not callable(wait_for_voice)) or (not callable(run_cycle) and not pipeline_mode):
@@ -88,10 +91,12 @@ class VoiceSessionManager:
         else:
             self.frame_recorder_factory = frame_recorder_factory
         self._lock = RLock()
-        self._cancel_event = Event()
+        self._cancel_event = cancel_event or Event()
         self._running = False
         self._thread: Thread | None = None
         self._last_result: VoiceSessionResult | None = None
+        self._active_orchestrator = None
+        self.session_id: str | None = None
 
     @property
     def session_running(self) -> bool:
@@ -126,7 +131,12 @@ class VoiceSessionManager:
                 f"VoiceSessionManager state transition completed "
                 f"state={self.state_store.current_state.value}"
             )
-            self._cancel_event.clear()
+            self._cancel_event = Event()
+            self.session_id = uuid4().hex
+            logger.info(
+                f"[VOICE] session={self.session_id} generation=- "
+                f"event=session_created state={self.state_store.current_state.value}"
+            )
             self._last_result = None
             self._running = True
             self._thread = Thread(target=self._run, name="aurora-voice-session", daemon=True)
@@ -148,11 +158,37 @@ class VoiceSessionManager:
         with self._lock:
             if not self._running:
                 return False
-            self._cancel_event.set()
-        self._cleanup()
+            cancel_event = self._cancel_event
+            cancel_event.set()
+            active_orchestrator = self._active_orchestrator
+            session_id = self.session_id
+            self._running = False
+            self._last_result = VoiceSessionResult(
+                completed=False,
+                cancelled=True,
+                reason="cancelled",
+            )
+        logger.info(
+            f"[VOICE] session={session_id} event=interrupt "
+            f"state={self.state_store.current_state.value}"
+        )
+        self.state_store.force_idle(
+            reason="voice_session_interrupt_requested",
+            source="voice_session_manager",
+        )
+        if active_orchestrator is not None:
+            try:
+                active_orchestrator.cancel()
+            except Exception:
+                pass
+        # The session thread owns cleanup. Doing it here blocks the Tk callback
+        # while FFmpeg or an audio source waits for its process to exit.
         return True
 
     def _run(self) -> None:
+        with self._lock:
+            session_id = self.session_id or ""
+            cancel_event = self._cancel_event
         started_at = monotonic()
         last_valid_input_at = started_at
         cycles = 0
@@ -161,26 +197,30 @@ class VoiceSessionManager:
         reason = "completed"
         cancelled = False
         try:
-            while not self._cancel_event.is_set():
+            while not cancel_event.is_set():
                 remaining = self.inactivity_timeout_seconds - (monotonic() - last_valid_input_at)
                 if remaining <= 0:
                     reason = "inactivity_timeout"
                     break
                 wait_started = monotonic()
                 detected = self.vad_adapter.wait_for_voice(
-                    self._cancel_event, min(self.wait_slice_seconds, remaining)
+                    cancel_event, min(self.wait_slice_seconds, remaining)
                 ) if self.vad_adapter is not None else self.wait_for_voice(
-                    self._cancel_event, min(self.wait_slice_seconds, remaining)
+                    cancel_event, min(self.wait_slice_seconds, remaining)
                 )
                 vad_latency_ms = int((monotonic() - wait_started) * 1000)
-                if self._cancel_event.is_set():
+                if cancel_event.is_set():
                     cancelled = True
                     reason = "cancelled"
                     break
                 if not detected:
                     continue
                 cycles += 1
-                cycle_result, cycle_metrics = self._run_pipeline_cycle(vad_latency_ms) if self.vad_adapter is not None else (self.run_cycle(), {})
+                cycle_result, cycle_metrics = (
+                    self._run_pipeline_cycle(vad_latency_ms, session_id, cancel_event)
+                    if self.vad_adapter is not None
+                    else (self.run_cycle(), {})
+                )
                 pipeline_metrics.append(cycle_metrics)
                 if cycle_result.transcription is not None and cycle_result.transcription.text.strip():
                     valid_inputs += 1
@@ -189,23 +229,27 @@ class VoiceSessionManager:
                     cancelled = True
                     reason = "cancelled"
                     break
-                self.state_store.force_idle(reason="voice_turn_finished", source="voice_session_manager")
-                if self._cancel_event.is_set():
+                if self._owns_session(session_id, cancel_event):
+                    self.state_store.force_idle(reason="voice_turn_finished", source="voice_session_manager")
+                if cancel_event.is_set() or not self._owns_session(session_id, cancel_event):
                     cancelled = True
                     reason = "cancelled"
                     break
-                self.state_store.transition(
-                    CompanionState.VOICE_READY,
-                    reason="voice_session_waiting",
-                    source="voice_session_manager",
-                )
+                if self._owns_session(session_id, cancel_event):
+                    self.state_store.transition(
+                        CompanionState.VOICE_READY,
+                        reason="voice_session_waiting",
+                        source="voice_session_manager",
+                    )
         except Exception as error:
             reason = "session_failed"
-            self.state_store.transition(CompanionState.ERROR, reason=reason, source="voice_session_manager")
-            self.state_store.force_idle(reason=reason, source="voice_session_manager")
+            if self._owns_session(session_id, cancel_event):
+                self.state_store.transition(CompanionState.ERROR, reason=reason, source="voice_session_manager")
+                self.state_store.force_idle(reason=reason, source="voice_session_manager")
         finally:
             self._cleanup()
-            self.state_store.force_idle(reason=reason, source="voice_session_manager")
+            if self._owns_session(session_id, cancel_event):
+                self.state_store.force_idle(reason=reason, source="voice_session_manager")
             diagnostics = create_diagnostics(
                 stage="experience.voice.session",
                 success=reason in {"completed", "inactivity_timeout", "cancelled"},
@@ -219,14 +263,19 @@ class VoiceSessionManager:
                 },
             )
             with self._lock:
-                self._last_result = VoiceSessionResult(
-                    completed=reason in {"completed", "inactivity_timeout"},
-                    cancelled=cancelled,
-                    reason=reason,
-                    diagnostics=diagnostics,
-                )
-                self._running = False
-                self._thread = None
+                if self.session_id == session_id and self._cancel_event is cancel_event:
+                    self._last_result = VoiceSessionResult(
+                        completed=reason in {"completed", "inactivity_timeout"},
+                        cancelled=cancelled,
+                        reason=reason,
+                        diagnostics=diagnostics,
+                    )
+                    self._running = False
+                    self._thread = None
+
+    def _owns_session(self, session_id: str, cancel_event: Event) -> bool:
+        with self._lock:
+            return self.session_id == session_id and self._cancel_event is cancel_event
 
     def _cleanup(self) -> None:
         if self.vad_adapter is not None:
@@ -245,7 +294,15 @@ class VoiceSessionManager:
             except Exception:
                 return
 
-    def _run_pipeline_cycle(self, vad_latency_ms: int):
+    def _run_pipeline_cycle(
+        self,
+        vad_latency_ms: int,
+        session_id: str,
+        cancel_event: Event,
+    ):
+        trace = VoiceTurnTrace()
+        trace.mark("recording_start")
+        logger.info("[VOICE_RECORDING] recording_start elapsed_ms=0")
         reader = self.audio_buffer.subscribe(pre_roll_ms=self.pre_roll_ms)
         recorder = self.frame_recorder_factory(reader)
         recorder.start()
@@ -255,20 +312,46 @@ class VoiceSessionManager:
             else self.maximum_recording_duration_seconds
         )
         while (
-            not self._cancel_event.is_set()
+            not cancel_event.is_set()
             and recorder.recording
             and not recorder.completed
             and monotonic() < deadline
         ):
             sleep(0.05)
-        if self._cancel_event.is_set():
+        if cancel_event.is_set():
             recorder.cancel()
+            trace.mark("recording_end")
+            logger.info("[VOICE_RECORDING] recording_end stop_reason=cancelled")
             return VoiceOrchestrationResult(success=False, cancelled=True, stage="cancelled"), {
                 "vad_latency_ms": vad_latency_ms,
             }
         audio_input = recorder.stop()
+        trace.mark("recording_end")
+        stop_reason = audio_input.diagnostics.get("stop_reason", "manual_stop")
+        logger.info(
+            f"[VOICE_RECORDING] recording_end stop_reason={stop_reason!r} "
+            f"duration_ms={trace.duration_ms('recording_start', 'recording_end')}"
+        )
+        if cancel_event.is_set():
+            return VoiceOrchestrationResult(success=False, cancelled=True, stage="cancelled"), {
+                "vad_latency_ms": vad_latency_ms,
+            }
         orchestrator = self.orchestrator_factory(_CapturedAudioRecorder(audio_input))
-        result = orchestrator.run()
+        generation_id = uuid4().hex
+        set_generation_context = getattr(orchestrator, "set_generation_context", None)
+        if callable(set_generation_context):
+            set_generation_context(session_id, generation_id)
+        with self._lock:
+            self._active_orchestrator = orchestrator
+        set_latency_trace = getattr(orchestrator, "set_latency_trace", None)
+        if callable(set_latency_trace):
+            set_latency_trace(trace)
+        try:
+            result = orchestrator.run()
+        finally:
+            with self._lock:
+                if self._active_orchestrator is orchestrator:
+                    self._active_orchestrator = None
         return result, {
             "vad_latency_ms": vad_latency_ms,
             "recording_duration_ms": audio_input.duration_ms,

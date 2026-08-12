@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from collections.abc import Mapping
+from threading import Event
 from typing import Any
 
 from modules.experience.audio.playback import AudioPlaybackController
@@ -28,6 +29,7 @@ def create_voice_runtime(
     *,
     recorder: AudioRecorder | None,
     text_input_handler,
+    stream_text_input_handler=None,
     state_callback: StateCallback | None = None,
     state_store: CompanionStateStore | None = None,
     stt_provider: SpeechToTextProvider | None = None,
@@ -48,6 +50,8 @@ def create_voice_runtime(
         raise ValueError("an AudioRecorder is required when Voice is enabled")
     if not callable(text_input_handler):
         raise TypeError("text_input_handler must be callable")
+    if stream_text_input_handler is not None and not callable(stream_text_input_handler):
+        raise TypeError("stream_text_input_handler must be callable or None")
 
     store = state_store or CompanionStateStore()
     stt = stt_provider or _create_stt(settings)
@@ -59,8 +63,14 @@ def create_voice_runtime(
     playback_timeout_seconds = float(
         _get_setting(settings, "voice.playback.timeout_seconds", 120.0)
     )
-
-    def build_orchestrator(current_recorder: AudioRecorder) -> VoiceOrchestrator:
+    tts_timeout_seconds = float(
+        _get_setting(settings, "voice.tts.timeout_seconds", 30.0)
+    )
+    def build_orchestrator(
+        current_recorder: AudioRecorder,
+        *,
+        cancel_event: Event | None = None,
+    ) -> VoiceOrchestrator:
         return VoiceOrchestrator(
             recorder=current_recorder,
             stt_provider=stt,
@@ -68,6 +78,9 @@ def create_voice_runtime(
             playback=audio_playback,
             state_store=store,
             text_input_handler=text_input_handler,
+            stream_text_input_handler=stream_text_input_handler,
+            cancel_event=cancel_event or Event(),
+            tts_timeout_seconds=tts_timeout_seconds,
             wait_for_playback_completion=wait_for_playback_completion,
             playback_timeout_seconds=playback_timeout_seconds,
         )
@@ -118,13 +131,18 @@ def create_voice_runtime(
                 _get_setting(settings, "voice.recorder.maximum_recording_duration", 180.0)
             ),
             silence_end_threshold_seconds=float(
-                _get_setting(settings, "voice.recorder.silence_end_threshold", 10.0)
+                _get_setting(settings, "voice.recorder.silence_end_threshold", 0.8)
             ),
         )
     return RuntimeService(
         orchestrator,
         state_callback=state_callback,
         session_manager=session_manager,
+        orchestrator_factory=(
+            lambda: build_orchestrator(recorder)
+            if session_manager is None
+            else None
+        ),
     )
 
 
