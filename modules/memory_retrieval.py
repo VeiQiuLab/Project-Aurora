@@ -41,6 +41,10 @@ def retrieve_memories(prompt, memories, max_results=5, min_importance=0, enriche
             enabled = enabled.strip().casefold() not in {"false", "0", "no"}
         if not enabled:
             continue
+        metadata = memory.get("metadata") if isinstance(memory.get("metadata"), dict) else {}
+        state = metadata.get("state", memory.get("state", "active"))
+        if state != "active":
+            continue
         importance = _importance(memory.get("importance"))
         if importance < float(min_importance):
             continue

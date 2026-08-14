@@ -31,7 +31,7 @@ class MemoryMetadataPersistenceTests(unittest.TestCase):
         self.assertEqual(memory["type"], "fact")
         self.assertEqual(memory["content"], "User works on Project Aurora.")
         self.assertEqual(memory["importance"], "normal")
-        self.assertNotIn("metadata", memory)
+        self.assertEqual(memory["metadata"]["state"], "active")
 
     def test_old_memory_shape_still_reads(self):
         store = self.make_store()
@@ -48,7 +48,7 @@ class MemoryMetadataPersistenceTests(unittest.TestCase):
         self.assertEqual(len(memories), 1)
         self.assertEqual(memories[0]["id"], "old-memory")
         self.assertEqual(memories[0]["content"], "Legacy memory.")
-        self.assertNotIn("metadata", memories[0])
+        self.assertEqual(memories[0]["metadata"]["state"], "active")
 
     def test_update_preserves_metadata(self):
         store = self.make_store()

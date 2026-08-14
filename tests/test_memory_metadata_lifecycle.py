@@ -72,7 +72,7 @@ class MemoryMetadataLifecycleTests(unittest.TestCase):
         updated = store.update(memory["id"], "fact", "new", "normal")
 
         self.assertEqual(updated["content"], "new")
-        self.assertNotIn("metadata", updated)
+        self.assertEqual(updated["metadata"]["state"], "active")
 
     def test_metadata_fields_are_preserved_when_marked_stale(self):
         store = self.make_store()

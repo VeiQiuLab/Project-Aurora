@@ -18,8 +18,10 @@ MEMORY_METADATA_FIELDS = {
     "risk",
     "explanation",
     "source_detail",
-    "analysis_version"
+    "analysis_version",
+    "relation"
 }
+MEMORY_STATES = {"active", "superseded", "archived"}
 SENSITIVE_PATTERNS = [
     r"\b\d{3}[- ]?\d{2}[- ]?\d{4}\b",
     r"\b(?:\d[ -]*?){13,19}\b",
@@ -196,6 +198,17 @@ class MemoryStore:
         normalized.setdefault("updated_time", normalized.get("updated_at", normalized["created_time"]))
         normalized.setdefault("importance", "normal")
         normalized.setdefault("enabled", True)
+        metadata = normalized.get("metadata")
+        if not isinstance(metadata, dict):
+            metadata = {}
+            normalized["metadata"] = metadata
+        metadata.setdefault("state", "active")
+        metadata.setdefault("supersedes", None)
+        metadata.setdefault("superseded_by", None)
+        metadata.setdefault("valid_from", None)
+        metadata.setdefault("valid_until", None)
+        if metadata.get("state") not in MEMORY_STATES:
+            metadata["state"] = "active"
         return normalized
 
     def list_memories(self):
@@ -214,6 +227,12 @@ class MemoryStore:
 
     def create(self, memory_type, content, importance="normal", metadata=None):
         now = self._now()
+        memory_metadata = dict(metadata) if isinstance(metadata, dict) else {}
+        memory_metadata.setdefault("state", "active")
+        memory_metadata.setdefault("supersedes", None)
+        memory_metadata.setdefault("superseded_by", None)
+        memory_metadata.setdefault("valid_from", None)
+        memory_metadata.setdefault("valid_until", None)
         item = {
             "id": uuid.uuid4().hex,
             "type": memory_type or "fact",
@@ -223,8 +242,7 @@ class MemoryStore:
             "importance": importance or "normal",
             "enabled": True
         }
-        if isinstance(metadata, dict) and metadata:
-            item["metadata"] = dict(metadata)
+        item["metadata"] = memory_metadata
         memories = self.list_memories()
         memories.append(item)
         self._write(memories)
@@ -377,8 +395,13 @@ class MemoryStore:
                 continue
             if key in existing_memories or key in pending_keys:
                 continue
-            if any(self._is_similar(content, existing) for existing in pending_content):
+            relation = self._analyze_relation(candidate_data)
+            if relation["type"] == "duplicate":
                 continue
+            if relation["type"] == "new" and any(self._is_similar(content, existing) for existing in pending_content):
+                continue
+            candidate_metadata = dict(candidate_data.get("metadata", {})) if isinstance(candidate_data.get("metadata"), dict) else {}
+            candidate_metadata["relation"] = relation
             candidate_data.update({
                 "type": memory_type,
                 "content": content,
@@ -386,6 +409,7 @@ class MemoryStore:
                 "source": candidate_data.get("source", "conversation"),
                 "created_time": candidate_data.get("created_time", now),
                 "updated_time": now,
+                "metadata": candidate_metadata,
             })
             candidate = self._normalize_candidate(candidate_data)
             pending.append(candidate)
@@ -462,7 +486,10 @@ class MemoryStore:
             key = content.casefold()
             if not content or key in memories or key in queued:
                 continue
-            if any(self._is_similar(content, existing) for existing in memory_content + queued_content):
+            relation = self._analyze_relation(item)
+            if relation["type"] == "duplicate":
+                continue
+            if relation["type"] == "new" and any(self._is_similar(content, existing) for existing in memory_content + queued_content):
                 continue
             has_intelligence_importance = (
                 "importance_score" in item
@@ -482,7 +509,11 @@ class MemoryStore:
                 "status": "pending",
                 "source": source,
                 "created_time": now,
-                "updated_time": now
+                "updated_time": now,
+                "metadata": {
+                    **(item.get("metadata", {}) if isinstance(item.get("metadata"), dict) else {}),
+                    "relation": relation,
+                }
             })
             candidate = self._normalize_candidate(candidate_data)
             if not has_intelligence_importance and quality < 2:
@@ -499,12 +530,103 @@ class MemoryStore:
         candidates = self.list_candidates()
         for item in candidates:
             if item.get("id") == candidate_id:
-                saved = self.save_candidates([item], min_score=0)
+                relation = item.get("metadata", {}).get("relation", {}) if isinstance(item.get("metadata"), dict) else {}
+                if relation.get("type") == "possible_update":
+                    saved = self._approve_update_candidate(item, relation)
+                else:
+                    saved = self.save_candidates([item], min_score=0)
                 item["status"] = "approved"
                 item["updated_time"] = self._now()
                 self._write_candidates(candidates)
                 return saved[0] if saved else None
         raise KeyError(candidate_id)
+
+    def _approve_update_candidate(self, candidate, relation):
+        target_id = str(relation.get("target_memory_id") or "")
+        memories = self.list_memories()
+        target = next(
+            (memory for memory in memories
+             if str(memory.get("id")) == target_id
+             and self._memory_state(memory) == "active"),
+            None,
+        )
+        if target is None:
+            return self.save_candidates([candidate], min_score=0)
+
+        approval_time = self._now()
+        metadata = dict(candidate.get("metadata", {})) if isinstance(candidate.get("metadata"), dict) else {}
+        metadata.update({
+            "state": "active",
+            "supersedes": target["id"],
+            "superseded_by": None,
+            "valid_from": approval_time,
+            "valid_until": None,
+        })
+        saved = self.create(
+            str(candidate.get("type", "fact")),
+            str(candidate.get("content", "")),
+            str(candidate.get("importance", "normal")),
+            metadata=metadata,
+        )
+        saved["metadata"]["valid_from"] = approval_time
+        saved["metadata"]["supersedes"] = target["id"]
+        target_metadata = target.get("metadata") if isinstance(target.get("metadata"), dict) else {}
+        target_metadata.update({
+            "state": "superseded",
+            "superseded_by": saved["id"],
+            "valid_until": approval_time,
+        })
+        target["metadata"] = target_metadata
+        target["updated_time"] = approval_time
+        memories = self.list_memories()
+        target = next(memory for memory in memories if memory.get("id") == target["id"])
+        target["metadata"] = target_metadata
+        target["updated_time"] = approval_time
+        self._write(memories)
+        return [saved]
+
+    @staticmethod
+    def _memory_state(memory):
+        metadata = memory.get("metadata") if isinstance(memory, dict) else {}
+        state = metadata.get("state") if isinstance(metadata, dict) else None
+        state = state or (memory.get("state") if isinstance(memory, dict) else None)
+        return state if state in MEMORY_STATES else "active"
+
+    @classmethod
+    def _relation_category(cls, record):
+        metadata = record.get("metadata") if isinstance(record, dict) else {}
+        category = record.get("category") if isinstance(record, dict) else None
+        if not category and isinstance(metadata, dict):
+            category = metadata.get("category")
+        if category:
+            return str(category).casefold()
+        content = str(record.get("content", "") if isinstance(record, dict) else "").casefold()
+        if re.search(r"concise|detailed|summary|tone|style|language|回复|简洁|详细", content):
+            return "communication_style"
+        if re.search(r"project|repo|branch|architecture|version|项目|仓库|分支", content):
+            return "project_information"
+        if re.search(r"name|job|role|company|device|姓名|工作|角色|公司|设备", content):
+            return "user_fact"
+        return str(record.get("type", "fact")).casefold() if isinstance(record, dict) else "fact"
+
+    def _analyze_relation(self, candidate):
+        candidate_type = str(candidate.get("type", "fact")).casefold()
+        candidate_category = self._relation_category(candidate)
+        content = str(candidate.get("content", "")).strip()
+        for memory in self.list_memories():
+            if self._memory_state(memory) != "active" or not memory.get("enabled", True):
+                continue
+            existing_content = str(memory.get("content", "")).strip()
+            if content.casefold() == existing_content.casefold() or self._is_similar(content, existing_content):
+                return {"type": "duplicate", "target_memory_id": memory.get("id"), "reason": "matching_memory_content"}
+            if str(memory.get("type", "fact")).casefold() != candidate_type:
+                continue
+            existing_category = self._relation_category(memory)
+            if existing_category == candidate_category and candidate_category in {"communication_style", "project_information", "user_fact", "user_preference"}:
+                return {"type": "possible_update", "target_memory_id": memory.get("id"), "reason": "same_type_and_property_category"}
+            if existing_category == candidate_category:
+                return {"type": "possible_conflict", "target_memory_id": memory.get("id"), "reason": "same_type_and_category"}
+        return {"type": "new", "target_memory_id": None, "reason": "no_active_related_memory"}
 
     def reject_candidate(self, candidate_id):
         candidates = self.list_candidates()
