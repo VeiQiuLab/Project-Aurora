@@ -8,6 +8,72 @@ from modules.diagnostics import create_diagnostics
 from modules.rag_pipeline import run_rag_pipeline
 
 
+def build_rag_runtime_config(settings_store):
+    """Build the pipeline configuration from Aurora's single Settings source."""
+
+    def value(key, default):
+        try:
+            return settings_store.get(key, default)
+        except (AttributeError, TypeError):
+            return default
+
+    try:
+        context_budget = max(1, int(value("rag.context_budget", 4000)))
+    except (TypeError, ValueError):
+        context_budget = 4000
+    try:
+        reserved_output = max(0, int(value("rag.reserved_output", 0)))
+    except (TypeError, ValueError):
+        reserved_output = 0
+    memory_weights = value("rag.memory_ranking_weights", None)
+    knowledge_weights = value("rag.knowledge_ranking_weights", None)
+    return {
+        "enable_dedup": bool(value("rag.enable_dedup", True)),
+        "enable_ranking": bool(value("rag.enable_ranking", True)),
+        "enable_optimization": bool(value("rag.enable_optimization", True)),
+        "max_tokens": context_budget,
+        "reserved_output": reserved_output,
+        "context.adaptive_enabled": bool(value("context.adaptive_enabled", False)),
+        "memory_ranking_weights": deepcopy(memory_weights) if isinstance(memory_weights, dict) else None,
+        "knowledge_ranking_weights": deepcopy(knowledge_weights) if isinstance(knowledge_weights, dict) else None,
+    }
+
+
+def run_configured_rag_pipeline(
+    memory_results,
+    knowledge_results,
+    *,
+    settings_store,
+    query="",
+    conversation_messages=None,
+    logger=None,
+    pipeline_runner=None,
+):
+    """Run the production RAG adapter with query, context state, and budget."""
+
+    config = build_rag_runtime_config(settings_store)
+    messages = conversation_messages if isinstance(conversation_messages, list) else []
+    return run_rag_pipeline_with_fallback(
+        memory_results,
+        knowledge_results,
+        enabled=bool(settings_store.get("rag.pipeline_enabled", False)),
+        config=config,
+        pipeline_runner=pipeline_runner,
+        logger=logger,
+        query=query,
+        conversation_state={"message_count": len(messages)},
+        available_context={
+            "memory_count": len(memory_results) if isinstance(memory_results, list) else 0,
+            "knowledge_count": len(knowledge_results) if isinstance(knowledge_results, list) else 0,
+            "conversation_count": len(messages),
+        },
+        budget={
+            "total_budget": config["max_tokens"],
+            "reserved_output": config["reserved_output"],
+        },
+    )
+
+
 def run_rag_pipeline_with_fallback(
     memory_results,
     knowledge_results,
@@ -73,6 +139,8 @@ def run_rag_pipeline_with_fallback(
         result = result if isinstance(result, dict) else {}
         pipeline_diagnostics = result.get("diagnostics")
         pipeline_metrics = pipeline_diagnostics.get("metrics", {}) if isinstance(pipeline_diagnostics, dict) else {}
+        pipeline_trace = pipeline_diagnostics.get("trace", {}) if isinstance(pipeline_diagnostics, dict) else {}
+        pipeline_trace = pipeline_trace if isinstance(pipeline_trace, dict) else {}
         metrics.update({
             key: pipeline_metrics[key]
             for key in ("normalized_count", "deduplicated_count", "ranked_count", "optimized_count")
@@ -95,16 +163,13 @@ def run_rag_pipeline_with_fallback(
                 metrics=metrics,
                 trace={
                     "fallback_stage": (
-                        pipeline_diagnostics.get("trace", {}).get("fallback_stage", "")
-                        if isinstance(pipeline_diagnostics, dict)
-                        else ""
+                        pipeline_trace.get("fallback_stage", "")
                     ),
                     "elapsed_ms": _elapsed_ms(started_at),
                     "enabled_stages": (
-                        pipeline_diagnostics.get("trace", {}).get("enabled_stages", {})
-                        if isinstance(pipeline_diagnostics, dict)
-                        else {}
+                        pipeline_trace.get("enabled_stages", {})
                     ),
+                    "optimization": deepcopy(pipeline_trace.get("optimization", {})),
                     "context_policy": policy_info["trace"],
                 },
             ),

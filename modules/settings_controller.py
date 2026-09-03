@@ -50,11 +50,19 @@ class SettingsController:
         self._validate_number(normalized, errors, "status.refresh_interval", minimum=0.01, numeric_type=float)
         self._validate_number(normalized, errors, "memory.max_injection", minimum=1, numeric_type=int)
         self._validate_number(normalized, errors, "memory.min_importance", minimum=0, numeric_type=float)
+        self._validate_number(
+            normalized, errors, "memory.retrieval_threshold", minimum=0, maximum=1, numeric_type=float
+        )
+        self._validate_number(
+            normalized, errors, "memory.confidence_default", minimum=0, maximum=1, numeric_type=float
+        )
+        self._validate_number(normalized, errors, "rag.context_budget", minimum=1, numeric_type=int)
+        self._validate_number(normalized, errors, "rag.reserved_output", minimum=0, numeric_type=int)
         self._validate_number(normalized, errors, "knowledge.max_results", minimum=0, numeric_type=int)
 
         return not errors, normalized, errors
 
-    def _validate_number(self, values, errors, key, minimum, numeric_type):
+    def _validate_number(self, values, errors, key, minimum, numeric_type, maximum=None):
         if key not in values:
             return
 
@@ -66,6 +74,10 @@ class SettingsController:
 
         if value < minimum:
             errors.append(f"Value too small: {key}")
+            return
+
+        if maximum is not None and value > maximum:
+            errors.append(f"Value too large: {key}")
             return
 
         values[key] = value

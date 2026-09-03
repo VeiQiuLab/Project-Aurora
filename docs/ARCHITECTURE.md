@@ -57,15 +57,28 @@ boundary. That boundary retrieves and assembles:
 - Persona context
 - relevant Memory records
 - relevant Knowledge records
-- optional normalized/ranked RAG results
+- normalized, deduplicated, ranked, and budget-optimized RAG results
 - current Conversation messages
 
 `ContextBuilder` assembles system-context sections and diagnostics. Conversation
 history remains in `ChatSession.messages` and is sent to Ollama as chat messages;
 it is not flattened into a replacement Memory or RAG store.
 
-RAG is optional and has a fallback path. Failure in optional ranking or context
-optimization must preserve usable base Memory and Knowledge retrieval.
+For the v3.8 alpha path, RAG is enabled by default but remains configurable.
+The production adapter receives the current query, Conversation message count,
+available result counts, and context budget from the shared Settings source.
+Failure in normalization, deduplication, ranking, optimization, or integration
+preserves usable legacy Memory and Knowledge context. Adaptive Context remains
+disabled by default behind `context.adaptive_enabled`.
+
+Memory retrieval first filters for `enabled == true` and lifecycle state
+`active` (legacy records without a state are active), applies the configured
+relevance gate, then ranks by relevance, confidence, importance, and freshness.
+Pending candidates require explicit user approval or rejection. Approving a
+possible update atomically creates the replacement and marks its target
+superseded; possible conflicts never supersede automatically. Archive preserves
+the record while excluding it from default retrieval, and permanent delete is a
+separate user action.
 
 ## Conversation Intelligence
 
@@ -133,6 +146,10 @@ Aurora/
   persona/
   logs/
 ```
+
+Memory and candidate JSON updates use same-directory temporary files, flush and
+`fsync`, then `os.replace`. A `.bak` file retains the previous valid JSON list;
+unrecoverable corrupt primary data is not silently overwritten.
 
 `config/default_settings.json` is the distributable first-run template. Private
 runtime data, local settings, device identifiers, and logs must not be packaged

@@ -91,7 +91,7 @@ from modules.chat import (
 )
 from modules.context_builder import ContextBuilder
 from modules.conversation import ConversationManager
-from modules.rag_integration import run_rag_pipeline_with_fallback
+from modules.rag_integration import run_configured_rag_pipeline
 from modules.memory import MemoryStore
 from modules.knowledge import KnowledgeStore
 from modules.persona import PersonaStore
@@ -115,7 +115,7 @@ from modules.ui_theme import (
     status_color
 )
 from modules.search import search_memories, search_conversations
-from modules.memory_retrieval import format_memory_context, retrieve_memories
+from modules.memory_retrieval import build_memory_retrieval_config, format_memory_context, retrieve_memories
 from modules.retrieval import format_knowledge_context, search_knowledge, retrieval_summary
 from modules.service_manager import ServiceManager
 from modules.shutdown_manager import ShutdownManager
@@ -1057,18 +1057,13 @@ def build_chat_runtime_callbacks():
 
     def prepare_chat_prompt_context(prompt, conversation_messages, debug_enabled=False):
         logger.info("Memory retrieval started")
-        try:
-            max_injection = max(1, int(settings.get("memory.max_injection", 5)))
-            min_importance = max(0, float(settings.get("memory.min_importance", 0)))
-        except (TypeError, ValueError):
-            max_injection, min_importance = 5, 0
+        memory_retrieval_config = build_memory_retrieval_config(settings)
         rag_enabled = bool(settings.get("rag.pipeline_enabled", False))
         matched_memories = retrieve_memories(
             prompt,
             memory_store.list_memories(),
-            max_results=max_injection,
-            min_importance=min_importance,
             enriched=rag_enabled,
+            **memory_retrieval_config,
         )
         logger.info(f"Memory matched: {len(matched_memories)}")
 
@@ -1107,10 +1102,12 @@ def build_chat_runtime_callbacks():
                 logger.info("Knowledge skipped invalid file")
             logger.info(f"Knowledge matched: {len(matched_knowledge)}")
 
-        rag_result = run_rag_pipeline_with_fallback(
+        rag_result = run_configured_rag_pipeline(
             matched_memories,
             matched_knowledge,
-            enabled=rag_enabled,
+            settings_store=settings,
+            query=prompt,
+            conversation_messages=conversation_messages,
             logger=logger,
         )
         optimized_memory_text = None
@@ -1164,21 +1161,16 @@ def build_chat_runtime_callbacks():
                 "knowledge_matches": len(matched_knowledge),
                 "persona_enabled": bool(settings.get("persona.enabled", True)),
                 "conversation_messages": len(conversation_messages or []),
+                "rag": rag_result.get("diagnostics", {}),
             }
         }
 
     def build_chat_context_preview(prompt, conversation_messages):
         started_at = time.perf_counter()
-        try:
-            max_injection = max(1, int(settings.get("memory.max_injection", 5)))
-            min_importance = max(0, float(settings.get("memory.min_importance", 0)))
-        except (TypeError, ValueError):
-            max_injection, min_importance = 5, 0
         memories = retrieve_memories(
             prompt,
             memory_store.list_memories(),
-            max_results=max_injection,
-            min_importance=min_importance
+            **build_memory_retrieval_config(settings),
         ) if prompt else []
         active_persona = persona_store.load() if settings.get("persona.enabled", True) else None
         if active_persona:
@@ -1324,16 +1316,10 @@ def show_knowledge():
     open_learning_center_tab("knowledge")
 
 def build_persona_final_prompt_preview(prompt, persona_data):
-    try:
-        max_injection = max(1, int(settings.get("memory.max_injection", 5)))
-        min_importance = max(0, float(settings.get("memory.min_importance", 0)))
-    except (TypeError, ValueError):
-        max_injection, min_importance = 5, 0
     memories = retrieve_memories(
         prompt,
         memory_store.list_memories(),
-        max_results=max_injection,
-        min_importance=min_importance
+        **build_memory_retrieval_config(settings),
     ) if prompt else []
     knowledge_items = []
     if prompt and settings.get("knowledge.enabled", True):

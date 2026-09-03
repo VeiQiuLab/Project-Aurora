@@ -5,7 +5,24 @@ features that were later removed from the current product direction.
 
 ## Unreleased
 
-No uncommitted experimental work is recorded as completed release behavior.
+### Memory and Retrieval
+
+- Added pending Memory candidate review with explicit approve/reject actions,
+  possible-update target display, and possible-conflict warnings.
+- Added user-controlled Memory archive handling, lifecycle filtering, atomic
+  JSON replacement, and last-valid backup recovery for Memory and candidate
+  storage.
+- Added a deterministic relevance gate and relevance-first Memory ranking with
+  confidence, importance, freshness, and score diagnostics.
+
+### RAG and Context
+
+- Connected the existing normalize, deduplicate, rank, and optimize pipeline to
+  the production Chat context path with Settings-backed budgets and ranking
+  parameters.
+- Enabled the RAG pipeline for the v3.8 alpha path while retaining a Settings
+  switch and automatic legacy-context fallback; Adaptive Context remains off by
+  default behind its feature flag.
 
 ## v3.8.0-alpha - Release Candidate - 2026-08-12
 

@@ -25,7 +25,29 @@ class Settings:
             },
             "memory": {
                 "max_injection": 5,
-                "min_importance": 0
+                "min_importance": 0,
+                "retrieval_threshold": 0.35,
+                "confidence_default": 0.5
+            },
+            "rag": {
+                "pipeline_enabled": True,
+                "enable_dedup": True,
+                "enable_ranking": True,
+                "enable_optimization": True,
+                "context_budget": 4000,
+                "reserved_output": 0,
+                "memory_ranking_weights": {
+                    "relevance": 0.7,
+                    "confidence": 0.15,
+                    "importance": 0.1,
+                    "freshness": 0.05
+                },
+                "knowledge_ranking_weights": {
+                    "vector": 0.45,
+                    "keyword": 0.35,
+                    "freshness": 0.1,
+                    "source": 0.1
+                }
             },
             "persona": {
                 "enabled": True
@@ -86,7 +108,8 @@ class Settings:
             "context": {
                 "warning_tokens": 6000,
                 "preview_limit": 4000,
-                "inspector_preview_limit": 4000
+                "inspector_preview_limit": 4000,
+                "adaptive_enabled": False
             },
             "chat_model": "",
             "embedding_model": "",

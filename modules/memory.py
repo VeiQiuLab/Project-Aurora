@@ -1,6 +1,8 @@
 """Local JSON-backed long-term memory storage."""
 
 import json
+import logging
+import os
 import re
 import threading
 import uuid
@@ -22,6 +24,7 @@ MEMORY_METADATA_FIELDS = {
     "relation"
 }
 MEMORY_STATES = {"active", "superseded", "archived"}
+LOGGER = logging.getLogger(__name__)
 SENSITIVE_PATTERNS = [
     r"\b\d{3}[- ]?\d{2}[- ]?\d{4}\b",
     r"\b(?:\d[ -]*?){13,19}\b",
@@ -211,38 +214,143 @@ class MemoryStore:
             metadata["state"] = "active"
         return normalized
 
-    def list_memories(self):
-        if not self.file_path.exists():
-            return []
-        try:
-            data = json.loads(self.file_path.read_text(encoding="utf-8"))
-        except (OSError, json.JSONDecodeError):
-            return []
-        if not isinstance(data, list):
-            return []
-        normalized = [self._normalize(item) for item in data]
-        if normalized != data:
-            self._write(normalized)
-        return normalized
+    @staticmethod
+    def _backup_path(path):
+        return path.with_name(f"{path.name}.bak")
 
-    def create(self, memory_type, content, importance="normal", metadata=None):
-        now = self._now()
+    @staticmethod
+    def _read_json_list(path):
+        try:
+            data = json.loads(path.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError, TypeError) as error:
+            return None, error
+        if not isinstance(data, list):
+            return None, ValueError(f"{path.name} must contain a JSON list.")
+        if not all(isinstance(item, dict) for item in data):
+            return None, ValueError(f"{path.name} must contain JSON object records.")
+        return data, None
+
+    def _load_json_list(self, path):
+        if not path.exists():
+            return [], "missing"
+        data, error = self._read_json_list(path)
+        if error is None:
+            return data, "primary"
+
+        LOGGER.error("Memory storage read failed for %s: %s", path, error)
+        backup_path = self._backup_path(path)
+        if backup_path.exists():
+            backup, backup_error = self._read_json_list(backup_path)
+            if backup_error is None:
+                LOGGER.warning("Memory storage recovered from %s", backup_path)
+                return backup, "backup"
+            LOGGER.error("Memory backup read failed for %s: %s", backup_path, backup_error)
+        return [], "corrupt"
+
+    @staticmethod
+    def _replace_text(path, text):
+        path.parent.mkdir(parents=True, exist_ok=True)
+        temporary = path.with_name(f".{path.name}.{uuid.uuid4().hex}.tmp")
+        try:
+            with temporary.open("w", encoding="utf-8", newline="\n") as handle:
+                handle.write(text)
+                handle.flush()
+                os.fsync(handle.fileno())
+            os.replace(temporary, path)
+        finally:
+            try:
+                temporary.unlink(missing_ok=True)
+            except OSError:
+                LOGGER.warning("Could not remove temporary Memory file %s", temporary)
+
+    def _atomic_write_json(self, path, records):
+        if not isinstance(records, list):
+            raise TypeError("Memory JSON payload must be a list.")
+        payload = json.dumps(records, ensure_ascii=False, indent=2)
+        with self._lock:
+            if path.exists():
+                current, current_error = self._read_json_list(path)
+                backup_path = self._backup_path(path)
+                if current_error is None:
+                    current_payload = json.dumps(current, ensure_ascii=False, indent=2)
+                    self._replace_text(backup_path, current_payload)
+                else:
+                    backup, backup_error = self._read_json_list(backup_path)
+                    if backup_error is not None:
+                        raise OSError(
+                            f"Refusing to overwrite corrupt {path.name} without a valid backup."
+                        ) from current_error
+                    LOGGER.warning(
+                        "Replacing corrupt %s while preserving valid backup %s",
+                        path,
+                        backup_path,
+                    )
+            self._replace_text(path, payload)
+
+    @staticmethod
+    def _validate_memories(memories):
+        records = [item for item in memories if isinstance(item, dict)]
+        if len(records) != len(memories):
+            raise ValueError("Memory storage contains a non-object record.")
+        by_id = {}
+        for item in records:
+            memory_id = str(item.get("id") or "")
+            if not memory_id or memory_id in by_id:
+                raise ValueError("Memory IDs must be non-empty and unique.")
+            metadata = item.get("metadata") if isinstance(item.get("metadata"), dict) else {}
+            state = metadata.get("state", "active")
+            if state not in MEMORY_STATES:
+                raise ValueError(f"Invalid Memory state: {state}")
+            by_id[memory_id] = item
+
+        for memory_id, item in by_id.items():
+            metadata = item.get("metadata", {})
+            supersedes = metadata.get("supersedes")
+            superseded_by = metadata.get("superseded_by")
+            if supersedes and str(supersedes) in by_id:
+                previous = by_id[str(supersedes)]
+                previous_metadata = previous.get("metadata", {})
+                if (
+                    previous_metadata.get("state") != "superseded"
+                    or str(previous_metadata.get("superseded_by") or "") != memory_id
+                ):
+                    raise ValueError("Memory supersede links are inconsistent.")
+            if superseded_by and str(superseded_by) in by_id:
+                replacement = by_id[str(superseded_by)]
+                replacement_metadata = replacement.get("metadata", {})
+                if str(replacement_metadata.get("supersedes") or "") != memory_id:
+                    raise ValueError("Memory superseded_by link is inconsistent.")
+
+    def _new_memory(self, memory_type, content, importance="normal", metadata=None, *, now=None):
+        created_time = now or self._now()
         memory_metadata = dict(metadata) if isinstance(metadata, dict) else {}
         memory_metadata.setdefault("state", "active")
         memory_metadata.setdefault("supersedes", None)
         memory_metadata.setdefault("superseded_by", None)
         memory_metadata.setdefault("valid_from", None)
         memory_metadata.setdefault("valid_until", None)
-        item = {
+        return {
             "id": uuid.uuid4().hex,
             "type": memory_type or "fact",
-            "content": content.strip(),
-            "created_time": now,
-            "updated_time": now,
+            "content": str(content or "").strip(),
+            "created_time": created_time,
+            "updated_time": created_time,
             "importance": importance or "normal",
-            "enabled": True
+            "enabled": True,
+            "metadata": memory_metadata,
         }
-        item["metadata"] = memory_metadata
+
+    def list_memories(self):
+        data, source = self._load_json_list(self.file_path)
+        if source == "corrupt":
+            return []
+        normalized = [self._normalize(item) for item in data]
+        if source == "backup" or normalized != data:
+            self._write(normalized)
+        return normalized
+
+    def create(self, memory_type, content, importance="normal", metadata=None):
+        item = self._new_memory(memory_type, content, importance, metadata)
         memories = self.list_memories()
         memories.append(item)
         self._write(memories)
@@ -275,6 +383,45 @@ class MemoryStore:
     def delete(self, memory_id):
         memories = [item for item in self.list_memories() if item.get("id") != memory_id]
         self._write(memories)
+
+    def archive(self, memory_id):
+        memories = self.list_memories()
+        for item in memories:
+            if item.get("id") != memory_id:
+                continue
+            metadata = item.get("metadata") if isinstance(item.get("metadata"), dict) else {}
+            if self._memory_state(item) == "archived":
+                return item
+            if self._memory_state(item) != "active":
+                raise ValueError("Only active Memory can be archived.")
+            archived_time = self._now()
+            metadata["state"] = "archived"
+            metadata["valid_until"] = archived_time
+            item["metadata"] = metadata
+            item["updated_time"] = archived_time
+            self._write(memories)
+            return item
+        raise KeyError(memory_id)
+
+    def restore(self, memory_id):
+        memories = self.list_memories()
+        for item in memories:
+            if item.get("id") != memory_id:
+                continue
+            if self._memory_state(item) != "archived":
+                raise ValueError("Only archived Memory can be restored.")
+            restored_time = self._now()
+            metadata = item.get("metadata") if isinstance(item.get("metadata"), dict) else {}
+            metadata.update({
+                "state": "active",
+                "valid_from": restored_time,
+                "valid_until": None,
+            })
+            item["metadata"] = metadata
+            item["updated_time"] = restored_time
+            self._write(memories)
+            return item
+        raise KeyError(memory_id)
 
     def set_enabled(self, memory_id, enabled):
         memories = self.list_memories()
@@ -314,13 +461,24 @@ class MemoryStore:
             source=source
         )
 
-    def retrieve(self, prompt, max_results=5, min_importance=0):
+    def retrieve(
+        self,
+        prompt,
+        max_results=5,
+        min_importance=0,
+        min_relevance=0.35,
+        confidence_default=0.5,
+        ranking_weights=None,
+    ):
         from modules.memory_retrieval import retrieve_memories
         return retrieve_memories(
             prompt,
             self.list_memories(),
             max_results=max_results,
-            min_importance=min_importance
+            min_importance=min_importance,
+            min_relevance=min_relevance,
+            confidence_default=confidence_default,
+            ranking_weights=ranking_weights,
         )
 
     def format_context(self, memories, limit=1200):
@@ -446,15 +604,12 @@ class MemoryStore:
         return normalized
 
     def list_candidates(self, status=None):
-        if not self.candidates_file.exists():
-            return []
-        try:
-            data = json.loads(self.candidates_file.read_text(encoding="utf-8"))
-        except (OSError, json.JSONDecodeError):
-            return []
-        if not isinstance(data, list):
+        data, source = self._load_json_list(self.candidates_file)
+        if source == "corrupt":
             return []
         candidates = [self._normalize_candidate(item) for item in data]
+        if source == "backup":
+            self._write_candidates(candidates)
         if status:
             candidates = [item for item in candidates if item.get("status") == status]
         return candidates
@@ -530,6 +685,8 @@ class MemoryStore:
         candidates = self.list_candidates()
         for item in candidates:
             if item.get("id") == candidate_id:
+                if item.get("status") != "pending":
+                    raise ValueError("Only pending Memory candidates can be approved.")
                 relation = item.get("metadata", {}).get("relation", {}) if isinstance(item.get("metadata"), dict) else {}
                 if relation.get("type") == "possible_update":
                     saved = self._approve_update_candidate(item, relation)
@@ -562,14 +719,13 @@ class MemoryStore:
             "valid_from": approval_time,
             "valid_until": None,
         })
-        saved = self.create(
+        saved = self._new_memory(
             str(candidate.get("type", "fact")),
             str(candidate.get("content", "")),
             str(candidate.get("importance", "normal")),
             metadata=metadata,
+            now=approval_time,
         )
-        saved["metadata"]["valid_from"] = approval_time
-        saved["metadata"]["supersedes"] = target["id"]
         target_metadata = target.get("metadata") if isinstance(target.get("metadata"), dict) else {}
         target_metadata.update({
             "state": "superseded",
@@ -578,10 +734,8 @@ class MemoryStore:
         })
         target["metadata"] = target_metadata
         target["updated_time"] = approval_time
-        memories = self.list_memories()
-        target = next(memory for memory in memories if memory.get("id") == target["id"])
-        target["metadata"] = target_metadata
-        target["updated_time"] = approval_time
+        memories.append(saved)
+        self._validate_memories(memories)
         self._write(memories)
         return [saved]
 
@@ -613,6 +767,7 @@ class MemoryStore:
         candidate_type = str(candidate.get("type", "fact")).casefold()
         candidate_category = self._relation_category(candidate)
         content = str(candidate.get("content", "")).strip()
+        related = []
         for memory in self.list_memories():
             if self._memory_state(memory) != "active" or not memory.get("enabled", True):
                 continue
@@ -622,16 +777,29 @@ class MemoryStore:
             if str(memory.get("type", "fact")).casefold() != candidate_type:
                 continue
             existing_category = self._relation_category(memory)
-            if existing_category == candidate_category and candidate_category in {"communication_style", "project_information", "user_fact", "user_preference"}:
-                return {"type": "possible_update", "target_memory_id": memory.get("id"), "reason": "same_type_and_property_category"}
             if existing_category == candidate_category:
-                return {"type": "possible_conflict", "target_memory_id": memory.get("id"), "reason": "same_type_and_category"}
+                related.append(memory)
+
+        if related:
+            target = max(
+                related,
+                key=lambda memory: (
+                    self._similarity(content, memory.get("content", "")),
+                    str(memory.get("updated_time", "")),
+                    str(memory.get("id", "")),
+                ),
+            )
+            if candidate_category in {"communication_style", "project_information", "user_fact", "user_preference"}:
+                return {"type": "possible_update", "target_memory_id": target.get("id"), "reason": "same_type_and_property_category"}
+            return {"type": "possible_conflict", "target_memory_id": target.get("id"), "reason": "same_type_and_category"}
         return {"type": "new", "target_memory_id": None, "reason": "no_active_related_memory"}
 
     def reject_candidate(self, candidate_id):
         candidates = self.list_candidates()
         for item in candidates:
             if item.get("id") == candidate_id:
+                if item.get("status") != "pending":
+                    raise ValueError("Only pending Memory candidates can be rejected.")
                 item["status"] = "rejected"
                 item["updated_time"] = self._now()
                 self._write_candidates(candidates)
@@ -639,15 +807,10 @@ class MemoryStore:
         raise KeyError(candidate_id)
 
     def _write(self, memories):
-        with self._lock:
-            self.file_path.write_text(
-                json.dumps(memories, ensure_ascii=False, indent=2),
-                encoding="utf-8"
-            )
+        self._validate_memories(memories)
+        self._atomic_write_json(self.file_path, memories)
 
     def _write_candidates(self, candidates):
-        with self._lock:
-            self.candidates_file.write_text(
-                json.dumps(candidates, ensure_ascii=False, indent=2),
-                encoding="utf-8"
-            )
+        if not all(isinstance(item, dict) for item in candidates):
+            raise ValueError("Memory candidate storage contains a non-object record.")
+        self._atomic_write_json(self.candidates_file, candidates)

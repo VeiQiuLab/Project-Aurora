@@ -68,13 +68,13 @@ class RAGScorePropagationTests(unittest.TestCase):
         self.assertEqual(result["score_details"]["importance"], "high")
         self.assertEqual(result["score_details"]["confidence"], 0.9)
 
-    def test_missing_confidence_is_not_invented(self):
+    def test_missing_confidence_uses_neutral_default(self):
         result = retrieve_memories(
             "local",
             [{"content": "local project", "importance": "normal"}],
             enriched=True,
         )[0]
-        self.assertIsNone(result["score_details"]["confidence"])
+        self.assertEqual(result["score_details"]["confidence"], 0.5)
 
     def test_legacy_retrieval_shape_is_unchanged_by_default(self):
         item = {

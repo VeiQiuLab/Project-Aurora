@@ -66,6 +66,7 @@ class RAGPipeline:
 
         ranked_count = sum(len(items) for items in ranked.values())
         base_sections = self._build_sections(ranked)
+        optimization_diagnostics = {}
         if enabled["optimization"]:
             try:
                 optimized = optimize_context(
@@ -74,6 +75,7 @@ class RAGPipeline:
                     budget=settings.get("section_budget"),
                 )
                 sections = optimized.get("sections", base_sections)
+                optimization_diagnostics = deepcopy(optimized.get("diagnostics", {}))
             except Exception as error:
                 sections = base_sections
                 warnings.append(f"context optimization failed: {error}")
@@ -103,6 +105,7 @@ class RAGPipeline:
                 "enabled_stages": enabled,
                 "fallback_stage": fallback_stage,
                 "sections": [section.get("name", "") for section in sections],
+                "optimization": optimization_diagnostics,
             },
         )
         return {"sections": sections, "diagnostics": diagnostics}
@@ -112,11 +115,22 @@ class RAGPipeline:
         sections = []
         for key, label in (("memory", "Memory"), ("knowledge", "Knowledge")):
             items = deepcopy(ranked.get(key, []))
-            content = "\n".join(
-                str(item.get("content", "")).strip()
-                for item in items
-                if isinstance(item, dict) and str(item.get("content", "")).strip()
-            )
+            lines = []
+            for item in items:
+                if not isinstance(item, dict):
+                    continue
+                item_content = str(item.get("content", "")).strip()
+                if not item_content:
+                    continue
+                if key == "memory":
+                    memory_type = str(item.get("type", "")).strip()
+                    prefix = f"[{memory_type}] " if memory_type else ""
+                    lines.append(f"- {prefix}{item_content}")
+                else:
+                    source = item.get("source") if isinstance(item.get("source"), dict) else {}
+                    title = item.get("file_name") or source.get("file_name") or "Knowledge"
+                    lines.append(f"- Source: {title}\n{item_content}")
+            content = "\n".join(lines)
             sections.append({
                 "name": label,
                 "enabled": bool(content),

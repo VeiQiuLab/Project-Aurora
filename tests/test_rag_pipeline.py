@@ -39,6 +39,28 @@ class RagPipelineTests(unittest.TestCase):
         self.assertEqual(result["diagnostics"]["metrics"]["memory_input"], 1)
         self.assertEqual(result["sections"][0]["items"][0]["source"]["kind"], "memory")
 
+    def test_pipeline_keeps_legacy_context_formatting(self):
+        memory = self.memory(content="Use concise answers")
+        memory["type"] = "preference"
+        knowledge = self.knowledge(content="Aurora guide")
+
+        result = run_rag_pipeline(memory_results=[memory], knowledge_results=[knowledge])
+
+        self.assertEqual(result["sections"][0]["content"], "- [preference] Use concise answers")
+        self.assertEqual(result["sections"][1]["content"], "- Source: guide.md\nAurora guide")
+
+    def test_context_budget_is_applied_and_diagnosed(self):
+        result = run_rag_pipeline(
+            memory_results=[self.memory(content="x" * 200)],
+            config={"max_tokens": 5},
+        )
+
+        memory_content = result["sections"][0]["content"]
+        optimization = result["diagnostics"]["trace"]["optimization"]
+        self.assertLessEqual(len(memory_content), 20)
+        self.assertEqual(optimization["max_tokens"], 5)
+        self.assertTrue(optimization["truncated"])
+
     def test_knowledge_only(self):
         result = run_rag_pipeline(knowledge_results=[self.knowledge()])
 

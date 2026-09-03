@@ -21,15 +21,17 @@ _DEFAULT_WEIGHTS = {
     },
     "memory": {
         "vector": 0.0,
-        "keyword": 0.20,
-        "importance": 0.45,
-        "confidence": 0.25,
-        "freshness": 0.10,
+        "keyword": 0.0,
+        "relevance": 0.70,
+        "importance": 0.10,
+        "confidence": 0.15,
+        "freshness": 0.05,
         "source": 0.0,
     },
     "default": {
         "vector": 0.35,
         "keyword": 0.30,
+        "relevance": 0.0,
         "importance": 0.15,
         "confidence": 0.10,
         "freshness": 0.05,
@@ -97,7 +99,7 @@ class RAGRanker:
             rank_score = sum(features[key] * weight for key, weight in active_weights.items()) / weight_total
         details = {
             key: features.get(key)
-            for key in ("vector", "keyword", "importance", "confidence", "freshness", "source")
+            for key in ("vector", "keyword", "relevance", "importance", "confidence", "freshness", "source")
         }
         details["section"] = resolved_section
         details["weights"] = active_weights
@@ -133,19 +135,42 @@ class RAGRanker:
         return {
             "vector": normalize_score(vector, "vector") if vector is not None else None,
             "keyword": normalize_score(keyword, "keyword") if keyword is not None else None,
+            "relevance": (
+                normalize_score(
+                    score_details.get("relevance_score", result.get("relevance_score")),
+                    "relevance",
+                )
+                if score_details.get("relevance_score", result.get("relevance_score")) is not None
+                else None
+            ),
             "importance": (
-                normalize_score(score_details.get("importance", metadata.get("importance")), "importance")
-                if score_details.get("importance", metadata.get("importance")) is not None
+                normalize_score(
+                    score_details.get("importance_score", score_details.get("importance", metadata.get("importance"))),
+                    "importance",
+                )
+                if score_details.get(
+                    "importance_score", score_details.get("importance", metadata.get("importance"))
+                ) is not None
                 else None
             ),
             "confidence": (
-                normalize_score(score_details.get("confidence", metadata.get("confidence")), "confidence")
-                if score_details.get("confidence", metadata.get("confidence")) is not None
+                normalize_score(
+                    score_details.get("confidence_score", score_details.get("confidence", metadata.get("confidence"))),
+                    "confidence",
+                )
+                if score_details.get(
+                    "confidence_score", score_details.get("confidence", metadata.get("confidence"))
+                ) is not None
                 else None
             ),
             "freshness": (
-                normalize_score(score_details.get("freshness", metadata.get("freshness")), "freshness")
-                if score_details.get("freshness", metadata.get("freshness")) is not None
+                normalize_score(
+                    score_details.get("freshness_score", score_details.get("freshness", metadata.get("freshness"))),
+                    "freshness",
+                )
+                if score_details.get(
+                    "freshness_score", score_details.get("freshness", metadata.get("freshness"))
+                ) is not None
                 else None
             ),
             "source": (
@@ -159,7 +184,7 @@ class RAGRanker:
     def _reason(details, active_weights):
         parts = [
             f"{key}={details[key]:.3f}"
-            for key in ("vector", "keyword", "importance", "confidence", "freshness", "source")
+            for key in ("vector", "keyword", "relevance", "importance", "confidence", "freshness", "source")
             if key in active_weights and details.get(key) is not None
         ]
         return f"{details['section']} ranking: " + ", ".join(parts) if parts else f"{details['section']} ranking: no scores"

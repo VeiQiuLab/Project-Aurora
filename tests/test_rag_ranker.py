@@ -49,6 +49,37 @@ class RagRankerTests(unittest.TestCase):
         self.assertEqual(details["importance"], 1.0)
         self.assertEqual(details["confidence"], 0.9)
 
+    def test_memory_section_prioritizes_relevance(self):
+        ranked = rank_results(
+            [
+                {
+                    "id": "relevant",
+                    "source": {"kind": "memory"},
+                    "score_details": {
+                        "relevance_score": 1.0,
+                        "importance": "low",
+                        "confidence": 0.5,
+                        "freshness": 0.5,
+                    },
+                },
+                {
+                    "id": "important",
+                    "source": {"kind": "memory"},
+                    "score_details": {
+                        "relevance_score": 0.4,
+                        "importance": "high",
+                        "confidence": 1.0,
+                        "freshness": 1.0,
+                    },
+                },
+            ],
+            section="memory",
+        )
+
+        self.assertEqual(ranked[0]["id"], "relevant")
+        self.assertEqual(ranked[0]["ranking_details"]["relevance"], 1.0)
+        self.assertEqual(ranked[0]["ranking_details"]["weights"]["relevance"], 0.70)
+
     def test_results_are_sorted_stably(self):
         results = [
             {"id": "low", "score": 0.2, "source": {"kind": "knowledge"}},

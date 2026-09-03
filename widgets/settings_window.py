@@ -259,6 +259,22 @@ class SettingsWindow(ctk.CTkToplevel):
             self.t("minimum_memory_importance"),
             self.settings.get("memory.min_importance", 0)
         )
+        self.retrieval_threshold_entry = self.add_entry_row(
+            self.t("memory_retrieval_threshold"),
+            self.settings.get("memory.retrieval_threshold", 0.35)
+        )
+        self.rag_pipeline_enabled_var = ctk.BooleanVar(
+            value=bool(self.settings.get("rag.pipeline_enabled", True))
+        )
+        self.add_switch(self.t("rag_pipeline_enable"), self.rag_pipeline_enabled_var)
+        self.rag_context_budget_entry = self.add_entry_row(
+            self.t("rag_context_budget"),
+            self.settings.get("rag.context_budget", 4000)
+        )
+        self.adaptive_context_enabled_var = ctk.BooleanVar(
+            value=bool(self.settings.get("context.adaptive_enabled", False))
+        )
+        self.add_switch(self.t("adaptive_context_enable"), self.adaptive_context_enabled_var)
 
     def build_knowledge_section(self):
         self.add_section_title(self.t("knowledge"))
@@ -400,6 +416,10 @@ class SettingsWindow(ctk.CTkToplevel):
             "voice.playback.enabled": bool(self.voice_playback_var.get()),
             "memory.max_injection": self.max_injection_entry.get().strip(),
             "memory.min_importance": self.min_importance_entry.get().strip(),
+            "memory.retrieval_threshold": self.retrieval_threshold_entry.get().strip(),
+            "rag.pipeline_enabled": bool(self.rag_pipeline_enabled_var.get()),
+            "rag.context_budget": self.rag_context_budget_entry.get().strip(),
+            "context.adaptive_enabled": bool(self.adaptive_context_enabled_var.get()),
             "persona.enabled": bool(self.persona_enabled_var.get()),
             "knowledge.enabled": bool(self.knowledge_enabled_var.get()),
             "knowledge.max_results": self.max_knowledge_entry.get().strip(),

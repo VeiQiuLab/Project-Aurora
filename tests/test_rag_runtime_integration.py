@@ -2,8 +2,13 @@
 
 import copy
 import unittest
+from unittest.mock import patch
 
-from modules.rag_integration import run_rag_pipeline_with_fallback
+from modules.rag_integration import (
+    build_rag_runtime_config,
+    run_configured_rag_pipeline,
+    run_rag_pipeline_with_fallback,
+)
 
 
 class RagRuntimeIntegrationTests(unittest.TestCase):
@@ -36,6 +41,44 @@ class RagRuntimeIntegrationTests(unittest.TestCase):
         self.assertEqual(result["memory_results"][0]["id"], "mem-1")
         self.assertFalse(result["diagnostics"]["metrics"]["pipeline_enabled"])
 
+    def test_production_wrapper_passes_query_state_budget_and_config(self):
+        settings = {
+            "rag.pipeline_enabled": True,
+            "rag.enable_dedup": True,
+            "rag.enable_ranking": True,
+            "rag.enable_optimization": True,
+            "rag.context_budget": 2048,
+            "rag.reserved_output": 128,
+            "context.adaptive_enabled": False,
+            "rag.memory_ranking_weights": {"relevance": 0.7},
+        }
+        expected = {"diagnostics": {"success": True}, "sections": []}
+
+        with patch(
+            "modules.rag_integration.run_rag_pipeline_with_fallback", return_value=expected
+        ) as adapter:
+            result = run_configured_rag_pipeline(
+                [self.memory()],
+                [self.knowledge()],
+                settings_store=settings,
+                query="current production query",
+                conversation_messages=[{"role": "user", "content": "one"}],
+            )
+
+        self.assertIs(result, expected)
+        call = adapter.call_args
+        self.assertEqual(call.kwargs["query"], "current production query")
+        self.assertEqual(call.kwargs["conversation_state"], {"message_count": 1})
+        self.assertEqual(call.kwargs["budget"], {"total_budget": 2048, "reserved_output": 128})
+        self.assertEqual(call.kwargs["config"]["memory_ranking_weights"], {"relevance": 0.7})
+        self.assertTrue(call.kwargs["enabled"])
+
+    def test_runtime_config_uses_safe_defaults(self):
+        config = build_rag_runtime_config({})
+        self.assertEqual(config["max_tokens"], 4000)
+        self.assertTrue(config["enable_dedup"])
+        self.assertFalse(config["context.adaptive_enabled"])
+
     def test_enabled_calls_pipeline_and_returns_sections(self):
         def runner(**_kwargs):
             return {
@@ -48,7 +91,10 @@ class RagRuntimeIntegrationTests(unittest.TestCase):
                     "success": True,
                     "warnings": [],
                     "metrics": {"optimized_count": 2},
-                    "trace": {"enabled_stages": {"ranking": True}},
+                    "trace": {
+                        "enabled_stages": {"ranking": True},
+                        "optimization": {"max_tokens": 4000},
+                    },
                 },
             }
 
@@ -63,6 +109,7 @@ class RagRuntimeIntegrationTests(unittest.TestCase):
         self.assertTrue(result["diagnostics"]["success"])
         self.assertEqual(result["sections"][0]["content"], "Optimized memory")
         self.assertEqual(result["diagnostics"]["metrics"]["optimized_count"], 2)
+        self.assertEqual(result["diagnostics"]["trace"]["optimization"]["max_tokens"], 4000)
 
     def test_pipeline_failure_falls_back_without_raising(self):
         original_memory = [self.memory()]

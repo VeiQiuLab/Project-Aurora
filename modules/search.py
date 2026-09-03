@@ -4,7 +4,7 @@ import json
 from pathlib import Path
 
 
-def search_memories(memories, keyword="", memory_type=None, importance=None, enabled=None):
+def search_memories(memories, keyword="", memory_type=None, importance=None, enabled=None, state=None):
     query = str(keyword or "").strip().casefold()
     results = []
     for raw in memories or []:
@@ -25,6 +25,10 @@ def search_memories(memories, keyword="", memory_type=None, importance=None, ena
         if isinstance(item_enabled, str):
             item_enabled = item_enabled.strip().casefold() not in {"false", "0", "no"}
         if enabled is not None and bool(item_enabled) != bool(enabled):
+            continue
+        metadata = item.get("metadata") if isinstance(item.get("metadata"), dict) else {}
+        item_state = metadata.get("state", item.get("state", "active"))
+        if state and item_state != state:
             continue
         results.append(item)
     return results

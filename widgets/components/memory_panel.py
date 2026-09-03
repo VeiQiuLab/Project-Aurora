@@ -46,7 +46,9 @@ class MemoryPanel(ctk.CTkFrame):
         self.show_close_button = show_close_button
         self.show_header_title = show_header_title
         self.records = []
+        self.candidates = []
         self.selected_id = {"value": None}
+        self.selected_candidate_id = {"value": None}
         self.is_creating_memory = False
 
         self.grid_columnconfigure(0, weight=0, minsize=330)
@@ -55,6 +57,7 @@ class MemoryPanel(ctk.CTkFrame):
 
         self.build()
         self.refresh_memory_list()
+        self.refresh_candidate_list()
 
     def build(self):
         self.workspace_header = WorkspaceHeader(
@@ -96,9 +99,17 @@ class MemoryPanel(ctk.CTkFrame):
         enabled_filter_row = FormRow(filter_card.body, self.t("status"))
         enabled_filter_row.pack(fill="x", pady=SPACING_SMALL)
         self.enabled_filter = enabled_filter_row.add_option(self.enabled_filter_options(), self.t("memory_window_all_status"), width=FORM_CONTROL_WIDTH)
+        state_filter_row = FormRow(filter_card.body, self.t("memory_window_lifecycle_state"))
+        state_filter_row.pack(fill="x", pady=SPACING_SMALL)
+        self.state_filter = state_filter_row.add_option(
+            self.state_filter_options(),
+            self.t("memory_window_all_states"),
+            width=FORM_CONTROL_WIDTH,
+        )
         self.type_filter.configure(command=self.apply_memory_filters)
         self.importance_filter.configure(command=self.apply_memory_filters)
         self.enabled_filter.configure(command=self.apply_memory_filters)
+        self.state_filter.configure(command=self.apply_memory_filters)
 
         list_card = SectionCard(left_panel, self.t("memory_list"))
         list_card.grid(row=2, column=0, sticky="nsew")
@@ -153,6 +164,36 @@ class MemoryPanel(ctk.CTkFrame):
         ]
         self.hide_detail_editor()
 
+        candidate_card = SectionCard(right_panel, self.t("memory_candidates"))
+        candidate_card.grid(row=1, column=0, sticky="ew", pady=(SPACING_MEDIUM, 0))
+        candidate_card.body.grid_columnconfigure(0, weight=1)
+        self.candidate_box = ctk.CTkOptionMenu(
+            candidate_card.body,
+            values=[self.t("memory_candidate_no_pending")],
+            command=self.select_candidate,
+        )
+        self.candidate_box.grid(row=0, column=0, sticky="ew", pady=(SPACING_SMALL, SPACING_MEDIUM))
+        self.candidate_detail = ctk.CTkTextbox(candidate_card.body, height=150, wrap="word")
+        self.candidate_detail.grid(row=1, column=0, sticky="ew", pady=(0, SPACING_SMALL))
+        self.candidate_detail.configure(state="disabled")
+        candidate_actions = ctk.CTkFrame(candidate_card.body, fg_color="transparent")
+        candidate_actions.grid(row=2, column=0, sticky="ew")
+        self.approve_candidate_button = PrimaryButton(
+            candidate_actions,
+            text=self.t("memory_candidate_approve"),
+            command=self.approve_candidate,
+        )
+        self.approve_candidate_button.pack(side="left", padx=(0, SPACING_SMALL))
+        self.reject_candidate_button = SecondaryButton(
+            candidate_actions,
+            text=self.t("memory_candidate_reject"),
+            command=self.reject_candidate,
+        )
+        self.reject_candidate_button.pack(side="left")
+        self.candidate_status = StatusLabel(candidate_card.body, status="disabled", text="")
+        self.candidate_status.grid(row=3, column=0, sticky="w", pady=(SPACING_SMALL, 0))
+        self._set_candidate_actions_enabled(False)
+
         self.footer = FixedFooter(self)
         self.footer.grid(row=2, column=0, columnspan=2, sticky="ew", padx=SPACING_LARGE + SPACING_SMALL, pady=(0, SPACING_LARGE))
         self.build_buttons()
@@ -176,6 +217,8 @@ class MemoryPanel(ctk.CTkFrame):
         for column in range(len(actions)):
             self.footer.buttons.grid_columnconfigure(column, weight=1)
         self.more_actions_menu = Menu(self, tearoff=0)
+        self.more_actions_menu.add_command(label=self.t("memory_window_archive"), command=self.archive_memory)
+        self.more_actions_menu.add_separator()
         self.more_actions_menu.add_command(label=self.t("delete"), command=self.delete_memory)
         self.more_actions_menu.add_separator()
         self.more_actions_menu.add_command(label=self.t("export_memory"), command=self.export_memory_entry)
@@ -244,6 +287,21 @@ class MemoryPanel(ctk.CTkFrame):
             "high": self.t("memory_importance_high")
         }
 
+    def state_labels(self):
+        return {
+            "active": self.t("memory_state_active"),
+            "superseded": self.t("memory_state_superseded"),
+            "archived": self.t("memory_state_archived"),
+        }
+
+    def relation_labels(self):
+        return {
+            "new": self.t("memory_relation_new"),
+            "duplicate": self.t("memory_relation_duplicate"),
+            "possible_update": self.t("memory_relation_possible_update"),
+            "possible_conflict": self.t("memory_relation_possible_conflict"),
+        }
+
     def memory_type_label(self, value):
         return self.memory_type_labels().get(str(value or "fact"), str(value or "fact"))
 
@@ -264,6 +322,18 @@ class MemoryPanel(ctk.CTkFrame):
                 return value
         return str(label or "normal")
 
+    def state_label(self, value):
+        return self.state_labels().get(str(value or "active"), str(value or "active"))
+
+    def state_value(self, label):
+        for value, text in self.state_labels().items():
+            if label == text:
+                return value
+        return str(label or "active")
+
+    def relation_label(self, value):
+        return self.relation_labels().get(str(value or "new"), str(value or "new"))
+
     def memory_type_options(self):
         return [self.memory_type_label(value) for value in ("preference", "fact", "instruction", "project", "temporary")]
 
@@ -278,6 +348,11 @@ class MemoryPanel(ctk.CTkFrame):
 
     def enabled_filter_options(self):
         return [self.t("memory_window_all_status"), self.t("enabled"), self.t("disabled")]
+
+    def state_filter_options(self):
+        return [self.t("memory_window_all_states")] + [
+            self.state_label(value) for value in ("active", "superseded", "archived")
+        ]
 
     def selected_type_filter(self):
         selected = self.type_filter.get()
@@ -295,6 +370,10 @@ class MemoryPanel(ctk.CTkFrame):
             return False
         return None
 
+    def selected_state_filter(self):
+        selected = self.state_filter.get()
+        return None if selected == self.t("memory_window_all_states") else self.state_value(selected)
+
     def search_memory_list(self):
         self.refresh_memory_list(self.memory_search_entry.get())
         self.logger.info("Memory searched")
@@ -305,12 +384,14 @@ class MemoryPanel(ctk.CTkFrame):
             keyword,
             memory_type=self.selected_type_filter(),
             importance=self.selected_importance_filter(),
-            enabled=self.selected_enabled_filter()
+            enabled=self.selected_enabled_filter(),
+            state=self.selected_state_filter(),
         )
         self.logger.info(f"Memory loaded: {len(self.records)}")
         labels = [
             f"{self.memory_type_label(item.get('type', 'fact'))} | {item.get('content', '')[:45]} | "
             f"{self.importance_label(item.get('importance', 'normal'))} | "
+            f"{self.state_label(self._memory_state(item))} | "
             f"{self.t('enabled') if item.get('enabled', True) else self.t('disabled')} | "
             f"{item.get('updated_time', '').replace('T', ' ')}"
             for item in self.records
@@ -338,6 +419,9 @@ class MemoryPanel(ctk.CTkFrame):
         self.enabled_var.set(bool(item.get("enabled", True)))
         self.content_box.delete("1.0", "end")
         self.content_box.insert("1.0", item.get("content", ""))
+        state = self._memory_state(item)
+        state_status = "healthy" if state == "active" else "warning"
+        self.status.set_status(state_status, self.state_label(state))
 
     def clear_form(self):
         self.selected_id["value"] = None
@@ -393,16 +477,168 @@ class MemoryPanel(ctk.CTkFrame):
         self.status.set_status("healthy", self.t("memory_window_status_updated"))
         self.refresh_memory_list(self.memory_search_entry.get())
 
+    @staticmethod
+    def _memory_state(item):
+        metadata = item.get("metadata") if isinstance(item.get("metadata"), dict) else {}
+        return metadata.get("state", item.get("state", "active"))
+
+    def archive_memory(self):
+        memory_id = self.selected_id["value"]
+        if not memory_id:
+            return
+        selected = next((item for item in self.records if item.get("id") == memory_id), None)
+        if selected is None or self._memory_state(selected) != "active":
+            self.status.set_status("warning", self.t("memory_window_cannot_archive"))
+            return
+        if not messagebox.askyesno(
+            self.t("memory_window_archive"),
+            self.t("memory_window_archive_confirm"),
+            parent=self,
+        ):
+            return
+        self.memory_store.archive(memory_id)
+        self.logger.info("Memory archived")
+        self.clear_form()
+        self.status.set_status("warning", self.t("memory_window_archived"))
+        self.refresh_memory_list(self.memory_search_entry.get())
+
     def delete_memory(self):
         if not self.selected_id["value"]:
             return
-        if not messagebox.askyesno(self.t("memory_window_delete_memory"), self.t("memory_window_delete_confirm"), parent=self):
+        if not messagebox.askyesno(
+            self.t("memory_window_delete_memory"),
+            self.t("memory_window_delete_permanent_confirm"),
+            parent=self,
+        ):
             return
         self.memory_store.delete(self.selected_id["value"])
         self.logger.info("Memory deleted")
-        self.status.set_status("disabled", self.t("memory_window_deleted"))
         self.clear_form()
+        self.status.set_status("disabled", self.t("memory_window_deleted"))
         self.refresh_memory_list()
+
+    def refresh_candidate_list(self):
+        self.candidates = self.memory_store.list_candidates(status="pending")
+        labels = []
+        for item in self.candidates:
+            metadata = item.get("metadata") if isinstance(item.get("metadata"), dict) else {}
+            relation = metadata.get("relation") if isinstance(metadata.get("relation"), dict) else {}
+            labels.append(
+                f"{self.relation_label(relation.get('type', 'new'))} | "
+                f"{self.memory_type_label(item.get('type', 'fact'))} | "
+                f"{str(item.get('content', ''))[:55]} | {str(item.get('id', ''))[:8]}"
+            )
+        empty_label = self.t("memory_candidate_no_pending")
+        self.candidate_box.configure(values=labels or [empty_label])
+        self.candidate_box.set(self.t("memory_candidate_select") if labels else empty_label)
+        self.selected_candidate_id["value"] = None
+        self._set_candidate_detail("")
+        self._set_candidate_actions_enabled(False)
+
+    def select_candidate(self, value):
+        values = self.candidate_box.cget("values")
+        index = values.index(value) if value in values else -1
+        if index < 0 or index >= len(self.candidates):
+            self.selected_candidate_id["value"] = None
+            self._set_candidate_detail("")
+            self._set_candidate_actions_enabled(False)
+            return
+        candidate = self.candidates[index]
+        self.selected_candidate_id["value"] = candidate.get("id")
+        self._set_candidate_detail(self._format_candidate_detail(candidate))
+        self._set_candidate_actions_enabled(True)
+
+    def _format_candidate_detail(self, candidate):
+        metadata = candidate.get("metadata") if isinstance(candidate.get("metadata"), dict) else {}
+        relation = metadata.get("relation") if isinstance(metadata.get("relation"), dict) else {}
+        risk = candidate.get("risk") if isinstance(candidate.get("risk"), dict) else {}
+        source_detail = candidate.get("source_detail")
+        if not isinstance(source_detail, dict):
+            source_detail = metadata.get("source_detail") if isinstance(metadata.get("source_detail"), dict) else {}
+        source = candidate.get("source") or source_detail.get("kind") or "-"
+        category = candidate.get("category", metadata.get("category", "-"))
+        confidence = candidate.get("confidence", metadata.get("confidence", "-"))
+        risk_text = str(risk.get("level", "-"))
+        reasons = risk.get("reasons") if isinstance(risk.get("reasons"), list) else []
+        if reasons:
+            risk_text += f" ({', '.join(str(reason) for reason in reasons)})"
+        relation_type = relation.get("type", "new")
+        lines = [
+            f"{self.t('memory_candidate_content')}: {candidate.get('content', '')}",
+            f"{self.t('type')}: {self.memory_type_label(candidate.get('type', 'fact'))}",
+            f"{self.t('memory_candidate_category')}: {category}",
+            f"{self.t('memory_candidate_confidence')}: {confidence}",
+            f"{self.t('memory_window_importance')}: {self.importance_label(candidate.get('importance', 'normal'))}",
+            f"{self.t('memory_candidate_risk')}: {risk_text}",
+            f"{self.t('memory_candidate_relation')}: {self.relation_label(relation_type)}",
+            f"{self.t('memory_candidate_source')}: {source}",
+        ]
+        target_id = relation.get("target_memory_id")
+        if target_id:
+            target = next(
+                (item for item in self.memory_store.list_memories() if str(item.get("id")) == str(target_id)),
+                None,
+            )
+            target_content = target.get("content", "") if target else self.t("memory_candidate_target_missing")
+            lines.extend([
+                "",
+                f"{self.t('memory_candidate_current')}: {candidate.get('content', '')}",
+                f"{self.t('memory_candidate_replaces')}: {target_content}",
+            ])
+        if relation_type == "possible_conflict":
+            lines.extend(["", self.t("memory_candidate_conflict_warning")])
+        return "\n".join(lines)
+
+    def _set_candidate_detail(self, text):
+        self.candidate_detail.configure(state="normal")
+        self.candidate_detail.delete("1.0", "end")
+        if text:
+            self.candidate_detail.insert("1.0", text)
+        self.candidate_detail.configure(state="disabled")
+
+    def _set_candidate_actions_enabled(self, enabled):
+        state = "normal" if enabled else "disabled"
+        self.approve_candidate_button.configure(state=state)
+        self.reject_candidate_button.configure(state=state)
+
+    def approve_candidate(self):
+        candidate_id = self.selected_candidate_id["value"]
+        candidate = next((item for item in self.candidates if item.get("id") == candidate_id), None)
+        if candidate is None:
+            return
+        metadata = candidate.get("metadata") if isinstance(candidate.get("metadata"), dict) else {}
+        relation = metadata.get("relation") if isinstance(metadata.get("relation"), dict) else {}
+        confirm_key = (
+            "memory_candidate_conflict_approve_confirm"
+            if relation.get("type") == "possible_conflict"
+            else "memory_candidate_approve_confirm"
+        )
+        if not messagebox.askyesno(
+            self.t("memory_candidate_approve"),
+            self.t(confirm_key),
+            parent=self,
+        ):
+            return
+        self.memory_store.approve_candidate(candidate_id)
+        self.logger.info(f"Memory candidate approved: relation={relation.get('type', 'new')}")
+        self.candidate_status.set_status("healthy", self.t("memory_candidate_approved"))
+        self.refresh_candidate_list()
+        self.refresh_memory_list(self.memory_search_entry.get())
+
+    def reject_candidate(self):
+        candidate_id = self.selected_candidate_id["value"]
+        if not candidate_id:
+            return
+        if not messagebox.askyesno(
+            self.t("memory_candidate_reject"),
+            self.t("memory_candidate_reject_confirm"),
+            parent=self,
+        ):
+            return
+        self.memory_store.reject_candidate(candidate_id)
+        self.logger.info("Memory candidate rejected")
+        self.candidate_status.set_status("disabled", self.t("memory_candidate_rejected"))
+        self.refresh_candidate_list()
 
     def export_memory_entry(self):
         self.status.set_status("warning", self.t("memory_window_export_service_note"))
