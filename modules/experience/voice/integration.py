@@ -58,7 +58,10 @@ def create_optional_voice_runtime(
             stage="voice.startup",
             success=False,
             reason="dependency_check_failed",
-            warnings=[f"Voice dependency check failed: {error}"],
+            warnings=[
+                "Voice dependencies could not be checked. Aurora Core will continue; "
+                "open Runtime / Dependencies and try again."
+            ],
             metrics={"enabled": True, "runtime_available": False},
             trace={"exception_type": type(error).__name__},
         )
@@ -102,7 +105,10 @@ def create_optional_voice_runtime(
             stage="voice.startup",
             success=False,
             reason="audio_device_unavailable",
-            warnings=[f"Voice is unavailable: {error}"],
+            warnings=[
+                "Voice is unavailable because Aurora could not access a usable microphone. "
+                "Check FFmpeg, Windows microphone permission, and the selected input device."
+            ],
             metrics={"enabled": True, "runtime_available": False},
             trace={"exception_type": type(error).__name__},
         )
@@ -111,7 +117,10 @@ def create_optional_voice_runtime(
             stage="voice.startup",
             success=False,
             reason="initialization_failed",
-            warnings=[f"Voice initialization failed: {error}"],
+            warnings=[
+                "Voice could not start. Aurora Core will continue; open Runtime / "
+                "Dependencies to review the required components."
+            ],
             metrics={"enabled": True, "runtime_available": False},
             trace={"exception_type": type(error).__name__},
         )

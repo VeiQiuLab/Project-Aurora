@@ -286,7 +286,11 @@ class FirstRunWizard(ctk.CTkToplevel):
                 report = self.runtime_manager.check(timeout=1.0)
             except Exception as error:
                 report = empty_runtime_report()
-                message = str(error).strip().splitlines()[0][:220] or "Environment check failed."
+                message = "Environment checks could not be completed. You can retry or skip for now."
+                if self.logger:
+                    self.logger.error(
+                        f"First Run environment check failed: {type(error).__name__}: {error}"
+                    )
             else:
                 message = "Environment check complete."
 

@@ -206,7 +206,8 @@ class RuntimeDependencyManager:
         except Exception as error:
             probe = {
                 "available": False,
-                "reason": f"Probe failed: {type(error).__name__}: {error}",
+                "reason": "The local Ollama service could not be checked.",
+                "diagnostic_code": type(error).__name__,
                 "models": [],
             }
 
@@ -240,11 +241,18 @@ class RuntimeDependencyManager:
             )
         )
         service_status = RuntimeStatus.READY if api_available else RuntimeStatus.OFFLINE
-        service_detail = (
-            "Ollama API is available."
-            if api_available
-            else str(probe.get("reason") or "Ollama API is offline.")
-        )
+        if api_available:
+            service_detail = "Ollama API is available."
+        elif executable_available:
+            service_detail = (
+                "Ollama is installed, but its local service is not responding. "
+                "Start Ollama, then choose Check Again."
+            )
+        else:
+            service_detail = (
+                "Ollama is not installed or its local service is unavailable. "
+                "Aurora Core can continue without it."
+            )
 
         configured_chat = str(_get_setting(self.settings, "chat_model", "") or "").strip()
         configured_embedding = str(
@@ -320,6 +328,7 @@ class RuntimeDependencyManager:
             data={
                 "host": host,
                 "http_status": probe.get("http_status"),
+                "diagnostic_code": probe.get("diagnostic_code"),
                 "runtime_state": runtime_state.value,
             },
         ).as_dict()
@@ -446,21 +455,36 @@ class RuntimeDependencyManager:
         model_size = str(
             _get_setting(self.settings, "voice.stt.model_size", "small") or "small"
         ).strip()
-        if stt_ready:
+        if not voice_enabled:
+            whisper_available = None
+            whisper_detail = (
+                "Voice is turned off. The Whisper model will be checked after Voice is enabled."
+            )
+        elif stt_ready:
             try:
                 whisper_available, whisper_detail = self._whisper_model_probe(model_size)
-            except Exception as error:
+            except Exception:
                 whisper_available = None
-                whisper_detail = f"Whisper model check failed: {type(error).__name__}: {error}"
+                whisper_detail = (
+                    "The Whisper model could not be checked. Open Runtime / Dependencies and retry."
+                )
         else:
             whisper_available = False
             whisper_detail = "Whisper model cannot be used until the STT runtime is installed."
 
-        try:
-            microphone_available, microphone_detail = self._microphone_probe()
-        except Exception as error:
+        if not voice_enabled:
             microphone_available = None
-            microphone_detail = f"Microphone check failed: {type(error).__name__}: {error}"
+            microphone_detail = (
+                "Voice is turned off. Aurora will not enumerate microphone devices until Voice is enabled."
+            )
+        else:
+            try:
+                microphone_available, microphone_detail = self._microphone_probe()
+            except Exception:
+                microphone_available = None
+                microphone_detail = (
+                    "Microphone access could not be checked. Verify Windows microphone permission and try again."
+                )
 
         edge_tts = self._module_available("edge_tts")
         tts_detail = (
@@ -470,12 +494,19 @@ class RuntimeDependencyManager:
         )
 
         pygame_available = self._module_available("pygame")
-        if pygame_available:
+        if not voice_enabled:
+            output_available = None
+            output_detail = (
+                "Voice is turned off. Audio output will be checked after Voice is enabled."
+            )
+        elif pygame_available:
             try:
                 output_available, output_detail = self._playback_device_probe()
-            except Exception as error:
+            except Exception:
                 output_available = None
-                output_detail = f"Playback device check failed: {type(error).__name__}: {error}"
+                output_detail = (
+                    "Audio output could not be checked. Verify the Windows playback device and try again."
+                )
         else:
             output_available = False
             output_detail = "pygame is not installed."
@@ -695,8 +726,11 @@ class RuntimeDependencyManager:
             import sounddevice
 
             device = sounddevice.query_devices(kind="input")
-        except Exception as error:
-            return False, f"No usable microphone was detected: {error}"
+        except Exception:
+            return False, (
+                "No usable microphone was detected. Check Windows microphone permission "
+                "and select an input device in Settings."
+            )
         name = str(device.get("name", "") or "").strip() if isinstance(device, Mapping) else ""
         if not name:
             return False, "No usable microphone was detected."
@@ -710,8 +744,11 @@ class RuntimeDependencyManager:
             import sounddevice
 
             device = sounddevice.query_devices(kind="output")
-        except Exception as error:
-            return None, f"pygame is installed, but output availability is unconfirmed: {error}"
+        except Exception:
+            return None, (
+                "Playback is installed, but Aurora could not verify an output device. "
+                "Check Windows sound settings and try again."
+            )
         name = str(device.get("name", "") or "").strip() if isinstance(device, Mapping) else ""
         if not name:
             return False, "No usable audio output device was detected."
@@ -817,13 +854,18 @@ class RuntimeDependencyManager:
         except urllib.error.HTTPError as error:
             return {
                 "available": False,
-                "reason": f"HTTP {error.code}",
+                "reason": "The local Ollama service returned an unexpected response.",
+                "diagnostic_code": f"HTTP_{error.code}",
                 "http_status": int(error.code),
                 "models": [],
             }
         except (urllib.error.URLError, OSError, TimeoutError, ValueError, json.JSONDecodeError) as error:
-            reason = getattr(error, "reason", error)
-            return {"available": False, "reason": str(reason), "models": []}
+            return {
+                "available": False,
+                "reason": "The local Ollama service is not responding.",
+                "diagnostic_code": type(error).__name__,
+                "models": [],
+            }
 
 
 def check_runtime_dependencies(

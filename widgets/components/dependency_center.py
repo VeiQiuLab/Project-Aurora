@@ -194,7 +194,13 @@ class DependencyCenter(ctk.CTkFrame):
                 report = self.runtime_manager.check(timeout=1.0)
             except Exception as error:
                 report = None
-                error_text = str(error).strip().splitlines()[0][:240] or "Runtime check failed."
+                error_text = (
+                    "Runtime checks could not be completed. Try Check Again or open Diagnostics."
+                )
+                if self.logger:
+                    self.logger.error(
+                        f"Dependency Center check failed: {type(error).__name__}: {error}"
+                    )
 
             def finish():
                 self._check_running = False

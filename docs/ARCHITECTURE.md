@@ -128,6 +128,10 @@ First Run, Settings, and the production Voice startup gate. It distinguishes an
 absent Ollama install, an installed but offline service, and a ready API; it also
 classifies local models as Chat Supported or Embedding Only. Optional probe
 failures are contained so they cannot prevent Aurora Core from opening.
+When Voice is disabled, automatic checks do not enumerate microphone or playback
+devices; hardware access begins only after Voice is enabled or the user explicitly
+requests a device test. Ordinary status rows use actionable descriptions instead
+of exposing raw driver, DirectShow, HTTP, or subprocess exception strings.
 
 First Run persists no model choice until the user selects an existing model or
 confirms a download. Hardware recommendations use RAM, CPU/core count, reliable

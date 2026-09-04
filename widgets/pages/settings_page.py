@@ -344,8 +344,11 @@ class SettingsPage(ctk.CTkFrame):
         ffmpeg_path = str(self.settings.get("voice.recorder.ffmpeg_path", "ffmpeg") or "ffmpeg")
         try:
             devices = enumerate_dshow_audio_devices(ffmpeg_path)
-        except AudioDeviceDiscoveryError as error:
-            self._set_voice_device_status(str(error), "error")
+        except AudioDeviceDiscoveryError:
+            self._set_voice_device_status(
+                "未检测到可用麦克风。请确认 FFmpeg 已安装、Windows 已允许麦克风权限，然后重试。",
+                "error",
+            )
             return
 
         window = ctk.CTkToplevel(self)
@@ -383,8 +386,11 @@ class SettingsPage(ctk.CTkFrame):
             try:
                 device = resolve_voice_input_device(self.settings)
                 result = {"ok": True, "message": f"麦克风可用: {device}"}
-            except Exception as error:
-                result = {"ok": False, "message": str(error)}
+            except Exception:
+                result = {
+                    "ok": False,
+                    "message": "麦克风暂不可用。请检查 FFmpeg、Windows 麦克风权限和输入设备选择。",
+                }
 
             def finish():
                 self._refresh_voice_device_label()

@@ -1,3 +1,4 @@
+import json
 from pathlib import Path
 
 import pytest
@@ -9,6 +10,7 @@ from modules.runtime_dependencies import (
     classify_ollama_models,
     resolve_ollama_executable,
 )
+from modules.startup_diagnostics import _voice_check
 
 
 READY_MODELS = [
@@ -210,6 +212,47 @@ def test_disabled_voice_dependencies_are_optional():
     assert all(item["status"] == RuntimeStatus.OPTIONAL.value for item in voice["items"])
 
 
+def test_disabled_voice_does_not_probe_microphone_playback_or_whisper():
+    calls = []
+    manager = RuntimeDependencyManager(
+        {"voice": {"enabled": False}},
+        which=lambda _name: None,
+        bundled_tool_finder=lambda _name: None,
+        module_finder=_finder(
+            {"faster_whisper", "ctranslate2", "edge_tts", "pygame"}
+        ),
+        microphone_probe=lambda: calls.append("microphone"),
+        playback_device_probe=lambda: calls.append("playback"),
+        whisper_model_probe=lambda _model: calls.append("whisper"),
+        environment={},
+    )
+
+    voice = manager.check_voice(
+        ffmpeg={"available": True, "detail": "FFmpeg is installed."}
+    )
+
+    assert calls == []
+    assert voice["status"] == RuntimeStatus.OPTIONAL.value
+    microphone = next(item for item in voice["items"] if item["key"] == "microphone")
+    assert "will not enumerate microphone devices" in microphone["detail"]
+
+
+def test_disabled_startup_diagnostics_skip_the_dependency_manager(monkeypatch):
+    class UnexpectedManager:
+        def __init__(self, _settings):
+            raise AssertionError("disabled Voice must not start dependency checks")
+
+    monkeypatch.setattr(
+        "modules.startup_diagnostics.RuntimeDependencyManager",
+        UnexpectedManager,
+    )
+
+    result = _voice_check({"voice": {"enabled": False}})
+
+    assert result["status"] == "disabled"
+    assert "不会自动枚举" in result["detail"]
+
+
 def test_enabled_voice_all_dependencies_ready():
     voice = _manager(
         settings={"voice": {"enabled": True}},
@@ -288,6 +331,11 @@ def test_failing_optional_probes_are_contained():
     assert report["voice"]["status"] == RuntimeStatus.DEGRADED.value
     assert report["hardware"]["vram_gb"] is None
     assert report["hardware"]["vram_status"] == "unknown"
+    serialized = json.dumps(report)
+    assert "device backend failed" not in serialized
+    assert "cache failed" not in serialized
+    assert "API probe failed" not in serialized
+    assert "could not be checked" in serialized
 
 
 @pytest.mark.parametrize(

@@ -110,6 +110,8 @@ def test_optional_voice_runtime_contains_dependency_check_failure():
     assert diagnostics["success"] is False
     assert diagnostics["reason"] == "dependency_check_failed"
     assert diagnostics["trace"]["exception_type"] == "RuntimeError"
+    assert "dependency probe failed" not in diagnostics["warnings"][0]
+    assert "Runtime / Dependencies" in diagnostics["warnings"][0]
 
 
 def test_optional_voice_runtime_degrades_when_device_discovery_fails():
@@ -126,9 +128,8 @@ def test_optional_voice_runtime_degrades_when_device_discovery_fails():
     assert diagnostics["success"] is False
     assert diagnostics["reason"] == "audio_device_unavailable"
     assert diagnostics["trace"]["exception_type"] == "AudioDeviceDiscoveryError"
-    assert diagnostics["warnings"] == [
-        "Voice is unavailable: FFmpeg dshow enumeration failed"
-    ]
+    assert "FFmpeg dshow enumeration failed" not in diagnostics["warnings"][0]
+    assert "usable microphone" in diagnostics["warnings"][0]
 
 
 def test_optional_voice_runtime_contains_unexpected_voice_initialization_failure():
@@ -145,6 +146,7 @@ def test_optional_voice_runtime_contains_unexpected_voice_initialization_failure
     assert diagnostics["success"] is False
     assert diagnostics["reason"] == "initialization_failed"
     assert diagnostics["trace"]["exception_type"] == "RuntimeError"
+    assert "provider initialization failed" not in diagnostics["warnings"][0]
 
 
 def test_optional_voice_runtime_returns_ready_runtime_and_diagnostics():

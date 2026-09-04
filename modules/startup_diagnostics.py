@@ -44,11 +44,36 @@ def _ai_check(settings):
 
 
 def _voice_check(settings):
-    report = RuntimeDependencyManager(settings).check_voice_requirements()
+    if not _voice_enabled(settings):
+        return {
+            "name": "Voice 环境",
+            "status": "disabled",
+            "detail": "Voice 已关闭；不会自动枚举麦克风或播放设备",
+        }
+    try:
+        report = RuntimeDependencyManager(settings).check_voice_requirements()
+    except Exception:
+        return {
+            "name": "Voice 环境",
+            "status": "warning",
+            "detail": "语音环境暂时无法检测；Aurora Core 可继续使用，请稍后重试",
+        }
     if report["ready"]:
         return {"name": "Voice 环境", "status": "healthy", "detail": "语音依赖已就绪"}
     missing = ", ".join(item["name"] for item in report["missing"])
     return {"name": "Voice 环境", "status": "warning", "detail": f"缺少组件: {missing}"}
+
+
+def _voice_enabled(settings):
+    if isinstance(settings, dict):
+        voice = settings.get("voice", {})
+        return bool(voice.get("enabled", False)) if isinstance(voice, dict) else False
+    try:
+        return bool(settings.get("voice.enabled", False))
+    except Exception:
+        return False
+
+
 def _storage_check():
     paths = [CONVERSATIONS_DIR, MEMORY_DIR, KNOWLEDGE_DIR, PERSONA_DIR, LOG_DIR]
     for path in paths:

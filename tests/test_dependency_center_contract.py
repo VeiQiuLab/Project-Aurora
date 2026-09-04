@@ -2,6 +2,7 @@ from types import SimpleNamespace
 
 from modules.runtime_dependencies import RuntimeDependencyManager
 from widgets.components.dependency_center import DependencyCenter, _VISIBLE_ITEMS
+from widgets.pages.settings_page import SettingsPage
 from widgets.settings_window import SettingsWindow
 
 
@@ -111,3 +112,27 @@ def test_first_voice_enablement_reports_ffmpeg_from_unified_gate(monkeypatch):
     SettingsWindow._check_first_voice_enablement(window)
 
     assert "FFmpeg" in messages[-1]["text"]
+
+
+def test_voice_device_status_hides_dshow_exception_text(monkeypatch):
+    statuses = []
+
+    def fail_enumeration(_path):
+        from modules.experience.audio.device_discovery import AudioDeviceDiscoveryError
+
+        raise AudioDeviceDiscoveryError("DirectShow HRESULT 0x80070005")
+
+    monkeypatch.setattr(
+        "widgets.pages.settings_page.enumerate_dshow_audio_devices",
+        fail_enumeration,
+    )
+    page = SimpleNamespace(
+        settings={"voice": {"recorder": {"ffmpeg_path": "ffmpeg"}}},
+        _set_voice_device_status=lambda text, status: statuses.append((text, status)),
+    )
+
+    SettingsPage._choose_voice_input_device(page)
+
+    assert statuses[-1][1] == "error"
+    assert "DirectShow" not in statuses[-1][0]
+    assert "FFmpeg" in statuses[-1][0]
