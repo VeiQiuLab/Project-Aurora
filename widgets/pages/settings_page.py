@@ -11,7 +11,6 @@ from modules.experience.audio.device_discovery import (
     resolve_voice_input_device,
     select_voice_input_device,
 )
-from modules.experience.voice.dependency_manager import check_dependencies, install_dependencies
 from modules.ui_theme import (
     COLOR_ERROR,
     COLOR_MUTED,
@@ -29,6 +28,7 @@ from modules.version import BUILD_DATE, VERSION
 from widgets.components.knowledge_panel import KnowledgePanel
 from widgets.components.memory_panel import MemoryPanel
 from widgets.components.persona_panel import PersonaPanel
+from widgets.components.dependency_center import DependencyCenter
 from widgets.ui_components import PrimaryButton, SecondaryButton, SectionCard
 
 
@@ -37,6 +37,7 @@ class SettingsPage(ctk.CTkFrame):
 
     CATEGORIES = [
         ("ai", "AI"),
+        ("runtime", "Runtime / Dependencies"),
         ("voice", "Voice"),
         ("appearance", "Appearance"),
         ("data", "Data"),
@@ -59,6 +60,7 @@ class SettingsPage(ctk.CTkFrame):
         final_prompt_preview_callback=None,
         open_settings_callback=None,
         settings_status_provider=None,
+        service_manager=None,
         logger=None,
         **kwargs
     ):
@@ -76,6 +78,7 @@ class SettingsPage(ctk.CTkFrame):
         self.final_prompt_preview_callback = final_prompt_preview_callback
         self.open_settings_callback = open_settings_callback
         self.settings_status_provider = settings_status_provider
+        self.service_manager = service_manager
         self.logger = logger
         self.category_buttons = {}
         self.voice_environment_rows = {}
@@ -135,6 +138,7 @@ class SettingsPage(ctk.CTkFrame):
         self.title_label.configure(text=title)
         builders = {
             "ai": self._build_ai,
+            "runtime": self._build_runtime,
             "voice": self._build_voice,
             "appearance": self._build_appearance,
             "data": self._build_data,
@@ -207,6 +211,17 @@ class SettingsPage(ctk.CTkFrame):
         self._action_button(tools.body, "Memory", self._show_memory_panel)
         self._action_button(tools.body, "Knowledge / RAG", self._show_knowledge_panel)
 
+    def _build_runtime(self):
+        center = DependencyCenter(
+            self.body,
+            settings=self.settings,
+            service_manager=self.service_manager,
+            open_settings_callback=self.open_settings_editor,
+            logger=self.logger,
+        )
+        center.grid(row=0, column=0, sticky="ew")
+        self.active_panel = center
+
     def _build_voice(self):
         card = self._card("Voice", "麦克风、STT、TTS 与播放设置保留现有配置兼容。")
         self._setting_row(card.body, "Voice Enabled", self.settings.get("voice.enabled", False))
@@ -238,37 +253,16 @@ class SettingsPage(ctk.CTkFrame):
         self._action_button(card.body, "打开 Voice 设置", self.open_settings_editor)
 
         environment = self._card("Voice Environment")
-        self.voice_environment_rows = {}
-        for category in ("STT", "TTS", "Audio", "FFmpeg"):
-            row = ctk.CTkFrame(environment.body, fg_color="transparent")
-            row.pack(fill="x", pady=SPACING_SMALL)
-            row.grid_columnconfigure(0, weight=1)
-            ctk.CTkLabel(row, text=f"{category}:", font=FONT_NORMAL, anchor="w").grid(
-                row=0,
-                column=0,
-                sticky="w"
-            )
-            label = ctk.CTkLabel(row, text="Checking", font=FONT_SMALL, text_color=COLOR_MUTED, anchor="e")
-            label.grid(row=0, column=1, sticky="e")
-            self.voice_environment_rows[category] = label
-
-        self.voice_environment_status = ctk.CTkLabel(
+        ctk.CTkLabel(
             environment.body,
-            text="",
+            text="Voice is optional. Missing FFmpeg, STT, TTS, or playback components will not prevent Aurora Core from opening.",
             font=FONT_SMALL,
             text_color=COLOR_MUTED,
             anchor="w",
             justify="left",
-            wraplength=720
-        )
-        self.voice_environment_status.pack(fill="x", pady=(SPACING_SMALL, 0))
-        self.voice_environment_button = PrimaryButton(
-            environment.body,
-            text="安装语音组件",
-            command=self._install_voice_dependencies
-        )
-        self.voice_environment_button.pack(anchor="w", pady=(SPACING_MEDIUM, 0))
-        self._refresh_voice_environment()
+            wraplength=720,
+        ).pack(fill="x", pady=(0, SPACING_SMALL))
+        self._action_button(environment.body, "Open Runtime / Dependencies", lambda: self.show_category("runtime"))
 
     def _build_appearance(self):
         card = self._card("Appearance", "主题、语言和窗口设置集中在外观设置中。")
@@ -399,56 +393,6 @@ class SettingsPage(ctk.CTkFrame):
             self.after(0, finish)
 
         threading.Thread(target=run_test, daemon=True).start()
-
-    def _refresh_voice_environment(self, report=None):
-        report = report or check_dependencies(self.settings)
-        categories = report.get("categories", {})
-        for category, label in self.voice_environment_rows.items():
-            items = categories.get(category, [])
-            missing = [item for item in items if not item.get("ready")]
-            if missing:
-                names = ", ".join(item.get("name", "") for item in missing)
-                label.configure(text=f"Missing: {names}", text_color=COLOR_ERROR)
-            else:
-                label.configure(text="✓ Ready", text_color=COLOR_SUCCESS)
-
-        missing_names = [item.get("name", "") for item in report.get("missing", [])]
-        if missing_names:
-            message = "Voice dependency missing:\n- " + "\n- ".join(missing_names)
-            self.voice_environment_status.configure(text=message, text_color=COLOR_ERROR)
-            self.voice_environment_button.pack(anchor="w", pady=(SPACING_MEDIUM, 0))
-            self.voice_environment_button.configure(state="normal", text="安装语音组件")
-        else:
-            self.voice_environment_status.configure(text="Voice environment ready.", text_color=COLOR_SUCCESS)
-            self.voice_environment_button.pack_forget()
-
-    def _install_voice_dependencies(self):
-        if self.voice_environment_button is None:
-            return
-        self.voice_environment_button.configure(state="disabled", text="安装中...")
-        if self.voice_environment_status is not None:
-            self.voice_environment_status.configure(text="正在使用当前 Python 环境安装语音组件...", text_color=COLOR_MUTED)
-
-        def run_install():
-            result = install_dependencies(self.settings)
-            if self.logger:
-                if result.get("success"):
-                    self.logger.info("Voice dependency installation completed")
-                else:
-                    self.logger.error(f"Voice dependency installation failed: {result.get('stderr', '')}")
-
-            def finish():
-                self._refresh_voice_environment(result.get("report"))
-                if not result.get("success") and self.voice_environment_status is not None:
-                    error = str(result.get("stderr") or "Voice dependency installation failed.").strip()
-                    skipped = result.get("skipped") or []
-                    if skipped:
-                        error = f"{error}\nManual install required: {', '.join(skipped)}"
-                    self.voice_environment_status.configure(text=error, text_color=COLOR_ERROR)
-
-            self.after(0, finish)
-
-        threading.Thread(target=run_install, daemon=True).start()
 
     def _show_persona_panel(self):
         if self.persona_store is None:

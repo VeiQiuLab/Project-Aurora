@@ -14,7 +14,12 @@ from tkinter import filedialog, messagebox, StringVar
 
 from modules.version import *
 from modules.logger import logger
-from modules.app_paths import CONFIG_FILE, DEFAULT_SETTINGS_FILE, ensure_user_data_directories
+from modules.app_paths import (
+    CONFIG_FILE,
+    DEFAULT_SETTINGS_FILE,
+    INTERNAL_ROOT,
+    ensure_user_data_directories,
+)
 
 
 configuration_file = CONFIG_FILE
@@ -97,7 +102,6 @@ from modules.knowledge import KnowledgeStore
 from modules.persona import PersonaStore
 from modules.language import TEXT, set_language as set_legacy_language
 from modules.i18n import normalize_language, set_language as set_i18n_language, t
-from modules.startup_diagnostics import initialization_check
 from modules.ui_theme import (
     button_style,
     COLOR_ERROR,
@@ -118,12 +122,12 @@ from modules.search import search_memories, search_conversations
 from modules.memory_retrieval import build_memory_retrieval_config, format_memory_context, retrieve_memories
 from modules.retrieval import format_knowledge_context, search_knowledge, retrieval_summary
 from modules.service_manager import ServiceManager
+from modules.runtime_dependencies import RuntimeDependencyManager
 from modules.shutdown_manager import ShutdownManager
 from modules.experience.audio.device_discovery import resolve_ffmpeg_path, resolve_voice_input_device
 from modules.experience.audio.recorder import FFmpegMicrophoneRecorder
 from modules.experience.state import CompanionStateStore
-from modules.experience.voice.dependency_manager import check_dependencies as check_voice_dependencies
-from modules.experience.voice.integration import create_voice_runtime
+from modules.experience.voice.integration import create_optional_voice_runtime, create_voice_runtime
 from widgets.app_shell import AppShell
 from widgets.chat_window import ChatWindow
 from widgets.conversation_browser import ConversationBrowserWindow
@@ -379,51 +383,9 @@ def mark_service_started_by_app(service_name):
         )
 
 
-def fetch_ollama_models_from_api(timeout=5):
-    host = str(settings.get("ollama.host", "http://127.0.0.1:11434") or "").strip().rstrip("/")
-    if not host:
-        return {
-            "ok": False,
-            "models": [],
-            "reason": "Ollama host is not configured."
-        }
-    try:
-        with urllib.request.urlopen(f"{host}/api/tags", timeout=timeout) as response:
-            payload = json.loads(response.read().decode("utf-8"))
-    except Exception as error:
-        return {
-            "ok": False,
-            "models": [],
-            "reason": str(error)
-        }
-
-    records = []
-    for item in payload.get("models", []) if isinstance(payload, dict) else []:
-        if not isinstance(item, dict):
-            continue
-        name = str(item.get("name") or item.get("model") or "").strip()
-        if not name:
-            continue
-        records.append({
-            "name": name,
-            "capability": infer_model_capability(name)
-        })
-    return {
-        "ok": True,
-        "models": records,
-        "reason": ""
-    }
-
-
 def show_first_run_wizard():
-    def current_persona_status():
-        persona = persona_store.load(update_timestamp=False)
-        return persona_store.status(settings.get("persona.enabled", True), persona)
-
-    def complete_first_run(state, wizard):
-        settings.set("chat_model", state["chat_model"])
-        settings.set("embedding_model", state["embedding_model"])
-        settings.set("first_run.completed", True)
+    def complete_first_run(updates, wizard):
+        settings.update_many(updates, save=True)
         logger.info("First Run Wizard completed")
         wizard.grab_release()
         wizard.destroy()
@@ -433,19 +395,24 @@ def show_first_run_wizard():
         refresh_status()
         refresh_system_health_center()
 
-    FirstRunWizard(
-        app,
-        release=RELEASE,
-        build=BUILD,
-        text=TEXT,
-        translate=t,
-        settings_get=settings.get,
-        model_fetcher=fetch_ollama_models_from_api,
-        persona_status_provider=current_persona_status,
-        initialization_check_provider=lambda: initialization_check(settings),
-        on_complete=complete_first_run,
-        logger=logger
-    )
+    try:
+        FirstRunWizard(
+            app,
+            release=RELEASE,
+            build=BUILD,
+            translate=t,
+            settings_get=settings.get,
+            service_manager=service_manager,
+            on_complete=complete_first_run,
+            logger=logger,
+        )
+    except Exception as error:
+        # Setup is optional.  A UI/runtime probe failure must never leave the
+        # withdrawn Core looking as if it did not start.
+        logger.error(f"First Run Wizard unavailable: {error}")
+        settings.update_many({"first_run.completed": True}, save=True)
+        app.deiconify()
+        startup_check()
 
 status_summary_label = ctk.CTkLabel(
     status_frame,
@@ -1233,30 +1200,44 @@ def build_voice_text_input_handler():
 def create_application_voice_runtime():
     """Create the one application Voice Runtime and share its state store."""
 
-    if not settings.get("voice.enabled", False):
-        return None
-    device_name = resolve_voice_input_device(settings)
-    ffmpeg_path = resolve_ffmpeg_path(settings.get("voice.recorder.ffmpeg_path", "ffmpeg"))
-    logger.info(f"Voice input device: {device_name}")
-    recorder = FFmpegMicrophoneRecorder(
-        device_name=device_name,
-        sample_rate=int(settings.get("voice.recorder.sample_rate", 16000)),
-        channels=int(settings.get("voice.recorder.channels", 1)),
-        ffmpeg_path=ffmpeg_path,
-        min_duration_ms=int(settings.get("voice.recorder.min_duration_ms", 750)),
-    )
-    voice_text_handler = build_voice_text_input_handler()
-    return create_voice_runtime(
-        settings,
-        recorder=recorder,
-        text_input_handler=voice_text_handler,
-        stream_text_input_handler=voice_text_handler,
-        state_store=companion_state_store,
-        input_device_name=device_name,
-        use_frame_pipeline=str(
-            settings.get("voice.recorder.backend", "frame_pipeline")
-        ).lower() != "ffmpeg",
-    )
+    def build_runtime():
+        device_name = resolve_voice_input_device(settings)
+        ffmpeg_path = resolve_ffmpeg_path(
+            settings.get("voice.recorder.ffmpeg_path", "ffmpeg")
+        )
+        logger.info(f"Voice input device: {device_name}")
+        recorder = FFmpegMicrophoneRecorder(
+            device_name=device_name,
+            sample_rate=int(settings.get("voice.recorder.sample_rate", 16000)),
+            channels=int(settings.get("voice.recorder.channels", 1)),
+            ffmpeg_path=ffmpeg_path,
+            min_duration_ms=int(settings.get("voice.recorder.min_duration_ms", 750)),
+        )
+        voice_text_handler = build_voice_text_input_handler()
+        return create_voice_runtime(
+            settings,
+            recorder=recorder,
+            text_input_handler=voice_text_handler,
+            stream_text_input_handler=voice_text_handler,
+            state_store=companion_state_store,
+            input_device_name=device_name,
+            use_frame_pipeline=str(
+                settings.get("voice.recorder.backend", "frame_pipeline")
+            ).lower() != "ffmpeg",
+        )
+
+    runtime, diagnostics = create_optional_voice_runtime(settings, build_runtime)
+    if diagnostics["success"]:
+        if runtime is not None:
+            logger.info("Voice Runtime ready")
+    else:
+        warning = (
+            diagnostics["warnings"][0]
+            if diagnostics["warnings"]
+            else diagnostics["reason"]
+        )
+        logger.warning(warning)
+    return runtime
 
 
 def show_chat():
@@ -1843,16 +1824,25 @@ def startup_check():
     startup_started = time.perf_counter()
     logger.info("Startup Check started")
     logger.info("Project Aurora Startup Check")
-    project_root = Path(__file__).resolve().parent
-    required_paths = [
-        project_root / "main.py",
-        project_root / "modules" / "version.py",
-        project_root / "modules" / "settings.py",
-        project_root / "modules" / "knowledge.py",
-        project_root / "modules" / "retrieval.py",
-        project_root / "modules" / "persona.py",
-        DEFAULT_SETTINGS_FILE
-    ]
+    if getattr(sys, "frozen", False):
+        required_paths = [
+            Path(sys.executable),
+            DEFAULT_SETTINGS_FILE,
+            INTERNAL_ROOT / "locales",
+            INTERNAL_ROOT / "assets",
+            INTERNAL_ROOT / "customtkinter" / "assets",
+        ]
+    else:
+        project_root = Path(__file__).resolve().parent
+        required_paths = [
+            project_root / "main.py",
+            project_root / "modules" / "version.py",
+            project_root / "modules" / "settings.py",
+            project_root / "modules" / "knowledge.py",
+            project_root / "modules" / "retrieval.py",
+            project_root / "modules" / "persona.py",
+            DEFAULT_SETTINGS_FILE,
+        ]
     missing = [str(path.name) for path in required_paths if not path.exists()]
     if missing:
         logger.warning(f"Startup files missing: {', '.join(missing)}")
@@ -1863,14 +1853,28 @@ def startup_check():
     logger.info("Configuration loaded")
     logger.info("Logger initialized")
     logger.info("Required modules loaded")
-    voice_dependency_report = check_voice_dependencies(settings)
-    if voice_dependency_report["ready"]:
-        logger.info("Voice dependencies ready")
+    if settings.get("voice.enabled", False):
+        def check_voice_environment():
+            try:
+                voice_dependency_report = RuntimeDependencyManager(
+                    settings
+                ).check_voice_requirements()
+            except Exception as error:
+                logger.warning(f"Voice dependency check failed: {error}")
+                return
+            if voice_dependency_report["ready"]:
+                logger.info("Voice dependencies ready")
+                return
+            missing_names = [
+                item["name"] for item in voice_dependency_report["missing"]
+            ]
+            logger.warning(
+                "Voice dependency missing: " + ", ".join(missing_names)
+            )
+
+        threading.Thread(target=check_voice_environment, daemon=True).start()
     else:
-        missing = [item["name"] for item in voice_dependency_report["missing"]]
-        logger.warning("Voice dependency missing:")
-        for dependency_name in missing:
-            logger.warning(f"- {dependency_name}")
+        logger.info("Voice disabled; optional Voice dependencies do not block Core")
 
     def check_services():
         service_started = time.perf_counter()
@@ -2119,6 +2123,7 @@ def create_app_shell():
             final_prompt_preview_callback=build_persona_final_prompt_preview,
             open_settings_callback=show_settings,
             settings_status_provider=app_shell_settings_status_provider,
+            service_manager=service_manager,
             logger=logger
         )
     }

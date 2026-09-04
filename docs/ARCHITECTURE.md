@@ -18,9 +18,9 @@ top-level pages:
 - Settings
 
 Chat is the initial page. Its Sidebar owns new-chat, search, Conversation
-history, and Settings navigation. Settings groups AI, Voice, Appearance, Data,
-and Developer surfaces; Persona, Memory, and Knowledge/RAG are reached through
-Settings.
+history, and Settings navigation. Settings groups AI, Runtime/Dependencies,
+Voice, Appearance, Data, and Developer surfaces; Persona, Memory, and
+Knowledge/RAG are reached through Settings.
 
 Home, Library, Learning Center, standalone Persona/Memory pages, old dashboard
 widgets, and several standalone windows remain only as legacy or compatibility
@@ -121,6 +121,20 @@ VAD auto-stop, sentence-based TTS queueing, cancellation hardening, and
 real-device stability work are experimental. Aurora does not currently provide
 mature realtime full-duplex voice interaction.
 
+## First Run and Runtime Dependencies
+
+`RuntimeDependencyManager` is the shared read-only diagnostics boundary used by
+First Run, Settings, and the production Voice startup gate. It distinguishes an
+absent Ollama install, an installed but offline service, and a ready API; it also
+classifies local models as Chat Supported or Embedding Only. Optional probe
+failures are contained so they cannot prevent Aurora Core from opening.
+
+First Run persists no model choice until the user selects an existing model or
+confirms a download. Hardware recommendations use RAM, CPU/core count, reliable
+VRAM when available, and free disk space. Unknown VRAM remains unknown. Checks
+and downloads run away from the GUI thread, and only Aurora-owned download or
+service processes may be cancelled or stopped.
+
 ## State and Concurrency
 
 `CompanionStateStore` coordinates states such as IDLE, LISTENING, TRANSCRIBING,
@@ -160,6 +174,7 @@ or committed.
 The Windows distribution flow uses:
 
 - `Project Aurora.spec` and PyInstaller for `dist/Aurora/`
+- `build_portable.ps1` for `dist/Aurora-Windows-Test.zip`
 - Inno Setup for `installer/Aurora-v3.8.0-alpha-Setup.exe`
 - project-managed Inno Setup language resources
 - full Windows CPython 3.12 with Tcl/Tk
@@ -170,13 +185,14 @@ The expected PyInstaller output contains:
 Aurora/
   Aurora.exe
   _internal/
-  assets/
-  tools/ffmpeg.exe
 ```
 
-`tools/ffmpeg.exe` is a required local release resource but is intentionally
-ignored by Git. A clean build environment must provide it separately; future
-automation should download a pinned binary only with SHA256 verification.
+The portable package includes the Python runtime and Aurora Core dependencies,
+but excludes source `.venv` data, developer runtimes, user data, logs, secrets,
+Ollama/model files, Open WebUI, FFmpeg, PyAV/FFmpeg codec libraries, and the
+optional Voice Python runtimes. This Core-only boundary avoids redistributing
+unreviewed codec binaries. Optional runtimes are detected and explained at run
+time instead of being silently installed or downloaded.
 
 ## Removed Architecture
 

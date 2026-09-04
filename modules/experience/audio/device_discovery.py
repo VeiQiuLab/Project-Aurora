@@ -4,7 +4,9 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from collections.abc import Mapping
+from pathlib import Path
 import re
+import shutil
 import subprocess
 from typing import Any, Callable
 
@@ -226,10 +228,17 @@ def _windows_default_input_name() -> str:
 
 def _resolve_ffmpeg_path(ffmpeg_path: str) -> str:
     configured = str(ffmpeg_path or "ffmpeg").strip() or "ffmpeg"
-    if configured != "ffmpeg":
-        return configured
     bundled = find_bundled_tool("ffmpeg")
-    return str(bundled) if bundled else configured
+    if bundled:
+        return str(bundled)
+    if configured.casefold() not in {"ffmpeg", "ffmpeg.exe"}:
+        configured_path = Path(configured).expanduser()
+        if configured_path.is_file():
+            return str(configured_path)
+        configured_command = shutil.which(configured)
+        if configured_command:
+            return configured_command
+    return shutil.which("ffmpeg") or shutil.which("ffmpeg.exe") or configured
 
 
 def _get_setting(settings: Any, key: str, default: Any) -> Any:

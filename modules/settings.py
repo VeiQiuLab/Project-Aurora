@@ -171,6 +171,8 @@ class Settings:
             return
 
         changed = False
+        if self._migrate_first_run_settings():
+            changed = True
         if self._merge_defaults(self.data, self.default_settings):
             changed = True
         if self._migrate_model_settings():
@@ -186,6 +188,27 @@ class Settings:
                 self.save()
             except OSError:
                 pass
+
+    def _migrate_first_run_settings(self):
+        """Keep existing Aurora users out of a newly introduced first-run loop.
+
+        A settings file already present on disk represents an existing user.  Old
+        releases did not store ``first_run.completed``; treating the new default
+        (False) as their value would unexpectedly hide the application behind the
+        setup wizard.  Brand-new installs still receive the default file and keep
+        ``completed=False``.
+        """
+
+        if not isinstance(self.data, dict):
+            return False
+        first_run = self.data.get("first_run")
+        if isinstance(first_run, dict) and "completed" in first_run:
+            return False
+        if not isinstance(first_run, dict):
+            first_run = {}
+            self.data["first_run"] = first_run
+        first_run["completed"] = True
+        return True
 
     def _migrate_language_settings(self):
         if not isinstance(self.data, dict):

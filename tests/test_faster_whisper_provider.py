@@ -1,7 +1,23 @@
 from types import SimpleNamespace
+import sys
 
 from modules.experience.voice.models import AudioInput
 from modules.experience.voice.providers.faster_whisper import FasterWhisperProvider
+
+
+def test_default_model_loader_never_downloads_implicitly(monkeypatch):
+    captured = {}
+
+    def fake_model(model_size, **kwargs):
+        captured["model_size"] = model_size
+        captured.update(kwargs)
+        return object()
+
+    monkeypatch.setitem(sys.modules, "faster_whisper", SimpleNamespace(WhisperModel=fake_model))
+
+    FasterWhisperProvider._default_model_loader("small", "cpu", "int8")
+
+    assert captured["local_files_only"] is True
 
 
 def test_provider_initialization_is_lazy_and_configurable():

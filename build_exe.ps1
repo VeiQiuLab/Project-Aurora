@@ -41,9 +41,14 @@ if ($LASTEXITCODE -ne 0) {
     Write-Error "Python 3.12 is required for the Windows release build. Selected executable: $Python"
 }
 
-& $Python -c "import tkinter; import tkinter.ttk; import tkinter.filedialog; print('Tkinter OK')"
+& $Python -c "import tkinter; import tkinter.ttk; import tkinter.filedialog; t = tkinter.Tcl(); print('Tkinter OK', t.eval('info patchlevel'))"
 if ($LASTEXITCODE -ne 0) {
     Write-Error "Python Tcl/Tk validation failed. Use a full Windows CPython 3.12 install, not a stripped runtime."
+}
+
+& $Python -c "import customtkinter; print('CustomTkinter OK')"
+if ($LASTEXITCODE -ne 0) {
+    Write-Error "CustomTkinter is not installed in the selected build environment."
 }
 
 $releaseVersion = (& $Python -c "from modules.version import VERSION; print(VERSION)").Trim()
@@ -61,10 +66,7 @@ if (-not (Test-Path -LiteralPath (Join-Path $projectRoot "assets"))) {
     Write-Error "Missing release resource directory: assets"
 }
 
-$ffmpegPath = Join-Path $projectRoot "tools\ffmpeg.exe"
-if (-not (Test-Path -LiteralPath $ffmpegPath)) {
-    Write-Error "Missing bundled FFmpeg: tools\ffmpeg.exe"
-}
+Write-Host "FFmpeg/PyAV codec libraries and optional Voice runtimes are not bundled in this Core-only test package."
 
 & $Python -m PyInstaller --noconfirm --clean "Project Aurora.spec"
 if ($LASTEXITCODE -ne 0) {
@@ -76,10 +78,14 @@ if (-not (Test-Path -LiteralPath (Join-Path $distRoot "Aurora.exe"))) {
     Write-Error "Build output missing: dist\Aurora\Aurora.exe"
 }
 
-Copy-Item -LiteralPath (Join-Path $projectRoot "assets") -Destination (Join-Path $distRoot "assets") -Recurse -Force
-Copy-Item -LiteralPath (Join-Path $projectRoot "tools") -Destination (Join-Path $distRoot "tools") -Recurse -Force
-
-foreach ($required in @("Aurora.exe", "_internal", "assets", "tools\ffmpeg.exe")) {
+foreach ($required in @(
+    "Aurora.exe",
+    "_internal",
+    "_internal\assets",
+    "_internal\config\default_settings.json",
+    "_internal\locales",
+    "_internal\customtkinter\assets"
+)) {
     $path = Join-Path $distRoot $required
     if (-not (Test-Path -LiteralPath $path)) {
         Write-Error "Release output check failed: dist\Aurora\$required"

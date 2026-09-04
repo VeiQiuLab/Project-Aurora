@@ -6,7 +6,8 @@ import pytest
 from modules.experience.audio import FakePlayback, FakeRecorder, RealPlaybackController
 from modules.experience.state import CompanionState, CompanionStateStore
 from modules.experience.voice.fake import FakeSpeechToTextProvider, FakeTextToSpeechProvider
-from modules.experience.voice.integration import create_voice_runtime
+from modules.experience.audio.device_discovery import AudioDeviceDiscoveryError
+from modules.experience.voice.integration import create_optional_voice_runtime, create_voice_runtime
 from modules.experience.voice.models import AudioInput, SpeechResult, TranscriptionResult
 from modules.experience.voice.providers.edge_tts import EdgeTTSProvider
 from modules.experience.voice.providers.faster_whisper import FasterWhisperProvider
@@ -28,6 +29,137 @@ def voice_settings(enabled=True):
             "playback": {"backend": "pygame", "wait_for_completion": True},
         }
     }
+
+
+def ready_dependencies(_settings):
+    return {"ready": True, "missing": []}
+
+
+def test_optional_voice_runtime_skips_factory_when_voice_is_disabled():
+    calls = []
+
+    runtime, diagnostics = create_optional_voice_runtime(
+        voice_settings(False),
+        lambda: calls.append("runtime"),
+        dependency_checker=lambda _settings: calls.append("dependencies"),
+    )
+
+    assert runtime is None
+    assert calls == []
+    assert diagnostics["success"] is True
+    assert diagnostics["reason"] == "disabled"
+
+
+def test_optional_voice_runtime_degrades_when_ffmpeg_is_missing():
+    calls = []
+
+    runtime, diagnostics = create_optional_voice_runtime(
+        voice_settings(),
+        lambda: calls.append("runtime"),
+        dependency_checker=lambda _settings: {
+            "ready": False,
+            "missing": [{"key": "ffmpeg", "name": "ffmpeg"}],
+        },
+    )
+
+    assert runtime is None
+    assert calls == []
+    assert diagnostics["success"] is False
+    assert diagnostics["reason"] == "dependency_missing"
+    assert diagnostics["metrics"]["missing_dependencies"] == ["ffmpeg"]
+    assert "ffmpeg" in diagnostics["warnings"][0]
+
+
+def test_optional_voice_runtime_uses_unified_dependency_manager_by_default(monkeypatch):
+    calls = []
+
+    class Manager:
+        def __init__(self, settings):
+            calls.append(settings)
+
+        def check_voice_requirements(self):
+            return {
+                "ready": False,
+                "missing": [{"key": "whisper_model", "name": "Whisper Model"}],
+            }
+
+    monkeypatch.setattr(
+        "modules.experience.voice.integration.RuntimeDependencyManager", Manager
+    )
+    runtime, diagnostics = create_optional_voice_runtime(
+        voice_settings(),
+        lambda: (_ for _ in ()).throw(AssertionError("runtime must not start")),
+    )
+
+    assert runtime is None
+    assert len(calls) == 1
+    assert diagnostics["metrics"]["missing_dependencies"] == ["Whisper Model"]
+
+
+def test_optional_voice_runtime_contains_dependency_check_failure():
+    def fail_check(_settings):
+        raise RuntimeError("dependency probe failed")
+
+    runtime, diagnostics = create_optional_voice_runtime(
+        voice_settings(),
+        lambda: object(),
+        dependency_checker=fail_check,
+    )
+
+    assert runtime is None
+    assert diagnostics["success"] is False
+    assert diagnostics["reason"] == "dependency_check_failed"
+    assert diagnostics["trace"]["exception_type"] == "RuntimeError"
+
+
+def test_optional_voice_runtime_degrades_when_device_discovery_fails():
+    def fail_discovery():
+        raise AudioDeviceDiscoveryError("FFmpeg dshow enumeration failed")
+
+    runtime, diagnostics = create_optional_voice_runtime(
+        voice_settings(),
+        fail_discovery,
+        dependency_checker=ready_dependencies,
+    )
+
+    assert runtime is None
+    assert diagnostics["success"] is False
+    assert diagnostics["reason"] == "audio_device_unavailable"
+    assert diagnostics["trace"]["exception_type"] == "AudioDeviceDiscoveryError"
+    assert diagnostics["warnings"] == [
+        "Voice is unavailable: FFmpeg dshow enumeration failed"
+    ]
+
+
+def test_optional_voice_runtime_contains_unexpected_voice_initialization_failure():
+    def fail_initialization():
+        raise RuntimeError("provider initialization failed")
+
+    runtime, diagnostics = create_optional_voice_runtime(
+        voice_settings(),
+        fail_initialization,
+        dependency_checker=ready_dependencies,
+    )
+
+    assert runtime is None
+    assert diagnostics["success"] is False
+    assert diagnostics["reason"] == "initialization_failed"
+    assert diagnostics["trace"]["exception_type"] == "RuntimeError"
+
+
+def test_optional_voice_runtime_returns_ready_runtime_and_diagnostics():
+    expected = object()
+
+    runtime, diagnostics = create_optional_voice_runtime(
+        voice_settings(),
+        lambda: expected,
+        dependency_checker=ready_dependencies,
+    )
+
+    assert runtime is expected
+    assert diagnostics["success"] is True
+    assert diagnostics["reason"] == "ready"
+    assert diagnostics["metrics"]["runtime_available"] is True
 
 
 def test_voice_disabled_by_default_returns_no_runtime():
@@ -64,8 +196,11 @@ def test_enabled_runtime_composes_fake_voice_pipeline():
 
 
 def test_enabled_runtime_uses_real_provider_defaults_without_loading_them():
+    configured = voice_settings()
+    configured["voice"].pop("stt")
+    configured["voice"].pop("tts")
     runtime = create_voice_runtime(
-        voice_settings(),
+        configured,
         recorder=FakeRecorder(),
         text_input_handler=lambda _text: "reply",
     )

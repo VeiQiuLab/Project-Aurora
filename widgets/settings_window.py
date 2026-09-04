@@ -1,5 +1,7 @@
 import customtkinter as ctk
+import threading
 
+from modules.runtime_dependencies import RuntimeDependencyManager
 from modules.ui_theme import (
     FORM_CONTROL_WIDTH,
     FORM_LABEL_WRAP,
@@ -67,7 +69,9 @@ class SettingsWindow(ctk.CTkToplevel):
         self.service_test_callback = service_test_callback
         self.model_capability_provider = model_capability_provider
         self.on_close_callback = on_close
+        self.initial_voice_enabled = bool(self.settings.get("voice.enabled", False))
         self.section_body = None
+        self._disposed = False
 
         self.title(self.t("settings"))
         self.geometry("680x680")
@@ -479,8 +483,77 @@ class SettingsWindow(ctk.CTkToplevel):
             text=f"{self.t('settings_saved')} {self.t('restart_required_for_full_language_refresh')}",
             text_color=status_color("healthy")
         )
+        if saved_values.get("voice.enabled") and not self.initial_voice_enabled:
+            self.initial_voice_enabled = True
+            self._check_first_voice_enablement()
+
+    def _check_first_voice_enablement(self):
+        """Explain optional Voice gaps after its first enable without blocking save."""
+
+        self.result_label.configure(
+            text="Settings saved. Checking optional Voice dependencies...",
+            text_color=status_color("disabled"),
+        )
+
+        def worker():
+            try:
+                report = RuntimeDependencyManager(
+                    self.settings
+                ).check_voice_requirements()
+            except Exception as error:
+                if self.logger:
+                    self.logger.error(f"Voice dependency check failed: {error}")
+                report = {"ready": False, "items": [{"name": "Voice environment", "status": "Degraded"}]}
+            missing = [
+                item.get("name", item.get("key", "component"))
+                for item in report.get("missing", [])
+            ]
+
+            def finish():
+                if report.get("ready"):
+                    message = "Settings saved. Voice dependencies are ready; restart Aurora to enable Voice."
+                    state = "healthy"
+                else:
+                    message = (
+                        "Settings saved. Voice remains unavailable until these optional components are ready: "
+                        + ", ".join(missing)
+                        + ". Open Runtime / Dependencies."
+                    )
+                    state = "warning"
+                self.result_label.configure(text=message, text_color=status_color(state))
+
+            self._after(finish)
+
+        threading.Thread(target=worker, daemon=True).start()
+
+    def _after(self, callback):
+        """Schedule a UI update only while this Settings window still exists."""
+
+        if self._disposed:
+            return
+
+        def guarded_callback():
+            if self._disposed:
+                return
+            try:
+                if self.winfo_exists():
+                    callback()
+            except Exception as error:
+                if not self._disposed and self.logger:
+                    self.logger.error(f"Settings UI update failed: {error}")
+
+        try:
+            self.after(0, guarded_callback)
+        except Exception:
+            return
 
     def close(self):
         self.destroy()
         if self.on_close_callback:
             self.on_close_callback()
+
+    def destroy(self):
+        if self._disposed:
+            return
+        self._disposed = True
+        super().destroy()

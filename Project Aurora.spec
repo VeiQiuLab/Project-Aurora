@@ -1,7 +1,7 @@
 from pathlib import Path
 import unicodedata
 
-from PyInstaller.utils.hooks import collect_submodules
+from PyInstaller.utils.hooks import collect_data_files, collect_submodules
 from PyInstaller.utils.win32.versioninfo import (
     FixedFileInfo,
     StringFileInfo,
@@ -25,21 +25,30 @@ from modules.version import (
 project_root = Path(SPECPATH)
 icon_path = project_root / "assets" / "app.ico"
 assets_dir = project_root / "assets"
-tools_dir = project_root / "tools"
-ffmpeg_path = tools_dir / "ffmpeg.exe"
 unicodedata_binary = Path(unicodedata.__file__)
 if not unicodedata_binary.is_file():
     raise RuntimeError(f"unicodedata extension not found: {unicodedata_binary}")
 if not assets_dir.is_dir():
     raise RuntimeError(f"release assets directory not found: {assets_dir}")
-if not ffmpeg_path.is_file():
-    raise RuntimeError(f"bundled ffmpeg not found: {ffmpeg_path}")
 
 datas = [
     (str(project_root / "locales"), "locales"),
     (str(project_root / "config" / "default_settings.json"), "config"),
     (str(assets_dir), "assets"),
-    (str(tools_dir), "tools"),
+    *collect_data_files("customtkinter"),
+]
+
+# Keep the portable test package Core-only.  In particular, faster-whisper's
+# PyAV dependency redistributes FFmpeg codec libraries.  Aurora must not ship
+# those optional binaries until their release/licensing obligations are handled
+# explicitly.  Runtime diagnostics report these components as optional/missing.
+optional_voice_excludes = [
+    "av",
+    "ctranslate2",
+    "edge_tts",
+    "faster_whisper",
+    "pygame",
+    "sounddevice",
 ]
 
 version_info = VSVersionInfo(
@@ -72,12 +81,6 @@ version_info = VSVersionInfo(
 )
 
 
-def optional_submodules(package_name):
-    try:
-        return collect_submodules(package_name)
-    except Exception:
-        return []
-
 a = Analysis(
     [str(project_root / "main.py")],
     pathex=[str(project_root)],
@@ -86,17 +89,12 @@ a = Analysis(
     hiddenimports=[
         "customtkinter",
         *collect_submodules("customtkinter"),
-        *optional_submodules("edge_tts"),
-        *optional_submodules("faster_whisper"),
-        *optional_submodules("ctranslate2"),
-        *optional_submodules("sounddevice"),
-        *optional_submodules("pygame"),
         "unicodedata",
     ],
     hookspath=[],
     hooksconfig={},
     runtime_hooks=[],
-    excludes=[],
+    excludes=optional_voice_excludes,
     noarchive=False
 )
 

@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-from copy import deepcopy
 from typing import Any
 
 from modules.app_paths import (
@@ -13,8 +12,7 @@ from modules.app_paths import (
     MEMORY_DIR,
     PERSONA_DIR,
 )
-from modules.experience.audio.device_discovery import AudioDeviceDiscoveryError, resolve_voice_input_device
-from modules.experience.voice.dependency_manager import check_dependencies
+from modules.runtime_dependencies import RuntimeDependencyManager
 
 
 def initialization_check(settings: Any) -> list[dict[str, str]]:
@@ -24,7 +22,6 @@ def initialization_check(settings: Any) -> list[dict[str, str]]:
         _path_check("配置目录", CONFIG_DIR),
         _ai_check(settings),
         _voice_check(settings),
-        _microphone_check(settings),
         _storage_check(),
     ]
     return checks
@@ -47,32 +44,11 @@ def _ai_check(settings):
 
 
 def _voice_check(settings):
-    report = check_dependencies(settings)
+    report = RuntimeDependencyManager(settings).check_voice_requirements()
     if report["ready"]:
         return {"name": "Voice 环境", "status": "healthy", "detail": "语音依赖已就绪"}
     missing = ", ".join(item["name"] for item in report["missing"])
     return {"name": "Voice 环境", "status": "warning", "detail": f"缺少组件: {missing}"}
-
-
-def _microphone_check(settings):
-    try:
-        device = resolve_voice_input_device(_settings_snapshot(settings))
-    except AudioDeviceDiscoveryError as error:
-        return {"name": "麦克风设备", "status": "warning", "detail": str(error)}
-    except Exception as error:
-        return {"name": "麦克风设备", "status": "warning", "detail": str(error)}
-    return {"name": "麦克风设备", "status": "healthy", "detail": device}
-
-
-def _settings_snapshot(settings):
-    data = getattr(settings, "data", None)
-    if isinstance(data, dict):
-        return deepcopy(data)
-    if isinstance(settings, dict):
-        return deepcopy(settings)
-    return settings
-
-
 def _storage_check():
     paths = [CONVERSATIONS_DIR, MEMORY_DIR, KNOWLEDGE_DIR, PERSONA_DIR, LOG_DIR]
     for path in paths:

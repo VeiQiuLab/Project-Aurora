@@ -44,6 +44,7 @@ data/log/
 data/runtime/
 data/cache/
 data/temp/
+.cache/
 .codex/
 
 # Local user files

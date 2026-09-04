@@ -140,7 +140,14 @@ class FasterWhisperProvider(SpeechToTextProvider):
     def _default_model_loader(model_size: str, device: str, compute_type: str) -> Any:
         from faster_whisper import WhisperModel
 
-        return WhisperModel(model_size, device=device, compute_type=compute_type)
+        # Model downloads belong to the explicit Dependency Center flow. A
+        # first transcription must never start a large background download.
+        return WhisperModel(
+            model_size,
+            device=device,
+            compute_type=compute_type,
+            local_files_only=True,
+        )
 
     @staticmethod
     def _language_probability(info: Any) -> float | None:

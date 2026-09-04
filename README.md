@@ -64,10 +64,10 @@ Library, Dashboard, Remote, and Mobile surfaces are not current top-level pages.
 
 ## Requirements
 
-- Windows
-- Python 3.12 for source development
-- Ollama
-- CustomTkinter and the dependencies in `requirements.txt`
+- Windows for the portable application
+- Python 3.12 with Tcl/Tk only for source development
+- CustomTkinter and the dependencies in `requirements.txt` only for source development
+- Ollama and a Chat model only when local AI chat is wanted
 
 Optional Voice dependencies include:
 
@@ -76,14 +76,18 @@ Optional Voice dependencies include:
 - pygame
 - FFmpeg
 
-The Windows Voice and packaging flow expects `tools/ffmpeg.exe`. This binary is
-not tracked by Git and must be supplied by the development or build environment.
+FFmpeg is optional and is not bundled in the portable test package. The portable
+test package also excludes the optional Voice Python runtimes (including PyAV's
+FFmpeg codec libraries) until a separate compliant Voice distribution is
+prepared. Missing Voice components are reported clearly while Aurora Core and
+text/data surfaces continue to open. Source developers can install the current
+Voice dependencies from `requirements.txt`.
 
 ## Running from Source
 
 1. Install Python 3.12 with Tcl/Tk support.
 2. Install the dependencies from `requirements.txt`.
-3. Install and start Ollama, then make the configured chat model available.
+3. Optionally install/start Ollama and make a Chat model available.
 4. Start Aurora:
 
 ```powershell
@@ -120,8 +124,11 @@ The Windows installer is `Aurora-v3.8.0-alpha-Setup.exe` with SHA256
 `7DEEB26723B7182B2475734438D61A3E26C101CCAFB2E3438F3F4F907FCF81A2`.
 It is currently unsigned, so Windows SmartScreen may display a warning.
 Uninstall removes application files while preserving user data under
-`%APPDATA%\Aurora`. FFmpeg is bundled in the installer; Ollama remains required
-for the local chat model runtime.
+`%APPDATA%\Aurora`. That historical installer bundled FFmpeg for Voice. The
+`Aurora-Windows-Test.zip` produced by this branch is instead Core-only and does
+not include FFmpeg/PyAV codec libraries or optional Voice runtimes. Ollama and
+models remain independently managed; none of these optional components is
+required for Aurora Core to open.
 
 ## Removed and Historical Features
 

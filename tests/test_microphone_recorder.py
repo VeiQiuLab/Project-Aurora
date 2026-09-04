@@ -40,7 +40,13 @@ class FakeMicrophone:
 
 def test_microphone_recorder_contract_and_output(tmp_path):
     backend = FakeMicrophone()
-    recorder = MicrophoneRecorder(audio_backend=backend, output_dir=tmp_path)
+    # This test exercises the capture/output contract, not the separate
+    # minimum-duration gate; the fake backend intentionally emits one frame.
+    recorder = MicrophoneRecorder(
+        audio_backend=backend,
+        output_dir=tmp_path,
+        min_duration_ms=0,
+    )
 
     assert isinstance(recorder, AudioRecorder)
     recorder.start()

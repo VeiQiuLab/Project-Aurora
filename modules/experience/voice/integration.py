@@ -6,14 +6,20 @@ from collections.abc import Mapping
 from threading import Event
 from typing import Any
 
+from modules.diagnostics import create_diagnostics
+from modules.experience.audio.device_discovery import (
+    AudioDeviceDiscoveryError,
+    resolve_ffmpeg_path,
+    resolve_voice_input_device,
+)
 from modules.experience.audio.playback import AudioPlaybackController
 from modules.experience.audio.recorder import AudioRecorder
 from modules.experience.audio.real_playback import RealPlaybackController
 from modules.experience.audio.ffmpeg_source import FFmpegAudioFrameSource
 from modules.experience.audio.frame_pipeline import AudioFrameBuffer
-from modules.experience.audio.device_discovery import resolve_ffmpeg_path, resolve_voice_input_device
 from modules.experience.audio.vad import RMSVADAdapter
 from modules.experience.state import CompanionStateStore
+from modules.runtime_dependencies import RuntimeDependencyManager
 
 from .fake import FakeSpeechToTextProvider, FakeTextToSpeechProvider
 from .interfaces import SpeechToTextProvider, TextToSpeechProvider
@@ -22,6 +28,108 @@ from .session import VoiceSessionManager
 from .providers.edge_tts import EdgeTTSProvider
 from .providers.faster_whisper import FasterWhisperProvider
 from .runtime import RuntimeService, StateCallback
+
+
+def create_optional_voice_runtime(
+    settings: Any,
+    runtime_factory,
+    *,
+    dependency_checker=None,
+) -> tuple[RuntimeService | None, dict[str, Any]]:
+    """Create optional Voice safely without making it a Core startup dependency."""
+
+    if not _get_setting(settings, "voice.enabled", False):
+        return None, create_diagnostics(
+            stage="voice.startup",
+            success=True,
+            reason="disabled",
+            metrics={"enabled": False, "runtime_available": False},
+        )
+
+    dependency_checker = dependency_checker or (
+        lambda current_settings: RuntimeDependencyManager(
+            current_settings
+        ).check_voice_requirements()
+    )
+    try:
+        dependency_report = dependency_checker(settings)
+    except Exception as error:
+        return None, create_diagnostics(
+            stage="voice.startup",
+            success=False,
+            reason="dependency_check_failed",
+            warnings=[f"Voice dependency check failed: {error}"],
+            metrics={"enabled": True, "runtime_available": False},
+            trace={"exception_type": type(error).__name__},
+        )
+
+    if not isinstance(dependency_report, Mapping):
+        return None, create_diagnostics(
+            stage="voice.startup",
+            success=False,
+            reason="dependency_check_failed",
+            warnings=["Voice dependency check returned an invalid result."],
+            metrics={"enabled": True, "runtime_available": False},
+        )
+
+    missing = dependency_report.get("missing", [])
+    if not dependency_report.get("ready", False) or missing:
+        missing_names = [
+            str(item.get("name", item.get("key", "unknown")))
+            for item in missing
+            if isinstance(item, Mapping)
+        ]
+        missing_names = missing_names or ["unknown"]
+        return None, create_diagnostics(
+            stage="voice.startup",
+            success=False,
+            reason="dependency_missing",
+            warnings=[
+                "Voice is unavailable because required components are missing: "
+                + ", ".join(missing_names)
+            ],
+            metrics={
+                "enabled": True,
+                "runtime_available": False,
+                "missing_dependencies": missing_names,
+            },
+        )
+
+    try:
+        runtime = runtime_factory()
+    except AudioDeviceDiscoveryError as error:
+        return None, create_diagnostics(
+            stage="voice.startup",
+            success=False,
+            reason="audio_device_unavailable",
+            warnings=[f"Voice is unavailable: {error}"],
+            metrics={"enabled": True, "runtime_available": False},
+            trace={"exception_type": type(error).__name__},
+        )
+    except Exception as error:
+        return None, create_diagnostics(
+            stage="voice.startup",
+            success=False,
+            reason="initialization_failed",
+            warnings=[f"Voice initialization failed: {error}"],
+            metrics={"enabled": True, "runtime_available": False},
+            trace={"exception_type": type(error).__name__},
+        )
+
+    if runtime is None:
+        return None, create_diagnostics(
+            stage="voice.startup",
+            success=False,
+            reason="runtime_unavailable",
+            warnings=["Voice is enabled but its runtime is unavailable."],
+            metrics={"enabled": True, "runtime_available": False},
+        )
+    return runtime, create_diagnostics(
+        stage="voice.startup",
+        success=True,
+        reason="ready",
+        metrics={"enabled": True, "runtime_available": True},
+    )
 
 
 def create_voice_runtime(

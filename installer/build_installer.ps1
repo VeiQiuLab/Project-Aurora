@@ -83,7 +83,13 @@ if (-not (Test-Path -LiteralPath $ISCC)) {
     Write-Error "Inno Setup compiler not found. Install Inno Setup 6 or rerun with: .\installer\build_installer.ps1 -ISCC C:\Path\To\ISCC.exe"
 }
 
-foreach ($required in @("Aurora.exe", "_internal", "assets", "tools\ffmpeg.exe")) {
+foreach ($required in @(
+    "Aurora.exe",
+    "_internal",
+    "_internal\config\default_settings.json",
+    "_internal\locales",
+    "_internal\customtkinter\assets"
+)) {
     $path = Join-Path $distRoot $required
     if (-not (Test-Path -LiteralPath $path)) {
         Write-Error "Release directory is incomplete: dist\Aurora\$required"

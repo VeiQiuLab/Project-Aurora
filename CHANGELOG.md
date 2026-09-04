@@ -5,6 +5,25 @@ features that were later removed from the current product direction.
 
 ## Unreleased
 
+### First Run and Runtime Dependencies
+
+- Added a Local-First setup wizard with read-only environment checks, hardware
+  recommendations, existing-model selection, and an explicit Skip path.
+- Added one Runtime Dependency Manager for Ollama/API/model classification,
+  FFmpeg, microphone, STT/Whisper, TTS, playback, and hardware diagnostics.
+- Added a Settings Dependency Center with explicit confirmation for model
+  downloads; Aurora never starts a large model download on launch.
+- Isolated optional Voice startup failures so missing FFmpeg, devices, models,
+  or providers degrade Voice without terminating Aurora Core.
+
+### Windows Portable Test Package
+
+- Added a PyInstaller portable ZIP flow with a privacy/developer-path validator,
+  fresh-user-data verification support, and SHA-256 output.
+- FFmpeg executables, PyAV/FFmpeg codec libraries, optional Voice Python
+  runtimes, Ollama, model files, source environments, caches, logs, and private
+  Aurora user data are not bundled in the Core-only portable test package.
+
 ### Memory and Retrieval
 
 - Added pending Memory candidate review with explicit approve/reject actions,

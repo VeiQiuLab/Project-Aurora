@@ -8,7 +8,6 @@ import time
 import urllib.parse
 import urllib.request
 import urllib.error
-import shutil
 import shlex
 import json
 
@@ -18,6 +17,7 @@ except ImportError:
     psutil = None
 
 from modules.app_paths import LOG_DIR
+from modules.runtime_dependencies import resolve_ollama_executable
 
 
 OLLAMA_PROCESS_NAMES = {"ollama.exe", "ollama app.exe"}
@@ -35,6 +35,7 @@ class ServiceManager:
         self.ollama_start_time = None
         self.ollama_executable_path = ""
         self.ollama_root_pid = 0
+        self._ollama_starting = False
         self.ollama_lifecycle_debug = {
             "started_by_app": False,
             "resolved_executable": "",
@@ -68,12 +69,14 @@ class ServiceManager:
 
     @staticmethod
     def command_executable_path(command):
+        executable, _source = resolve_ollama_executable(command)
+        if executable:
+            return executable
         try:
             parts = shlex.split(str(command or ""), posix=False)
         except ValueError:
             parts = []
-        executable = str(parts[0] if parts else "").strip().strip('"')
-        return shutil.which(executable) or executable
+        return str(parts[0] if parts else "").strip().strip('"')
 
     @staticmethod
     def same_install_dir(path_a, path_b):
@@ -465,21 +468,43 @@ class ServiceManager:
         return False
 
     def start_ollama(self, command, url, callback=None, timeout=30):
-        host, port = self.endpoint(url, "127.0.0.1", 11434)
-        before = self.record_ollama_start_snapshot(command)
-
         def notify(event):
             if callback:
                 callback(event)
 
-        notify({
-            "event": "ollama_snapshot_before_start",
-            "processes": self.process_summary(before)
-        })
+        with self._lock:
+            if self._ollama_starting:
+                already_starting = True
+            else:
+                self._ollama_starting = True
+                already_starting = False
+        if already_starting:
+            notify("starting")
+            return None
 
         def run():
-            if self.is_online(host, port):
+            try:
+                before = self.record_ollama_start_snapshot(command)
+            except Exception:
+                notify("failed")
+                return
+            notify({
+                "event": "ollama_snapshot_before_start",
+                "processes": self.process_summary(before)
+            })
+            if self.diagnose_ollama(url, timeout=1).get("available"):
                 notify("online")
+                return
+            # An existing Ollama desktop/server process may still be starting or
+            # may need user repair.  Never launch a second copy that Aurora could
+            # later mistake for an owned process.
+            existing = self.ollama_process_snapshot()
+            if existing:
+                notify({
+                    "event": "ollama_existing_process_offline",
+                    "processes": self.process_summary(existing),
+                })
+                notify("existing_process_offline")
                 return
             notify("starting")
             try:
@@ -488,7 +513,7 @@ class ServiceManager:
                 parts = ["ollama", "serve"]
             if not parts:
                 parts = ["ollama", "serve"]
-            executable = shutil.which(str(parts[0]).strip('"'))
+            executable, _source = resolve_ollama_executable(command)
             if not executable:
                 notify("command_not_found")
                 return
@@ -531,7 +556,7 @@ class ServiceManager:
             deadline = time.monotonic() + max(1, float(timeout))
             while time.monotonic() < deadline:
                 self.record_process_children("ollama", process.pid)
-                if self.is_online(host, port):
+                if self.diagnose_ollama(url, timeout=1).get("available"):
                     after = self._annotate_ollama_ownership(self.ollama_process_snapshot())
                     with self._lock:
                         self.ollama_after_start_snapshot = after
@@ -553,8 +578,20 @@ class ServiceManager:
                 time.sleep(1)
             notify("failed")
 
-        thread = threading.Thread(target=run, daemon=True)
-        thread.start()
+        def guarded_run():
+            try:
+                run()
+            finally:
+                with self._lock:
+                    self._ollama_starting = False
+
+        thread = threading.Thread(target=guarded_run, daemon=True)
+        try:
+            thread.start()
+        except Exception:
+            with self._lock:
+                self._ollama_starting = False
+            raise
         return thread
 
     def service_process_metadata(self, service_name):
