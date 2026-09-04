@@ -59,6 +59,7 @@ def _manager(
     *,
     settings=None,
     executable=None,
+    ffmpeg=None,
     available=False,
     models=(),
     modules=(),
@@ -69,7 +70,13 @@ def _manager(
 ):
     return RuntimeDependencyManager(
         settings or {},
-        which=lambda name: executable if name in {"ollama", "ollama.exe"} else None,
+        which=lambda name: (
+            executable
+            if name in {"ollama", "ollama.exe"}
+            else ffmpeg
+            if name in {"ffmpeg", "ffmpeg.exe"}
+            else None
+        ),
         bundled_tool_finder=lambda _name: None,
         module_finder=_finder(modules),
         ollama_api_probe=_api(available, models),
@@ -466,6 +473,52 @@ def test_enabled_voice_all_dependencies_ready():
     assert all(item["status"] == RuntimeStatus.READY.value for item in voice["items"])
 
 
+def test_voice_disabled_domain_is_not_enabled_and_does_not_block_ready_summary():
+    report = _manager(
+        settings={"voice": {"enabled": False}, "knowledge": {"enabled": True}},
+        executable=r"C:\Program Files\Ollama\ollama.exe",
+        available=True,
+        models=READY_MODELS,
+    ).check()
+
+    assert report["domains"]["core"]["status"] == RuntimeStatus.READY.value
+    assert report["domains"]["local_ai"]["status"] == RuntimeStatus.READY.value
+    assert report["domains"]["knowledge"]["status"] == RuntimeStatus.READY.value
+    assert report["domains"]["voice"]["status"] == RuntimeStatus.OPTIONAL.value
+    assert report["status"] == RuntimeStatus.READY.value
+
+
+def test_voice_enabled_with_missing_dependencies_makes_overall_not_ready():
+    report = _manager(
+        settings={"voice": {"enabled": True}, "knowledge": {"enabled": True}},
+        executable=r"C:\Program Files\Ollama\ollama.exe",
+        available=True,
+        models=READY_MODELS,
+    ).check()
+
+    assert report["domains"]["core"]["status"] == RuntimeStatus.READY.value
+    assert report["domains"]["local_ai"]["status"] == RuntimeStatus.READY.value
+    assert report["domains"]["voice"]["status"] == RuntimeStatus.DEGRADED.value
+    assert report["status"] == RuntimeStatus.DEGRADED.value
+
+
+def test_voice_fully_ready_makes_voice_domain_and_overall_ready():
+    report = _manager(
+        settings={"voice": {"enabled": True}, "knowledge": {"enabled": True}},
+        executable=r"C:\Program Files\Ollama\ollama.exe",
+        ffmpeg=r"C:\Tools\ffmpeg.exe",
+        available=True,
+        models=READY_MODELS,
+        modules={"faster_whisper", "ctranslate2", "edge_tts", "pygame"},
+        microphone=(True, "Microphone detected"),
+        playback=(True, "Output detected"),
+        whisper=(True, "Cached"),
+    ).check()
+
+    assert report["domains"]["voice"]["status"] == RuntimeStatus.READY.value
+    assert report["status"] == RuntimeStatus.READY.value
+
+
 def test_dependency_center_stt_key_matches_runtime_report_contract():
     report = _manager(settings={"voice": {"enabled": False}}).check()
 
@@ -473,7 +526,7 @@ def test_dependency_center_stt_key_matches_runtime_report_contract():
     source = (Path(__file__).resolve().parents[1] / "widgets" / "components" / "dependency_center.py").read_text(
         encoding="utf-8"
     )
-    assert '("stt", "STT")' in source
+    assert '"stt",' in source
     assert '"stt_runtime"' not in source
 
 

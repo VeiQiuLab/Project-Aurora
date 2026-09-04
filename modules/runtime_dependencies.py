@@ -178,18 +178,23 @@ class RuntimeDependencyManager:
             *voice["items"],
             voice["summary"],
         ]
-        essential_ready = all(
-            item["status"] == RuntimeStatus.READY.value
-            for item in items
-            if item.get("required")
+        domains = self._build_runtime_domains(ollama, voice)
+        enabled_domains = [domains["core"], domains["local_ai"]]
+        if bool(_get_setting(self.settings, "knowledge.enabled", True)):
+            enabled_domains.append(domains["knowledge"])
+        if bool(voice.get("enabled")):
+            enabled_domains.append(domains["voice"])
+        enabled_domains_ready = all(
+            item["status"] == RuntimeStatus.READY.value for item in enabled_domains
         )
         return {
             "status": (
                 RuntimeStatus.READY.value
-                if essential_ready
+                if enabled_domains_ready
                 else RuntimeStatus.DEGRADED.value
             ),
             "core_ready": True,
+            "domains": domains,
             "items": items,
             "items_by_key": {item["key"]: item for item in items},
             "ollama": ollama,
@@ -202,6 +207,77 @@ class RuntimeDependencyManager:
                 "persisted": persisted,
             },
             "side_effects": ["settings:model_resolution"] if persisted else [],
+        }
+
+    def _build_runtime_domains(
+        self,
+        ollama: Mapping[str, Any],
+        voice: Mapping[str, Any],
+    ) -> dict[str, dict[str, Any]]:
+        """Summarize readiness by user-facing feature domain."""
+
+        chat = dict(ollama.get("chat_model") or {})
+        service = dict(ollama.get("service") or {})
+        local_ai_ready = (
+            service.get("status") == RuntimeStatus.READY.value
+            and chat.get("status") == RuntimeStatus.READY.value
+        )
+        chat_model = str(chat.get("data", {}).get("configured") or "").strip()
+        local_ai_detail = (
+            f"Local AI is ready with {chat_model}."
+            if local_ai_ready and chat_model
+            else "Local AI needs a running Ollama service and a Chat Supported model."
+        )
+
+        knowledge_enabled = bool(_get_setting(self.settings, "knowledge.enabled", True))
+        knowledge_detail = (
+            "Knowledge retrieval is ready; Embedding remains optional."
+            if knowledge_enabled
+            else "Knowledge retrieval is not enabled."
+        )
+        voice_enabled = bool(voice.get("enabled"))
+        voice_ready = voice.get("status") == RuntimeStatus.READY.value
+
+        return {
+            "core": RuntimeItem(
+                key="core",
+                name="Aurora Core",
+                status=RuntimeStatus.READY,
+                detail="Aurora Core is ready.",
+                required=True,
+                available=True,
+            ).as_dict(),
+            "local_ai": RuntimeItem(
+                key="local_ai",
+                name="Local AI",
+                status=(RuntimeStatus.READY if local_ai_ready else RuntimeStatus.DEGRADED),
+                detail=local_ai_detail,
+                required=True,
+                available=local_ai_ready,
+                data={"chat_model": chat_model},
+            ).as_dict(),
+            "knowledge": RuntimeItem(
+                key="knowledge",
+                name="Knowledge",
+                status=(RuntimeStatus.READY if knowledge_enabled else RuntimeStatus.OPTIONAL),
+                detail=knowledge_detail,
+                required=knowledge_enabled,
+                available=knowledge_enabled,
+                data={"enabled": knowledge_enabled},
+            ).as_dict(),
+            "voice": RuntimeItem(
+                key="voice",
+                name="Voice",
+                status=(
+                    RuntimeStatus.OPTIONAL
+                    if not voice_enabled
+                    else (RuntimeStatus.READY if voice_ready else RuntimeStatus.DEGRADED)
+                ),
+                detail=str(voice.get("summary", {}).get("detail") or ""),
+                required=voice_enabled,
+                available=voice_ready if voice_enabled else None,
+                data={"enabled": voice_enabled},
+            ).as_dict(),
         }
 
     def check_models(
@@ -970,12 +1046,16 @@ class RuntimeDependencyManager:
         cores = _positive_int_or_none(hardware.get("logical_cores"))
 
         warnings: list[str] = []
+        warning_codes: list[str] = []
         if vram is None:
             warnings.append("VRAM could not be measured reliably and was not treated as 0.")
+            warning_codes.append("vram_unknown")
         if ram is None:
             warnings.append("RAM could not be measured; using the conservative tier.")
+            warning_codes.append("ram_unknown")
         if disk is not None and disk < 6.0:
             warnings.append("Free disk space is low; free space before downloading a model.")
+            warning_codes.append("disk_low")
 
         if (
             ram is not None
@@ -987,6 +1067,7 @@ class RuntimeDependencyManager:
         ):
             tier = "Quality"
             reason = "High RAM and confirmed VRAM support a 14B quality model."
+            reason_code = "quality"
         elif (
             ram is not None
             and ram >= 16.0
@@ -995,9 +1076,11 @@ class RuntimeDependencyManager:
         ):
             tier = "Balanced"
             reason = "Mainstream hardware is suited to a 7B/8B balanced model."
+            reason_code = "balanced"
         else:
             tier = "Lightweight"
             reason = "A 3B/4B model is the safest fit for limited or unknown hardware."
+            reason_code = "lightweight"
 
         tier_data = dict(MODEL_TIERS[tier])
         existing = _select_existing_chat_model(existing_chat_models, tier)
@@ -1006,6 +1089,7 @@ class RuntimeDependencyManager:
             action = "use_existing"
             download_required = False
             reason = f"Use the existing chat-capable model {model}; no download is needed."
+            reason_code = "existing"
         else:
             model = tier_data["model"]
             action = "download_recommended"
@@ -1017,6 +1101,7 @@ class RuntimeDependencyManager:
             warnings.append(
                 "The recommended download plus safety margin may not fit on the current disk."
             )
+            warning_codes.append("download_disk_low")
 
         return {
             "tier": tier,
@@ -1024,11 +1109,13 @@ class RuntimeDependencyManager:
             "parameter_range": tier_data["parameter_range"],
             "approximate_download_gb": approximate_download,
             "reason": reason,
+            "reason_code": reason_code,
             "action": action,
             "existing_model": bool(existing),
             "download_required": download_required,
             "can_download": can_download,
             "warnings": warnings,
+            "warning_codes": warning_codes,
             "requires_user_confirmation": download_required,
         }
 

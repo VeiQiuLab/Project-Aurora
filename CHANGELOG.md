@@ -20,6 +20,14 @@ features that were later removed from the current product direction.
   model pickers, and provide explicit rescan and re-recommendation actions.
 - Isolated optional Voice startup failures so missing FFmpeg, devices, models,
   or providers degrade Voice without terminating Aurora Core.
+- Replaced the misleading optional-runtime aggregate with four feature-domain
+  states: Aurora Core, Local AI, Knowledge, and Voice. Enabled Voice can be
+  Ready only when all of its runtime requirements are actually available.
+- Added an early Windows named-mutex single-instance gate with a dedicated
+  activation event. Later launches restore/request attention for the existing
+  Aurora window and exit before configuration, stores, services, or workers.
+- Completed Chinese localization for First Run, automatic model selection,
+  Runtime/Dependencies, and Voice dependency status/actions.
 
 ### Windows Portable Test Package
 

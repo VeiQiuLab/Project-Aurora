@@ -1,9 +1,17 @@
+import sys
+from modules.single_instance import enforce_single_instance
+
+
+# This gate must remain before GUI, configuration, logging, stores, services,
+# background workers, downloads, or model resolution imports/initialization.
+single_instance_guard = enforce_single_instance()
+
+
 import customtkinter as ctk
 import copy
 import json
 from pathlib import Path
 import socket
-import sys
 import threading
 import time
 import urllib.error
@@ -245,8 +253,35 @@ elif configuration_issue == "missing_fields" or configuration_restored:
 logger.info("Loading configuration...")
 
 
-app = ctk.CTk()
+app = ctk.CTk(className="ProjectAuroraMainWindow")
 app.title(WINDOW_TITLE)
+activation_request_pending = threading.Event()
+first_run_window = None
+
+
+def activate_existing_instance():
+    logger.info("Single-instance activation request received")
+    activation_request_pending.set()
+
+
+def poll_instance_activation():
+    if activation_request_pending.is_set():
+        activation_request_pending.clear()
+        target = first_run_window
+        try:
+            if target is None or not target.winfo_exists():
+                target = app
+        except Exception:
+            target = app
+        single_instance_guard.activate_tk_window(target)
+    try:
+        app.after(100, poll_instance_activation)
+    except Exception:
+        return
+
+
+single_instance_guard.start_activation_listener(activate_existing_instance)
+app.after(100, poll_instance_activation)
 first_run_required = not bool(settings.get("first_run.completed", False))
 if first_run_required:
     app.withdraw()
@@ -384,11 +419,15 @@ def mark_service_started_by_app(service_name):
 
 
 def show_first_run_wizard():
+    global first_run_window
+
     def complete_first_run(updates, wizard):
+        global first_run_window
         settings.update_many(updates, save=True)
         logger.info("First Run Wizard completed")
         wizard.grab_release()
         wizard.destroy()
+        first_run_window = None
         app.deiconify()
         startup_check()
         refresh_recent_logs()
@@ -396,7 +435,7 @@ def show_first_run_wizard():
         refresh_system_health_center()
 
     try:
-        FirstRunWizard(
+        first_run_window = FirstRunWizard(
             app,
             release=RELEASE,
             build=BUILD,
@@ -407,6 +446,7 @@ def show_first_run_wizard():
             logger=logger,
         )
     except Exception as error:
+        first_run_window = None
         # Setup is optional.  A UI/runtime probe failure must never leave the
         # withdrawn Core looking as if it did not start.
         logger.error(f"First Run Wizard unavailable: {error}")
@@ -1658,13 +1698,16 @@ shutdown_manager.register_cleanup(cleanup_chat_surfaces, "chat_surfaces")
 def shutdown_app(source="unknown"):
     first_shutdown = not shutdown_manager.shutting_down
     logger.info(f"shutdown_app() requested: source={source}, first_shutdown={first_shutdown}")
-    shutdown_manager.cancel_after_timers(app)
-    if first_shutdown:
-        logger.info("Application shutdown started")
-        shutdown_manager.shutdown()
-        logger.info("Application shutdown finished")
-    logger.info("root.destroy() before")
-    app.destroy()
+    try:
+        shutdown_manager.cancel_after_timers(app)
+        if first_shutdown:
+            logger.info("Application shutdown started")
+            shutdown_manager.shutdown()
+            logger.info("Application shutdown finished")
+        logger.info("root.destroy() before")
+    finally:
+        single_instance_guard.close()
+        app.destroy()
 
 
 btn3 = ui_button(

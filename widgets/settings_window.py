@@ -2,6 +2,7 @@ import customtkinter as ctk
 import threading
 
 from modules.runtime_dependencies import RuntimeDependencyManager
+from modules.runtime_display import localized_runtime_item
 from modules.ui_theme import (
     FORM_CONTROL_WIDTH,
     FORM_LABEL_WRAP,
@@ -59,6 +60,10 @@ class SettingsWindow(ctk.CTkToplevel):
         self.controller = controller
         self.text = text
         self.t = translate
+        self.model_mode_display = {
+            "auto": self.t("model_mode_auto"),
+            "manual": self.t("model_mode_manual"),
+        }
         self.language_display = language_display
         self.language_code = language_code
         self.apply_language = apply_language
@@ -207,44 +212,46 @@ class SettingsWindow(ctk.CTkToplevel):
             self.settings.get("embedding_model_mode", "manual") or "manual"
         ).casefold()
         self.chat_model_mode_option = self.add_option_row(
-            "Chat Model Mode",
-            ["Auto", "Manual"],
-            "Manual" if chat_mode == "manual" else "Auto",
+            self.t("ai_model_mode"),
+            list(self.model_mode_display.values()),
+            self.model_mode_display[chat_mode],
         )
+        no_chat_models = self.t("no_installed_chat_models")
         self.chat_model_entry = self.add_option_row(
             self.t("chat_model"),
-            [self.settings.get("chat_model", "") or "No installed Chat models"],
-            self.settings.get("chat_model", "") or "No installed Chat models",
+            [self.settings.get("chat_model", "") or no_chat_models],
+            self.settings.get("chat_model", "") or no_chat_models,
         )
         self.chat_model_status = self.add_status_row(
-            "Chat Model Status",
-            "Checking installed models...",
+            self.t("chat_model_status"),
+            self.t("ai_model_scanning"),
         )
         self.embedding_model_mode_option = self.add_option_row(
-            "Embedding Mode",
-            ["Auto", "Manual"],
-            "Manual" if embedding_mode == "manual" else "Auto",
+            self.t("ai_embedding_mode"),
+            list(self.model_mode_display.values()),
+            self.model_mode_display[embedding_mode],
         )
+        no_embedding_models = self.t("no_installed_embedding_models")
         self.embedding_model_entry = self.add_option_row(
             self.t("embedding_model"),
-            [self.settings.get("embedding_model", "") or "No installed Embedding models"],
-            self.settings.get("embedding_model", "") or "No installed Embedding models",
+            [self.settings.get("embedding_model", "") or no_embedding_models],
+            self.settings.get("embedding_model", "") or no_embedding_models,
         )
         self.embedding_model_status = self.add_status_row(
-            "Embedding Status",
-            "Optional",
+            self.t("embedding_status"),
+            self.t("runtime_status_optional"),
         )
         model_actions = ctk.CTkFrame(self.section_body, fg_color="transparent")
         model_actions.pack(fill="x", pady=SPACING_SMALL)
         self.reload_models_button = SecondaryButton(
             model_actions,
-            text="Reload Models",
+            text=self.t("reload_models"),
             command=self.reload_models,
         )
         self.reload_models_button.pack(side="left", padx=(0, SPACING_SMALL))
         self.reevaluate_models_button = SecondaryButton(
             model_actions,
-            text="Re-run Recommendation",
+            text=self.t("ai_model_rerecommend"),
             command=lambda: self.reload_models(reevaluate=True),
         )
         self.reevaluate_models_button.pack(side="left")
@@ -254,12 +261,19 @@ class SettingsWindow(ctk.CTkToplevel):
         self.after(0, self.reload_models)
 
     def _model_mode_changed(self, _value=None):
-        chat_auto = self.chat_model_mode_option.get().casefold() == "auto"
-        embedding_auto = self.embedding_model_mode_option.get().casefold() == "auto"
+        chat_auto = self._model_mode_code(self.chat_model_mode_option.get()) == "auto"
+        embedding_auto = self._model_mode_code(self.embedding_model_mode_option.get()) == "auto"
         self.chat_model_entry.configure(state="disabled" if chat_auto else "normal")
         self.embedding_model_entry.configure(
             state="disabled" if embedding_auto else "normal"
         )
+
+    def _model_mode_code(self, display_value):
+        value = str(display_value or "")
+        for code, display in self.model_mode_display.items():
+            if value == display:
+                return code
+        return "manual"
 
     @staticmethod
     def _selected_model(option, placeholder):
@@ -277,14 +291,14 @@ class SettingsWindow(ctk.CTkToplevel):
     def reload_models(self, reevaluate=False):
         if self._model_check_running or self._disposed:
             return
-        if reevaluate and self.chat_model_mode_option.get().casefold() != "auto":
+        if reevaluate and self._model_mode_code(self.chat_model_mode_option.get()) != "auto":
             self.result_label.configure(
-                text="Switch Chat Model Mode to Auto and save before re-running the recommendation.",
+                text=self.t("ai_model_manual_rerecommend_hint"),
                 text_color=status_color("warning"),
             )
             return
         self._model_check_running = True
-        self.reload_models_button.configure(state="disabled", text="Scanning...")
+        self.reload_models_button.configure(state="disabled", text=self.t("scanning_models"))
         self.reevaluate_models_button.configure(state="disabled")
 
         def worker():
@@ -302,11 +316,11 @@ class SettingsWindow(ctk.CTkToplevel):
 
             def finish():
                 self._model_check_running = False
-                self.reload_models_button.configure(state="normal", text="Reload Models")
+                self.reload_models_button.configure(state="normal", text=self.t("reload_models"))
                 self.reevaluate_models_button.configure(state="normal")
                 if report is None:
                     self.chat_model_status.set_status(
-                        "warning", "Models could not be checked. Try again."
+                        "warning", self.t("ai_model_scan_failed")
                     )
                     return
                 ollama = report.get("ollama", {})
@@ -329,24 +343,26 @@ class SettingsWindow(ctk.CTkToplevel):
                 chat_values, chat_selected = self._model_picker_values(
                     chat_names,
                     chat_value,
-                    "No installed Chat models",
+                    self.t("no_installed_chat_models"),
                 )
                 embedding_values, embedding_selected = self._model_picker_values(
                     embedding_names,
                     embedding_value,
-                    "No installed Embedding models",
+                    self.t("no_installed_embedding_models"),
                 )
                 self.chat_model_entry.configure(values=chat_values)
                 self.chat_model_entry.set(chat_selected)
                 self.embedding_model_entry.configure(values=embedding_values)
                 self.embedding_model_entry.set(embedding_selected)
+                chat_display = localized_runtime_item(chat_item, self.t)
+                embedding_display = localized_runtime_item(embedding_item, self.t)
                 self.chat_model_status.set_status(
                     self._runtime_status_style(chat_item.get("status")),
-                    chat_item.get("detail") or "Not checked",
+                    chat_display["detail"],
                 )
                 self.embedding_model_status.set_status(
                     self._runtime_status_style(embedding_item.get("status")),
-                    embedding_item.get("detail") or "Optional",
+                    embedding_display["detail"],
                 )
                 self.initial_chat_model_mode = str(
                     self.settings.get("chat_model_mode", "auto") or "auto"
@@ -371,29 +387,29 @@ class SettingsWindow(ctk.CTkToplevel):
         }.get(str(status or ""), "disabled")
 
     def build_voice_section(self):
-        self.add_section_title("Voice")
+        self.add_section_title(self.t("runtime_domain_voice"))
         self.voice_enabled_var = ctk.BooleanVar(
             value=bool(self.settings.get("voice.enabled", False))
         )
-        self.add_switch("Voice Enabled", self.voice_enabled_var)
+        self.add_switch(self.t("voice_enabled"), self.voice_enabled_var)
         self.voice_stt_option = self.add_option_row(
-            "STT Provider",
+            self.t("stt_provider"),
             ["Faster Whisper"],
             "Faster Whisper"
         )
         self.voice_tts_option = self.add_option_row(
-            "TTS Provider",
+            self.t("tts_provider"),
             ["Edge TTS"],
             "Edge TTS"
         )
         self.voice_entry = self.add_entry_row(
-            "Voice",
+            self.t("tts_voice"),
             self.settings.get("voice.tts.voice", "zh-CN-XiaoxiaoNeural")
         )
         self.voice_playback_var = ctk.BooleanVar(
             value=bool(self.settings.get("voice.playback.enabled", True))
         )
-        self.add_switch("Playback Enabled", self.voice_playback_var)
+        self.add_switch(self.t("playback_enabled"), self.voice_playback_var)
 
     def build_developer_section(self):
         self.add_section_title(self.t("developer"))
@@ -572,13 +588,13 @@ class SettingsWindow(ctk.CTkToplevel):
             self.t("appearance_dark"): "Dark"
         }.get(self.appearance_option.get(), "System")
         selected_language = self.language_code(self.language_option.get())
-        chat_mode = self.chat_model_mode_option.get().casefold()
-        embedding_mode = self.embedding_model_mode_option.get().casefold()
+        chat_mode = self._model_mode_code(self.chat_model_mode_option.get())
+        embedding_mode = self._model_mode_code(self.embedding_model_mode_option.get())
         chat_model = self._selected_model(
-            self.chat_model_entry, "No installed Chat models"
+            self.chat_model_entry, self.t("no_installed_chat_models")
         )
         embedding_model = self._selected_model(
-            self.embedding_model_entry, "No installed Embedding models"
+            self.embedding_model_entry, self.t("no_installed_embedding_models")
         )
         if chat_mode == "auto":
             chat_model = (
@@ -713,7 +729,7 @@ class SettingsWindow(ctk.CTkToplevel):
         """Explain optional Voice gaps after its first enable without blocking save."""
 
         self.result_label.configure(
-            text="Settings saved. Checking optional Voice dependencies...",
+            text=self.t("voice_dependencies_checking_after_save"),
             text_color=status_color("disabled"),
         )
 
@@ -725,21 +741,19 @@ class SettingsWindow(ctk.CTkToplevel):
             except Exception as error:
                 if self.logger:
                     self.logger.error(f"Voice dependency check failed: {error}")
-                report = {"ready": False, "items": [{"name": "Voice environment", "status": "Degraded"}]}
+                report = {"ready": False, "items": [{"name": "Voice", "status": "Degraded"}]}
             missing = [
-                item.get("name", item.get("key", "component"))
+                localized_runtime_item(item, self.t)["name"]
                 for item in report.get("missing", [])
             ]
 
             def finish():
                 if report.get("ready"):
-                    message = "Settings saved. Voice dependencies are ready; restart Aurora to enable Voice."
+                    message = self.t("voice_dependencies_ready_after_save")
                     state = "healthy"
                 else:
-                    message = (
-                        "Settings saved. Voice remains unavailable until these optional components are ready: "
-                        + ", ".join(missing)
-                        + ". Open Runtime / Dependencies."
+                    message = self.t("voice_dependencies_missing_after_save").format(
+                        components=", ".join(missing)
                     )
                     state = "warning"
                 self.result_label.configure(text=message, text_color=status_color(state))

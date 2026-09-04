@@ -26,7 +26,7 @@ def test_dependency_center_visible_keys_exist_in_runtime_report():
 
     report = manager.check()
 
-    assert {key for key, _label in _VISIBLE_ITEMS} <= set(report["items_by_key"])
+    assert set(_VISIBLE_ITEMS) <= set(report["items_by_key"])
 
 
 def test_successful_dependency_download_selection_is_persisted():
@@ -88,7 +88,13 @@ def test_settings_voice_result_does_not_touch_a_closed_window():
 def test_whisper_download_is_blocked_until_stt_runtime_is_ready():
     messages = []
     center = SimpleNamespace(
-        report={"items_by_key": {"stt": {"status": "Missing"}}},
+        report={
+            "voice": {"enabled": True},
+            "items_by_key": {"stt": {"status": "Missing"}},
+        },
+        t=lambda key: {
+            "runtime_install_stt_first": "Install the Faster-Whisper runtime first."
+        }.get(key, key),
         message=SimpleNamespace(configure=lambda **values: messages.append(values)),
     )
 
@@ -123,6 +129,10 @@ def test_first_voice_enablement_reports_ffmpeg_from_unified_gate(monkeypatch):
     window = SimpleNamespace(
         settings={},
         logger=None,
+        t=lambda key: {
+            "voice_dependencies_checking_after_save": "Checking Voice dependencies.",
+            "voice_dependencies_missing_after_save": "Voice still needs: {components}.",
+        }.get(key, key),
         result_label=SimpleNamespace(configure=lambda **values: messages.append(values)),
         _after=lambda callback: callback(),
     )

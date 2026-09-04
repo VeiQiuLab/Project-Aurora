@@ -148,6 +148,28 @@ RAM, CPU/core count, reliable VRAM when available, and free disk space. Unknown
 VRAM remains unknown. Checks and downloads run away from the GUI thread, and
 only Aurora-owned download or service processes may be cancelled or stopped.
 
+Runtime readiness is presented by feature domain rather than by a single list
+of optional packages. Aurora Core is independent, Local AI requires the Ollama
+service plus a usable chat model, Knowledge remains ready without optional
+Embedding, and Voice is `Optional` while disabled. Once Voice is enabled, any
+missing FFmpeg/device/STT/Whisper/TTS/playback requirement makes the Voice
+domain and overall enabled-runtime state degraded; missing components are never
+reported as ready merely to keep the screen green.
+
+## Windows Single Instance
+
+`modules.single_instance` is imported and enforced before CustomTkinter,
+configuration, logging, data stores, service lifecycle, First Run, model
+resolution, or background workers. A fixed per-session Windows named mutex is
+the ownership primitive. Windows releases the mutex automatically when the
+process exits or crashes, so no PID file or stale lock can block a later start.
+
+The primary process also owns a named auto-reset activation event. A later
+Aurora launch signals that event and exits immediately. The primary restores
+its own known Tk root HWND, requests foreground activation, and flashes the
+taskbar when Windows foreground policy denies focus. Aurora never searches for
+or activates windows by process name or an unscoped global title match.
+
 ## State and Concurrency
 
 `CompanionStateStore` coordinates states such as IDLE, LISTENING, TRANSCRIBING,

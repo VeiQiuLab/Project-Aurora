@@ -10,6 +10,7 @@ import customtkinter as ctk
 from modules.dependency_actions import OllamaPullTask, open_official_ollama_download
 from modules.first_run import FIRST_RUN_STEPS, FirstRunController, empty_runtime_report
 from modules.runtime_dependencies import RuntimeDependencyManager
+from modules.runtime_display import localized_runtime_item
 from modules.ui_theme import (
     COLOR_ERROR,
     COLOR_MUTED,
@@ -75,7 +76,7 @@ class FirstRunWizard(ctk.CTkToplevel):
         self._finished = False
         self._disposed = False
 
-        self.title(self._text("first_run_window_title", "Project Aurora First Run"))
+        self.title(self._text("first_run_window_title"))
         self.geometry("780x650")
         self.minsize(680, 580)
         self.transient(parent)
@@ -85,9 +86,9 @@ class FirstRunWizard(ctk.CTkToplevel):
         self.logger.info("First Run Wizard opened")
         self.render()
 
-    def _text(self, key, fallback):
+    def _text(self, key):
         value = str(self.t(key))
-        return fallback if value == key else value
+        return key if value == key else value
 
     def _build_ui(self):
         self.container = ctk.CTkFrame(self)
@@ -98,16 +99,16 @@ class FirstRunWizard(ctk.CTkToplevel):
         self.content.pack(fill="both", expand=True)
         self.footer = FixedFooter(self.container)
         self.footer.pack(fill="x", pady=(SPACING_MEDIUM, 0))
-        self.back_button = SecondaryButton(self.footer.buttons, text=self._text("back", "Back"), command=self.previous_step, width=110)
+        self.back_button = SecondaryButton(self.footer.buttons, text=self._text("back"), command=self.previous_step, width=110)
         self.back_button.pack(side="left")
         self.skip_button = SecondaryButton(
             self.footer.buttons,
-            text=self._text("first_run_skip_for_now", "Skip For Now"),
+            text=self._text("first_run_skip_for_now"),
             command=self.skip_and_finish,
             width=140,
         )
         self.skip_button.pack(side="right", padx=(SPACING_SMALL, 0))
-        self.next_button = PrimaryButton(self.footer.buttons, text=self._text("next", "Next"), command=self.next_step, width=110)
+        self.next_button = PrimaryButton(self.footer.buttons, text=self._text("next"), command=self.next_step, width=110)
         self.next_button.pack(side="right")
 
     def _clear(self):
@@ -155,16 +156,13 @@ class FirstRunWizard(ctk.CTkToplevel):
         self._refresh_navigation()
 
     def _render_welcome(self):
-        self.title_label.configure(text=self._text("first_run_welcome_title", "Welcome to Project Aurora"))
+        self.title_label.configure(text=self._text("first_run_welcome_title"))
         card = self._card("Aurora")
         ctk.CTkLabel(card.body, text="Aurora", font=FONT_APP_TITLE, anchor="w").pack(fill="x", pady=(0, SPACING_SMALL))
-        self._row(card.body, "Version", f"{self.release} · {self.build}", color=COLOR_SUCCESS)
+        self._row(card.body, self._text("first_run_version"), f"{self.release} · {self.build}", color=COLOR_SUCCESS)
         ctk.CTkLabel(
             card.body,
-            text=self._text(
-                "first_run_local_first_message",
-                "Aurora is Local First. The Core opens without Ollama, models, or Voice, and Aurora never downloads large models without your confirmation.",
-            ),
+            text=self._text("first_run_local_first_message"),
             font=FONT_NORMAL,
             anchor="w",
             justify="left",
@@ -172,61 +170,63 @@ class FirstRunWizard(ctk.CTkToplevel):
         ).pack(fill="x", pady=(SPACING_MEDIUM, 0))
 
     def _render_environment(self):
-        self.title_label.configure(text=self._text("first_run_environment_title", "Environment Check"))
+        self.title_label.configure(text=self._text("first_run_environment_title"))
         card = self._card(
-            self._text("first_run_environment_title", "Environment Check"),
-            self._text("first_run_environment_hint", "Missing optional components are shown clearly and do not block Aurora Core."),
+            self._text("first_run_environment_title"),
+            self._text("first_run_environment_hint"),
         )
         for item in self.controller.environment_items():
             status = str(item.get("status") or "Degraded")
-            detail = str(item.get("detail") or "")
+            display = localized_runtime_item(item, self.t)
             row = ctk.CTkFrame(card.body, fg_color="transparent")
             row.pack(fill="x", pady=4)
             row.grid_columnconfigure(2, weight=1)
-            ctk.CTkLabel(row, text=str(item.get("name") or item.get("key")), font=FONT_NORMAL, anchor="w", width=170).grid(row=0, column=0, sticky="w")
-            StatusLabel(row, status=_STATUS_STYLE.get(status, "warning"), text=status, anchor="w", justify="left", width=90).grid(row=0, column=1, sticky="w")
-            ctk.CTkLabel(row, text=detail, font=FONT_SMALL, text_color=COLOR_MUTED, anchor="e", justify="right", wraplength=380).grid(row=0, column=2, sticky="e")
-        PrimaryButton(card.body, text=self._text("first_run_check_again", "Check Again"), command=self.refresh_environment).pack(anchor="w", pady=(SPACING_MEDIUM, 0))
+            ctk.CTkLabel(row, text=display["name"], font=FONT_NORMAL, anchor="w", width=170).grid(row=0, column=0, sticky="w")
+            StatusLabel(row, status=_STATUS_STYLE.get(status, "warning"), text=display["status"], anchor="w", justify="left", width=90).grid(row=0, column=1, sticky="w")
+            ctk.CTkLabel(row, text=display["detail"], font=FONT_SMALL, text_color=COLOR_MUTED, anchor="e", justify="right", wraplength=380).grid(row=0, column=2, sticky="e")
+        PrimaryButton(card.body, text=self._text("first_run_check_again"), command=self.refresh_environment).pack(anchor="w", pady=(SPACING_MEDIUM, 0))
         if not self.check_running and not self.has_checked:
             self.refresh_environment()
 
     def _render_local_model(self):
-        self.title_label.configure(text=self._text("first_run_local_model_title", "Local Model Setup"))
+        self.title_label.configure(text=self._text("first_run_local_model_title"))
         hardware = self.controller.hardware()
-        hardware_card = self._card("Hardware")
+        hardware_card = self._card(self._text("first_run_hardware"))
         self._row(hardware_card.body, "RAM", self._format_gb(hardware.get("ram_gb")))
-        self._row(hardware_card.body, "CPU", hardware.get("cpu") or "unknown")
-        self._row(hardware_card.body, "CPU Cores", hardware.get("logical_cores") or "unknown")
-        self._row(hardware_card.body, "GPU", hardware.get("gpu") or "unknown")
-        vram = "unknown" if hardware.get("vram_gb") is None else self._format_gb(hardware.get("vram_gb"))
+        self._row(hardware_card.body, "CPU", hardware.get("cpu") or self._text("first_run_unknown"))
+        self._row(hardware_card.body, self._text("first_run_cpu_cores"), hardware.get("logical_cores") or self._text("first_run_unknown"))
+        self._row(hardware_card.body, "GPU", hardware.get("gpu") or self._text("first_run_unknown"))
+        vram = self._text("first_run_unknown") if hardware.get("vram_gb") is None else self._format_gb(hardware.get("vram_gb"))
         self._row(hardware_card.body, "VRAM", vram)
-        self._row(hardware_card.body, "Free Disk", self._format_gb(hardware.get("disk_free_gb")))
+        self._row(hardware_card.body, self._text("first_run_free_disk"), self._format_gb(hardware.get("disk_free_gb")))
 
         recommendation = self.controller.recommendation()
         model_card = self._card(
-            "Existing Chat Model",
-            "Aurora prefers an installed Chat Supported model. It will not download another model unless you explicitly confirm it.",
+            self._text("first_run_existing_chat_model"),
+            self._text("first_run_existing_chat_hint"),
         )
-        self._row(model_card.body, "Tier", f"{recommendation.get('tier')} · {recommendation.get('parameter_range')}", color=COLOR_SUCCESS)
-        self._row(model_card.body, "Model", recommendation.get("model") or "")
+        tier = str(recommendation.get("tier") or "Lightweight").casefold()
+        self._row(model_card.body, self._text("first_run_tier"), f"{self._text(f'first_run_tier_{tier}')} · {recommendation.get('parameter_range')}", color=COLOR_SUCCESS)
+        self._row(model_card.body, self._text("model"), recommendation.get("model") or "")
         self._row(
             model_card.body,
-            "Download",
+            self._text("first_run_download"),
             (
-                "Already installed"
+                self._text("first_run_already_installed")
                 if not recommendation.get("download_required", True)
-                else f"Approx. {recommendation.get('approximate_download_gb')} GB"
+                else self._text("first_run_approx_download").format(size=recommendation.get("approximate_download_gb"))
             ),
         )
-        self._row(model_card.body, "Why", recommendation.get("reason") or "")
-        for warning in recommendation.get("warnings", []):
-            self._row(model_card.body, "Warning", warning, color=COLOR_WARNING)
+        reason_code = str(recommendation.get("reason_code") or "lightweight")
+        self._row(model_card.body, self._text("first_run_why"), self._text(f"first_run_reason_{reason_code}"))
+        for warning_code in recommendation.get("warning_codes", []):
+            self._row(model_card.body, self._text("first_run_warning"), self._text(f"first_run_warning_{warning_code}"), color=COLOR_WARNING)
 
         existing = self.controller.existing_chat_names()
         if existing:
             self._row(
                 model_card.body,
-                "Recommended existing model",
+                self._text("first_run_recommended_existing"),
                 self.controller.selected_chat_model,
                 color=COLOR_SUCCESS,
             )
@@ -234,32 +234,32 @@ class FirstRunWizard(ctk.CTkToplevel):
             selector.pack(fill="x", pady=(SPACING_MEDIUM, SPACING_SMALL))
             self.model_variable = ctk.StringVar(value=self.controller.selected_chat_model or existing[0])
             ctk.CTkOptionMenu(selector, values=existing, variable=self.model_variable, width=330).pack(side="left", padx=(0, SPACING_SMALL))
-            SecondaryButton(selector, text="Choose Model", command=self.use_existing_model).pack(side="left")
+            SecondaryButton(selector, text=self._text("first_run_choose_model"), command=self.use_existing_model).pack(side="left")
         else:
-            self._row(model_card.body, "Existing", "No Chat Supported model detected", color=COLOR_WARNING)
+            self._row(model_card.body, self._text("first_run_existing"), self._text("first_run_no_chat_model"), color=COLOR_WARNING)
 
         actions = ctk.CTkFrame(model_card.body, fg_color="transparent")
         actions.pack(fill="x", pady=(SPACING_SMALL, 0))
         if existing:
             PrimaryButton(
                 actions,
-                text=f"Use {self.controller.selected_chat_model} Automatically",
+                text=self._text("first_run_use_automatically").format(model=self.controller.selected_chat_model),
                 command=self.use_automatically,
             ).pack(side="left", padx=(0, SPACING_SMALL))
         self.download_button = SecondaryButton(
             actions,
-            text="Download Another" if existing else "Download Recommended",
+            text=self._text("first_run_download_another") if existing else self._text("first_run_download_recommended"),
             command=self.choose_another if existing else self.download_recommended,
         )
         self.download_button.pack(side="left", padx=(0, SPACING_SMALL))
         if not existing:
             SecondaryButton(
                 actions,
-                text="Choose Another",
+                text=self._text("first_run_choose_another"),
                 command=self.choose_another,
             ).pack(side="left", padx=(0, SPACING_SMALL))
-        SecondaryButton(actions, text="Skip For Now", command=self.skip_model_setup).pack(side="left")
-        self.cancel_button = SecondaryButton(actions, text="Cancel Download", command=self.cancel_download)
+        SecondaryButton(actions, text=self._text("first_run_skip_for_now"), command=self.skip_model_setup).pack(side="left")
+        self.cancel_button = SecondaryButton(actions, text=self._text("first_run_cancel_download"), command=self.cancel_download)
         if self.pull_task is not None:
             self.cancel_button.pack(side="right")
         if not recommendation.get("can_download", True):
@@ -267,27 +267,26 @@ class FirstRunWizard(ctk.CTkToplevel):
 
         state = self.controller.report.get("ollama", {}).get("state")
         if state == "Not Installed":
-            install_card = self._card("Ollama", "Ollama is not installed. Aurora opens only the official Windows download page and never runs an unknown install script.")
-            SecondaryButton(install_card.body, text="Open Official Ollama Download", command=self.open_ollama_download).pack(anchor="w")
+            install_card = self._card("Ollama", self._text("first_run_ollama_not_installed"))
+            SecondaryButton(install_card.body, text=self._text("first_run_open_ollama_download"), command=self.open_ollama_download).pack(anchor="w")
         elif state == "Installed / Server Offline":
-            service_card = self._card("Ollama", "Ollama is installed but its local API is offline.")
-            SecondaryButton(service_card.body, text="Start Existing Ollama", command=self.start_ollama).pack(anchor="w")
+            service_card = self._card("Ollama", self._text("first_run_ollama_offline"))
+            SecondaryButton(service_card.body, text=self._text("first_run_start_ollama"), command=self.start_ollama).pack(anchor="w")
 
     def _render_complete(self):
-        self.title_label.configure(text=self._text("first_run_complete_title", "Setup Complete"))
-        card = self._card("Aurora Core", "Optional features can be configured later in Settings → Runtime / Dependencies.")
-        self._row(card.body, "Core", "Ready", color=COLOR_SUCCESS)
-        selected = self.controller.selected_chat_model if self.controller.model_decision in {"auto", "use_existing", "downloaded"} else "Skipped for now"
-        self._row(card.body, "Chat Model", selected)
-        self._row(card.body, "Embedding", self.controller.selected_embedding_model or "Optional / not changed")
-        self._row(card.body, "Voice", "Optional / configure later")
+        self.title_label.configure(text=self._text("first_run_complete_title"))
+        card = self._card(self._text("runtime_domain_core"), self._text("first_run_complete_hint"))
+        self._row(card.body, self._text("first_run_core"), self._text("runtime_status_ready"), color=COLOR_SUCCESS)
+        selected = self.controller.selected_chat_model if self.controller.model_decision in {"auto", "use_existing", "downloaded"} else self._text("first_run_skipped")
+        self._row(card.body, self._text("chat_model"), selected)
+        self._row(card.body, self._text("runtime_item_embedding"), self.controller.selected_embedding_model or self._text("first_run_optional_unchanged"))
+        self._row(card.body, self._text("runtime_domain_voice"), self._text("first_run_optional_later"))
 
-    @staticmethod
-    def _format_gb(value):
+    def _format_gb(self, value):
         try:
             return f"{float(value):g} GB"
         except (TypeError, ValueError):
-            return "unknown"
+            return self._text("first_run_unknown")
 
     def _refresh_navigation(self):
         downloading = self.pull_task is not None
@@ -297,7 +296,7 @@ class FirstRunWizard(ctk.CTkToplevel):
             else "normal"
         )
         self.next_button.configure(
-            text=self._text("finish", "Finish") if self.controller.step == "complete" else self._text("next", "Next"),
+            text=self._text("finish") if self.controller.step == "complete" else self._text("next"),
             state="disabled" if downloading or self.check_running else "normal",
         )
         # Environment probes are optional and may involve slow device drivers;
@@ -308,20 +307,20 @@ class FirstRunWizard(ctk.CTkToplevel):
         if self.check_running:
             return
         self.check_running = True
-        self.footer.message.configure(text="Checking the local runtime...", text_color=COLOR_MUTED)
+        self.footer.message.configure(text=self._text("runtime_checking"), text_color=COLOR_MUTED)
 
         def worker():
             try:
                 report = self.runtime_manager.check(timeout=1.0)
             except Exception as error:
                 report = empty_runtime_report()
-                message = "Environment checks could not be completed. You can retry or skip for now."
+                message = self._text("first_run_environment_failed")
                 if self.logger:
                     self.logger.error(
                         f"First Run environment check failed: {type(error).__name__}: {error}"
                     )
             else:
-                message = "Environment check complete."
+                message = self._text("first_run_environment_complete")
 
             def finish():
                 self.check_running = False
@@ -375,19 +374,19 @@ class FirstRunWizard(ctk.CTkToplevel):
     def use_existing_model(self):
         try:
             self.controller.use_existing_model(self.model_variable.get() if self.model_variable is not None else "")
-        except ValueError as error:
-            self.footer.message.configure(text=str(error), text_color=COLOR_ERROR)
+        except ValueError:
+            self.footer.message.configure(text=self._text("first_run_invalid_chat_model"), text_color=COLOR_ERROR)
             return
-        self.footer.message.configure(text="Existing Chat model selected; no download is needed.", text_color=COLOR_SUCCESS)
+        self.footer.message.configure(text=self._text("first_run_existing_selected"), text_color=COLOR_SUCCESS)
 
     def use_automatically(self):
         try:
             model = self.controller.use_automatically()
-        except ValueError as error:
-            self.footer.message.configure(text=str(error), text_color=COLOR_ERROR)
+        except ValueError:
+            self.footer.message.configure(text=self._text("first_run_invalid_chat_model"), text_color=COLOR_ERROR)
             return
         self.footer.message.configure(
-            text=f"Aurora will use {model} automatically; no download is needed.",
+            text=self._text("first_run_auto_selected").format(model=model),
             text_color=COLOR_SUCCESS,
         )
 
@@ -396,8 +395,8 @@ class FirstRunWizard(ctk.CTkToplevel):
 
     def choose_another(self):
         dialog = ctk.CTkInputDialog(
-            text="Enter an Ollama Chat Supported model name (for example qwen3:4b).",
-            title="Choose Another Chat Model",
+            text=self._text("first_run_enter_model"),
+            title=self._text("first_run_choose_another_title"),
         )
         value = dialog.get_input()
         if value:
@@ -406,33 +405,39 @@ class FirstRunWizard(ctk.CTkToplevel):
     def _confirm_and_download(self, model):
         state = self.controller.report.get("ollama", {}).get("state")
         if state != "Server Ready":
-            self.footer.message.configure(text="Ollama must be installed and its local service ready before downloading a model.", text_color=COLOR_WARNING)
+            self.footer.message.configure(text=self._text("first_run_ollama_required"), text_color=COLOR_WARNING)
             return
         try:
             plan = self.controller.prepare_download(model)
-        except ValueError as error:
-            self.footer.message.configure(text=str(error), text_color=COLOR_ERROR)
+        except ValueError:
+            self.footer.message.configure(text=self._text("first_run_invalid_chat_model"), text_color=COLOR_ERROR)
             return
         confirmed = messagebox.askyesno(
-            "Confirm Chat Model Download",
-            f"Model: {plan.model}\nApproximate size: {plan.approximate_size}\nReason: {plan.reason}\n\nRun 'ollama pull' now?",
+            self._text("first_run_confirm_download_title"),
+            self._text("first_run_confirm_download_prompt").format(
+                model=plan.model,
+                size=plan.approximate_size,
+                reason=self._text("runtime_recommendation_reason"),
+            ),
             parent=self,
         )
         if not confirmed:
             self.controller.mark_download_result("confirmation_required", "Download not started.")
-            self.footer.message.configure(text="Download not started.", text_color=COLOR_MUTED)
+            self.footer.message.configure(text=self._text("first_run_download_not_started"), text_color=COLOR_MUTED)
             return
         executable = str(self.controller.report.get("ollama", {}).get("executable_path") or "ollama")
         self.pull_task = OllamaPullTask(plan.model, ollama_executable=executable)
         self.cancel_event = threading.Event()
         self.controller.mark_download_started(plan.model)
         self.render()
-        self.footer.message.configure(text=f"Downloading {plan.model}...", text_color=COLOR_MUTED)
+        self.footer.message.configure(text=self._text("runtime_downloading_model").format(model=plan.model), text_color=COLOR_MUTED)
 
         def progress(line):
             text = str(line).replace("\r", " ").strip()[-180:]
             if text:
-                self._after(lambda value=text: self.footer.message.configure(text=value, text_color=COLOR_MUTED))
+                if self.logger:
+                    self.logger.info(f"Model download progress: {text}")
+                self._after(lambda: self.footer.message.configure(text=self._text("runtime_downloading_model").format(model=plan.model), text_color=COLOR_MUTED))
 
         def worker():
             result = self.pull_task.run(confirmed=True, progress=progress, cancel_event=self.cancel_event)
@@ -442,7 +447,13 @@ class FirstRunWizard(ctk.CTkToplevel):
                 self.pull_task = None
                 self.cancel_event = None
                 self.footer.message.configure(
-                    text=result.message,
+                    text=(
+                        self._text("runtime_model_downloaded").format(model=plan.model)
+                        if result.ok
+                        else self._text("runtime_download_cancelled")
+                        if result.status == "cancelled"
+                        else self._text("runtime_action_failed")
+                    ),
                     text_color=COLOR_SUCCESS if result.ok else (COLOR_MUTED if result.status == "cancelled" else COLOR_ERROR),
                 )
                 if result.ok:
@@ -458,35 +469,38 @@ class FirstRunWizard(ctk.CTkToplevel):
             self.cancel_event.set()
         if self.pull_task is not None:
             self.pull_task.cancel()
-        self.footer.message.configure(text="Cancelling the Aurora-owned download...", text_color=COLOR_WARNING)
+        self.footer.message.configure(text=self._text("runtime_cancelling_download"), text_color=COLOR_WARNING)
 
     def open_ollama_download(self):
         confirmed = messagebox.askyesno(
-            "Official Ollama Download",
-            "Open Ollama's official Windows download page? Aurora will not run an installation script.",
+            self._text("runtime_install_ollama_title"),
+            self._text("first_run_open_ollama_prompt"),
             parent=self,
         )
         result = open_official_ollama_download(confirmed=confirmed)
-        self.footer.message.configure(text=result.message, text_color=COLOR_SUCCESS if result.ok else COLOR_MUTED)
+        self.footer.message.configure(
+            text=self._text("runtime_ollama_download_page_opened") if result.ok else self._text("runtime_action_failed"),
+            text_color=COLOR_SUCCESS if result.ok else COLOR_MUTED,
+        )
 
     def start_ollama(self):
         if self.service_manager is None:
-            self.footer.message.configure(text="Open Ollama manually, then choose Check Again.", text_color=COLOR_WARNING)
+            self.footer.message.configure(text=self._text("first_run_open_ollama_manually"), text_color=COLOR_WARNING)
             return
-        self.footer.message.configure(text="Starting the existing Ollama service...", text_color=COLOR_MUTED)
+        self.footer.message.configure(text=self._text("runtime_starting_ollama"), text_color=COLOR_MUTED)
 
         def callback(event):
             if isinstance(event, dict):
                 return
             messages = {
-                "online": "Ollama is already ready.",
-                "starting": "Starting the existing Ollama service...",
-                "started": "Ollama started by Aurora.",
-                "existing_process_offline": "An existing Ollama process is offline. Aurora did not start a duplicate; restart it manually.",
-                "command_not_found": "Ollama executable was not found.",
-                "failed": "Ollama did not become ready. Check Settings → Runtime / Dependencies.",
+                "online": self._text("runtime_ollama_already_ready"),
+                "starting": self._text("runtime_starting_ollama"),
+                "started": self._text("runtime_ollama_started"),
+                "existing_process_offline": self._text("runtime_ollama_existing_offline"),
+                "command_not_found": self._text("runtime_ollama_missing"),
+                "failed": self._text("runtime_ollama_start_failed"),
             }
-            self._after(lambda: self.footer.message.configure(text=messages.get(event, str(event)), text_color=COLOR_SUCCESS if event in {"online", "started"} else COLOR_WARNING))
+            self._after(lambda: self.footer.message.configure(text=messages.get(event, self._text("runtime_action_failed")), text_color=COLOR_SUCCESS if event in {"online", "started"} else COLOR_WARNING))
             if event in {"online", "started"}:
                 self._after(self.refresh_environment)
 
@@ -498,7 +512,7 @@ class FirstRunWizard(ctk.CTkToplevel):
 
     def skip_and_finish(self):
         if self.pull_task is not None:
-            self.footer.message.configure(text="Cancel the current download before closing setup.", text_color=COLOR_WARNING)
+            self.footer.message.configure(text=self._text("first_run_cancel_before_close"), text_color=COLOR_WARNING)
             return
         self.controller.skip_model_setup()
         self.finish()
@@ -510,9 +524,9 @@ class FirstRunWizard(ctk.CTkToplevel):
         updates = self.controller.completion_updates()
         try:
             self.on_complete(updates, self)
-        except Exception as error:
+        except Exception:
             self._finished = False
-            self.footer.message.configure(text=f"Unable to save setup: {str(error).splitlines()[0][:180]}", text_color=COLOR_ERROR)
+            self.footer.message.configure(text=self._text("first_run_save_failed"), text_color=COLOR_ERROR)
 
     def destroy(self):
         if self._disposed:

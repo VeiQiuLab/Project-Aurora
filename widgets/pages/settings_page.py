@@ -12,6 +12,7 @@ from modules.experience.audio.device_discovery import (
     select_voice_input_device,
 )
 from modules.runtime_dependencies import RuntimeDependencyManager
+from modules.runtime_display import localized_runtime_item, model_mode_text
 from modules.ui_theme import (
     COLOR_ERROR,
     COLOR_MUTED,
@@ -36,14 +37,15 @@ from widgets.ui_components import PrimaryButton, SecondaryButton, SectionCard
 class SettingsPage(ctk.CTkFrame):
     """Chat-first Settings hub with grouped product settings."""
 
-    CATEGORIES = [
-        ("ai", "AI"),
-        ("runtime", "Runtime / Dependencies"),
-        ("voice", "Voice"),
-        ("appearance", "Appearance"),
-        ("data", "Data"),
-        ("developer", "Developer")
-    ]
+    CATEGORIES = ["ai", "runtime", "voice", "appearance", "data", "developer"]
+    CATEGORY_KEYS = {
+        "ai": "ai",
+        "runtime": "runtime_title",
+        "voice": "runtime_domain_voice",
+        "appearance": "appearance",
+        "data": "settings_category_data",
+        "developer": "developer",
+    }
 
     def __init__(
         self,
@@ -89,6 +91,8 @@ class SettingsPage(ctk.CTkFrame):
         self.voice_device_status = None
         self.ai_model_status_label = None
         self.ai_model_current_label = None
+        self.ai_embedding_current_label = None
+        self.ai_embedding_status_label = None
         self.ai_model_scan_running = False
         self.current_category = "ai"
         self.active_panel = None
@@ -104,10 +108,10 @@ class SettingsPage(ctk.CTkFrame):
         self.sidebar.grid(row=0, column=0, sticky="nsw", padx=(0, SPACING_MEDIUM))
         self.sidebar.grid_propagate(False)
 
-        for category_id, label in self.CATEGORIES:
+        for category_id in self.CATEGORIES:
             button = SecondaryButton(
                 self.sidebar,
-                text=label,
+                text=self.t(self.CATEGORY_KEYS[category_id]),
                 command=lambda value=category_id: self.show_category(value),
                 anchor="w"
             )
@@ -138,7 +142,7 @@ class SettingsPage(ctk.CTkFrame):
     def show_category(self, category_id):
         self.current_category = category_id
         self._clear_body()
-        title = dict(self.CATEGORIES).get(category_id, "Settings")
+        title = self.t(self.CATEGORY_KEYS.get(category_id, "settings"))
         self.title_label.configure(text=title)
         builders = {
             "ai": self._build_ai,
@@ -166,6 +170,8 @@ class SettingsPage(ctk.CTkFrame):
         self.active_panel = None
         self.ai_model_status_label = None
         self.ai_model_current_label = None
+        self.ai_embedding_current_label = None
+        self.ai_embedding_status_label = None
         for child in self.body.winfo_children():
             child.destroy()
 
@@ -206,41 +212,51 @@ class SettingsPage(ctk.CTkFrame):
         SecondaryButton(parent, text=text, command=command, anchor="w").pack(fill="x", pady=SPACING_SMALL)
 
     def _build_ai(self):
-        card = self._card("模型设置", "模型、Persona、Memory 与 Knowledge/RAG 统一放在 AI 设置下。")
+        card = self._card(self.t("ai_model_settings"), self.t("ai_model_settings_hint"))
         mode = str(self.settings.get("chat_model_mode", "auto") or "auto").casefold()
-        self._setting_row(card.body, "模式", "自动选择（推荐）" if mode == "auto" else "手动选择")
+        self._setting_row(card.body, self.t("ai_model_mode"), model_mode_text(mode, self.t))
         self.ai_model_current_label = self._setting_row(
             card.body,
-            "当前 Chat Model",
-            self.settings.get("chat_model", "") or "尚未解析",
+            self.t("chat_model"),
+            self.settings.get("chat_model", "") or self.t("ai_model_unresolved"),
         )
         self.ai_model_status_label = self._setting_row(
             card.body,
-            "状态",
-            "正在读取已安装模型...",
+            self.t("status"),
+            self.t("ai_model_scanning"),
         )
-        self._setting_row(card.body, "Embedding Model", self.settings.get("embedding_model", ""))
+        embedding_mode = str(self.settings.get("embedding_model_mode", "manual") or "manual").casefold()
+        self.ai_embedding_current_label = self._setting_row(
+            card.body,
+            self.t("runtime_item_embedding"),
+            self.settings.get("embedding_model", "") or self.t("ai_model_optional_unset"),
+        )
+        self.ai_embedding_status_label = self._setting_row(
+            card.body,
+            self.t("ai_embedding_mode"),
+            model_mode_text(embedding_mode, self.t),
+        )
         self._setting_row(card.body, "Ollama", self.settings.get("ollama.host", ""))
         model_actions = ctk.CTkFrame(card.body, fg_color="transparent")
         model_actions.pack(fill="x", pady=SPACING_SMALL)
         SecondaryButton(
             model_actions,
-            text="重新扫描",
+            text=self.t("ai_model_rescan"),
             command=self._rescan_ai_models,
         ).pack(side="left", padx=(0, SPACING_SMALL))
         SecondaryButton(
             model_actions,
-            text="重新推荐",
+            text=self.t("ai_model_rerecommend"),
             command=lambda: self._rescan_ai_models(reevaluate=True),
         ).pack(side="left", padx=(0, SPACING_SMALL))
         SecondaryButton(
             model_actions,
-            text="选择模式 / 模型",
+            text=self.t("ai_model_choose"),
             command=self.open_settings_editor,
         ).pack(side="left")
         self.after(0, self._rescan_ai_models)
 
-        tools = self._card("AI 能力")
+        tools = self._card(self.t("ai_capabilities"))
         self._action_button(tools.body, "Persona", self._show_persona_panel)
         self._action_button(tools.body, "Memory", self._show_memory_panel)
         self._action_button(tools.body, "Knowledge / RAG", self._show_knowledge_panel)
@@ -253,7 +269,7 @@ class SettingsPage(ctk.CTkFrame):
         ).casefold() != "auto":
             if self.ai_model_status_label is not None:
                 self.ai_model_status_label.configure(
-                    text="当前是手动模式；请先在模型设置中切换为自动模式。"
+                    text=self.t("ai_model_manual_rerecommend_hint")
                 )
             return
         self.ai_model_scan_running = True
@@ -265,12 +281,22 @@ class SettingsPage(ctk.CTkFrame):
                     reevaluate_models=bool(reevaluate),
                 )
                 item = report.get("ollama", {}).get("chat_model", {})
+                embedding_item = report.get("ollama", {}).get("embedding_model", {})
+                chat_display = localized_runtime_item(item, self.t)
+                embedding_display = localized_runtime_item(embedding_item, self.t)
                 result = {
-                    "model": item.get("data", {}).get("configured") or "尚未解析",
-                    "detail": item.get("detail") or "未检测",
+                    "model": chat_display["detail"],
+                    "detail": chat_display["status"],
+                    "embedding": embedding_display["detail"],
+                    "embedding_status": embedding_display["status"],
                 }
             except Exception as error:
-                result = {"model": None, "detail": "模型检测暂时不可用，请稍后重试。"}
+                result = {
+                    "model": None,
+                    "detail": self.t("ai_model_scan_failed"),
+                    "embedding": None,
+                    "embedding_status": self.t("ai_model_scan_failed"),
+                }
                 if self.logger:
                     self.logger.error(
                         f"AI model scan failed: {type(error).__name__}: {error}"
@@ -284,6 +310,10 @@ class SettingsPage(ctk.CTkFrame):
                     if result["model"] is not None:
                         self.ai_model_current_label.configure(text=result["model"])
                     self.ai_model_status_label.configure(text=result["detail"])
+                    if self.ai_embedding_current_label is not None and result["embedding"] is not None:
+                        self.ai_embedding_current_label.configure(text=result["embedding"])
+                    if self.ai_embedding_status_label is not None:
+                        self.ai_embedding_status_label.configure(text=result["embedding_status"])
                 except Exception:
                     return
 
@@ -306,8 +336,8 @@ class SettingsPage(ctk.CTkFrame):
         self.active_panel = center
 
     def _build_voice(self):
-        card = self._card("Voice", "麦克风、STT、TTS 与播放设置保留现有配置兼容。")
-        self._setting_row(card.body, "Voice Enabled", self.settings.get("voice.enabled", False))
+        card = self._card(self.t("runtime_domain_voice"), self.t("voice_settings_hint"))
+        self._setting_row(card.body, self.t("voice_enabled"), self.t("yes") if self.settings.get("voice.enabled", False) else self.t("no"))
         self.voice_device_label = self._setting_row(
             card.body,
             "当前输入设备",
@@ -331,21 +361,21 @@ class SettingsPage(ctk.CTkFrame):
         )
         self.voice_device_status.pack(fill="x", pady=(0, SPACING_SMALL))
         self._setting_row(card.body, "STT", self.settings.get("voice.stt.provider", "Faster Whisper"))
-        self._setting_row(card.body, "TTS", self.settings.get("voice.tts.provider", "Default"))
-        self._setting_row(card.body, "Playback", self.settings.get("voice.playback.device", "Default"))
-        self._action_button(card.body, "打开 Voice 设置", self.open_settings_editor)
+        self._setting_row(card.body, "TTS", self.settings.get("voice.tts.provider", self.t("voice_default_device")))
+        self._setting_row(card.body, self.t("runtime_item_playback"), self.settings.get("voice.playback.device", self.t("voice_default_device")))
+        self._action_button(card.body, self.t("voice_open_settings"), self.open_settings_editor)
 
-        environment = self._card("Voice Environment")
+        environment = self._card(self.t("voice_environment"))
         ctk.CTkLabel(
             environment.body,
-            text="Voice is optional. Missing FFmpeg, STT, TTS, or playback components will not prevent Aurora Core from opening.",
+            text=self.t("voice_environment_hint"),
             font=FONT_SMALL,
             text_color=COLOR_MUTED,
             anchor="w",
             justify="left",
             wraplength=720,
         ).pack(fill="x", pady=(0, SPACING_SMALL))
-        self._action_button(environment.body, "Open Runtime / Dependencies", lambda: self.show_category("runtime"))
+        self._action_button(environment.body, self.t("voice_open_runtime"), lambda: self.show_category("runtime"))
 
     def _build_appearance(self):
         card = self._card("Appearance", "主题、语言和窗口设置集中在外观设置中。")
@@ -406,7 +436,11 @@ class SettingsPage(ctk.CTkFrame):
         configured = str(self.settings.get("voice.recorder.device_name", "") or "").strip()
         cached = str(self.settings.get("voice.recorder.last_successful_device_guid", "") or "").strip()
         keyword = str(self.settings.get("voice.recorder.preferred_device_keyword", "") or "").strip()
-        return configured or cached or (f"Default / {keyword}" if keyword else "Windows 默认输入设备")
+        return configured or cached or (
+            f"{self.t('voice_default_device')} / {keyword}"
+            if keyword
+            else self.t("voice_windows_default_input")
+        )
 
     def _set_voice_device_status(self, text, status="disabled"):
         if self.voice_device_status is None:
