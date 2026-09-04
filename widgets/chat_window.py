@@ -6,6 +6,10 @@ import customtkinter as ctk
 
 from modules.chat import ChatError, ChatSession
 from modules.conversation import ConversationManager, schedule_conversation_intelligence
+from modules.runtime_dependencies import (
+    RuntimeDependencyManager,
+    persist_manual_model_selection,
+)
 from modules.ui_theme import (
     COLOR_MUTED,
     FONT_BODY,
@@ -351,7 +355,7 @@ class ChatWindow(ctk.CTkToplevel):
                 self.logger.info("Embedding model blocked from chat")
                 return
             self.selected_model["name"] = model
-            self.settings.set("chat_model", model)
+            persist_manual_model_selection(self.settings, model, kind="chat")
             self.set_model_display(model, "healthy")
             self.logger.info(f"Chat model selected: {model}")
 
@@ -382,11 +386,22 @@ class ChatWindow(ctk.CTkToplevel):
         self.logger.info("Model capability checked")
 
     def load_models(self):
+        records = []
         try:
-            records = self.model_records_provider() if callable(self.model_records_provider) else []
+            report = RuntimeDependencyManager(self.settings).check_models(timeout=1.0)
+            records = list(
+                report.get("ollama", {}).get("models", {}).get("all", [])
+            )
         except Exception as error:
-            self.logger.error(f"Chat model loading failed: {error}")
-            records = []
+            self.logger.info(
+                f"Automatic Chat model resolution unavailable: {type(error).__name__}"
+            )
+        if not records:
+            try:
+                records = self.model_records_provider() if callable(self.model_records_provider) else []
+            except Exception as error:
+                self.logger.error(f"Chat model loading failed: {error}")
+                records = []
         try:
             self.after(0, lambda: self.update_models(records))
         except Exception:

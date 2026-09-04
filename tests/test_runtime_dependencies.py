@@ -8,6 +8,7 @@ from modules.runtime_dependencies import (
     RuntimeDependencyManager,
     RuntimeStatus,
     classify_ollama_models,
+    persist_manual_model_selection,
     resolve_ollama_executable,
 )
 from modules.startup_diagnostics import _voice_check
@@ -39,6 +40,19 @@ def _api(available, models=(), reason="offline"):
 def _finder(installed=()):
     names = set(installed)
     return lambda name: object() if name in names else None
+
+
+class _SettingsStore:
+    def __init__(self, values=None):
+        self.values = dict(values or {})
+        self.saved = []
+
+    def get(self, key, default=None):
+        return self.values.get(key, default)
+
+    def update_many(self, values, save=True):
+        self.values.update(values)
+        self.saved.append((dict(values), save))
 
 
 def _manager(
@@ -122,6 +136,159 @@ def test_ollama_models_are_split_into_chat_and_embedding_only():
     assert report["embedding_model"]["status"] == RuntimeStatus.OPTIONAL.value
 
 
+def test_one_chat_model_without_selection_is_auto_resolved_and_ready():
+    report = _manager(available=True, models=["qwen3:4b"]).check()
+
+    assert report["ollama"]["chat_model"]["status"] == RuntimeStatus.READY.value
+    assert report["model_resolution"]["chat"]["model"] == "qwen3:4b"
+    assert report["ollama"]["chat_model"]["detail"] == "Auto-selected: qwen3:4b"
+    assert report["recommendation"]["download_required"] is False
+
+
+def test_multiple_chat_models_use_installed_hardware_recommendation():
+    report = _manager(
+        available=True,
+        models=["qwen3:4b", "qwen3:8b", "qwen3:14b"],
+    ).check()
+
+    assert report["model_resolution"]["chat"]["model"] == "qwen3:8b"
+    assert report["model_resolution"]["chat"]["reason"] == "hardware_recommendation"
+    assert report["recommendation"]["download_required"] is False
+
+
+def test_manual_pinned_model_is_preserved():
+    settings = {"chat_model_mode": "manual", "chat_model": "qwen3:4b"}
+    report = _manager(
+        settings=settings,
+        available=True,
+        models=["qwen3:4b", "qwen3:14b"],
+    ).check()
+
+    assert report["model_resolution"]["chat"]["model"] == "qwen3:4b"
+    assert report["ollama"]["chat_model"]["detail"] == "Selected: qwen3:4b"
+
+
+def test_valid_auto_model_is_stable_when_another_model_is_installed():
+    settings = {
+        "chat_model_mode": "auto",
+        "chat_model": "qwen3:4b",
+        "resolved_chat_model": "qwen3:4b",
+        "last_successful_chat_model": "qwen3:4b",
+        "chat_model_resolution_reason": "only_compatible_model",
+    }
+    report = _manager(
+        settings=settings,
+        available=True,
+        models=["qwen3:4b", "qwen3:14b"],
+    ).check()
+
+    assert report["model_resolution"]["chat"]["model"] == "qwen3:4b"
+    assert report["model_resolution"]["chat"]["reason"] == "only_compatible_model"
+
+
+def test_deleted_auto_model_falls_back_to_remaining_chat_model():
+    settings = {
+        "chat_model_mode": "auto",
+        "chat_model": "qwen3:4b",
+        "resolved_chat_model": "qwen3:4b",
+        "last_successful_chat_model": "qwen3:4b",
+    }
+    report = _manager(
+        settings=settings,
+        available=True,
+        models=["qwen3:14b"],
+    ).check()
+
+    assert report["model_resolution"]["chat"]["model"] == "qwen3:14b"
+    assert report["model_resolution"]["chat"]["reason"] == "previous_model_unavailable"
+
+
+def test_only_embedding_model_never_resolves_as_chat():
+    report = _manager(
+        available=True,
+        models=["nomic-embed-text:latest"],
+    ).check()
+
+    assert report["model_resolution"]["chat"]["model"] == ""
+    assert report["ollama"]["chat_model"]["status"] == RuntimeStatus.MISSING.value
+    assert report["ollama"]["models"]["chat"] == []
+
+
+def test_embedding_auto_resolution_is_optional_and_capability_safe():
+    settings = {
+        "embedding_model_mode": "auto",
+        "embedding_model": "",
+        "resolved_embedding_model": "",
+    }
+    report = _manager(
+        settings=settings,
+        available=True,
+        models=["qwen3:4b", "nomic-embed-text:latest"],
+    ).check()
+
+    assert report["model_resolution"]["chat"]["model"] == "qwen3:4b"
+    assert report["model_resolution"]["embedding"]["model"] == "nomic-embed-text:latest"
+    assert "qwen3:4b" not in report["ollama"]["embedding_model"]["data"]["models"]
+    assert report["ollama"]["embedding_model"]["required"] is False
+
+
+def test_auto_resolution_is_persisted_and_survives_restart():
+    store = _SettingsStore({"chat_model_mode": "auto", "chat_model": ""})
+    first = _manager(
+        settings=store,
+        available=True,
+        models=["qwen3:4b"],
+    ).check()
+
+    assert first["model_resolution"]["persisted"] is True
+    assert store.values["resolved_chat_model"] == "qwen3:4b"
+    assert store.values["last_successful_chat_model"] == "qwen3:4b"
+
+    restarted = _manager(
+        settings=store,
+        available=True,
+        models=["qwen3:4b", "qwen3:14b"],
+    ).check()
+    assert restarted["model_resolution"]["chat"]["model"] == "qwen3:4b"
+
+
+def test_explicit_reevaluation_can_change_a_valid_auto_model():
+    settings = {
+        "chat_model_mode": "auto",
+        "chat_model": "qwen3:4b",
+        "resolved_chat_model": "qwen3:4b",
+        "last_successful_chat_model": "qwen3:4b",
+    }
+    manager = _manager(
+        settings=settings,
+        available=True,
+        models=["qwen3:4b", "qwen3:8b"],
+    )
+
+    normal = manager.check()
+    reevaluated = manager.check(reevaluate_models=True)
+
+    assert normal["model_resolution"]["chat"]["model"] == "qwen3:4b"
+    assert reevaluated["model_resolution"]["chat"]["model"] == "qwen3:8b"
+    assert reevaluated["model_resolution"]["chat"]["reason"] == "explicit_reevaluation"
+
+
+def test_offline_check_preserves_selection_and_does_not_write_settings():
+    store = _SettingsStore(
+        {
+            "chat_model_mode": "auto",
+            "chat_model": "qwen3:4b",
+            "resolved_chat_model": "qwen3:4b",
+        }
+    )
+
+    report = _manager(settings=store, available=False).check()
+
+    assert report["ollama"]["chat_model"]["status"] == RuntimeStatus.OFFLINE.value
+    assert report["model_resolution"]["chat"]["model"] == "qwen3:4b"
+    assert store.saved == []
+
+
 def test_configured_models_are_ready_only_when_the_selected_model_exists():
     report = _manager(
         settings={
@@ -167,6 +334,36 @@ def test_model_normalization_deduplicates_names_case_insensitively():
 
     assert len(models["all"]) == 1
     assert models["all"][0]["capability"] == "Chat Supported"
+
+
+def test_malformed_model_list_is_contained():
+    manager = RuntimeDependencyManager(
+        {},
+        which=lambda _name: None,
+        bundled_tool_finder=lambda _name: None,
+        module_finder=_finder(),
+        ollama_api_probe=lambda _host, _timeout: {
+            "available": True,
+            "models": "not-a-list",
+        },
+        hardware_probe=lambda: {},
+        environment={},
+    )
+
+    report = manager.check_models()
+
+    assert report["ollama"]["models"]["all"] == []
+    assert report["ollama"]["chat_model"]["status"] == RuntimeStatus.MISSING.value
+
+
+def test_manual_selection_helper_records_pinned_state():
+    store = _SettingsStore()
+
+    values = persist_manual_model_selection(store, "qwen3:4b", kind="chat")
+
+    assert values["chat_model_mode"] == "manual"
+    assert store.values["chat_model"] == "qwen3:4b"
+    assert store.values["resolved_chat_model"] == ""
 
 
 def test_ffmpeg_resolution_prefers_bundled_then_configured_then_path(tmp_path):
@@ -421,7 +618,7 @@ def test_embedding_only_model_is_never_selected_for_chat():
     assert recommendation["download_required"] is True
 
 
-def test_check_is_read_only_and_declares_no_side_effects():
+def test_check_never_installs_or_downloads_and_plain_mapping_is_not_persisted():
     calls = []
 
     def api(host, timeout):

@@ -37,10 +37,17 @@ def _path_check(name, path):
 
 def _ai_check(settings):
     chat_model = str(settings.get("chat_model", "") or "").strip()
-    embedding_model = str(settings.get("embedding_model", "") or "").strip()
-    if chat_model and embedding_model:
-        return {"name": "AI 环境", "status": "healthy", "detail": "模型配置已就绪"}
-    return {"name": "AI 环境", "status": "warning", "detail": "首次启动需要选择模型"}
+    if chat_model:
+        return {
+            "name": "AI 环境",
+            "status": "healthy",
+            "detail": f"Chat Model 已就绪: {chat_model}；Embedding 为可选项",
+        }
+    return {
+        "name": "AI 环境",
+        "status": "warning",
+        "detail": "尚未找到可用 Chat Model；Aurora Core 仍可打开",
+    }
 
 
 def _voice_check(settings):

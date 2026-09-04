@@ -94,8 +94,15 @@
         "inspector_preview_limit": 4000,
         "adaptive_enabled": false
     },
+    "chat_model_mode": "auto",
     "chat_model": "",
+    "resolved_chat_model": "",
+    "chat_model_resolution_reason": "",
+    "last_successful_chat_model": "",
+    "embedding_model_mode": "manual",
     "embedding_model": "",
+    "resolved_embedding_model": "",
+    "embedding_model_resolution_reason": "",
     "window": {
         "width": 1200,
         "height": 760

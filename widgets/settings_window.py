@@ -70,8 +70,15 @@ class SettingsWindow(ctk.CTkToplevel):
         self.model_capability_provider = model_capability_provider
         self.on_close_callback = on_close
         self.initial_voice_enabled = bool(self.settings.get("voice.enabled", False))
+        self.initial_chat_model_mode = str(
+            self.settings.get("chat_model_mode", "auto") or "auto"
+        ).casefold()
+        self.initial_embedding_model_mode = str(
+            self.settings.get("embedding_model_mode", "manual") or "manual"
+        ).casefold()
         self.section_body = None
         self._disposed = False
+        self._model_check_running = False
 
         self.title(self.t("settings"))
         self.geometry("680x680")
@@ -138,11 +145,13 @@ class SettingsWindow(ctk.CTkToplevel):
             wraplength=FORM_LABEL_WRAP,
             justify="left"
         ).grid(row=0, column=0, sticky="w", padx=(0, SPACING_MEDIUM))
-        StatusLabel(
+        label = StatusLabel(
             row,
             status=status,
             text=str(value_text),
-        ).grid(row=0, column=1, sticky="e")
+        )
+        label.grid(row=0, column=1, sticky="e")
+        return label
 
     def add_switch(self, text, variable):
         ctk.CTkSwitch(
@@ -193,14 +202,173 @@ class SettingsWindow(ctk.CTkToplevel):
             self.t("ollama_command"),
             self.settings.get("services.ollama.command", "ollama serve")
         )
-        self.chat_model_entry = self.add_entry_row(
+        chat_mode = str(self.settings.get("chat_model_mode", "auto") or "auto").casefold()
+        embedding_mode = str(
+            self.settings.get("embedding_model_mode", "manual") or "manual"
+        ).casefold()
+        self.chat_model_mode_option = self.add_option_row(
+            "Chat Model Mode",
+            ["Auto", "Manual"],
+            "Manual" if chat_mode == "manual" else "Auto",
+        )
+        self.chat_model_entry = self.add_option_row(
             self.t("chat_model"),
-            self.settings.get("chat_model", "qwen3:8b")
+            [self.settings.get("chat_model", "") or "No installed Chat models"],
+            self.settings.get("chat_model", "") or "No installed Chat models",
         )
-        self.embedding_model_entry = self.add_entry_row(
+        self.chat_model_status = self.add_status_row(
+            "Chat Model Status",
+            "Checking installed models...",
+        )
+        self.embedding_model_mode_option = self.add_option_row(
+            "Embedding Mode",
+            ["Auto", "Manual"],
+            "Manual" if embedding_mode == "manual" else "Auto",
+        )
+        self.embedding_model_entry = self.add_option_row(
             self.t("embedding_model"),
-            self.settings.get("embedding_model", "nomic-embed-text:latest")
+            [self.settings.get("embedding_model", "") or "No installed Embedding models"],
+            self.settings.get("embedding_model", "") or "No installed Embedding models",
         )
+        self.embedding_model_status = self.add_status_row(
+            "Embedding Status",
+            "Optional",
+        )
+        model_actions = ctk.CTkFrame(self.section_body, fg_color="transparent")
+        model_actions.pack(fill="x", pady=SPACING_SMALL)
+        self.reload_models_button = SecondaryButton(
+            model_actions,
+            text="Reload Models",
+            command=self.reload_models,
+        )
+        self.reload_models_button.pack(side="left", padx=(0, SPACING_SMALL))
+        self.reevaluate_models_button = SecondaryButton(
+            model_actions,
+            text="Re-run Recommendation",
+            command=lambda: self.reload_models(reevaluate=True),
+        )
+        self.reevaluate_models_button.pack(side="left")
+        self.chat_model_mode_option.configure(command=self._model_mode_changed)
+        self.embedding_model_mode_option.configure(command=self._model_mode_changed)
+        self._model_mode_changed()
+        self.after(0, self.reload_models)
+
+    def _model_mode_changed(self, _value=None):
+        chat_auto = self.chat_model_mode_option.get().casefold() == "auto"
+        embedding_auto = self.embedding_model_mode_option.get().casefold() == "auto"
+        self.chat_model_entry.configure(state="disabled" if chat_auto else "normal")
+        self.embedding_model_entry.configure(
+            state="disabled" if embedding_auto else "normal"
+        )
+
+    @staticmethod
+    def _selected_model(option, placeholder):
+        value = str(option.get() or "").strip()
+        return "" if value == placeholder else value
+
+    @staticmethod
+    def _model_picker_values(installed, current, placeholder):
+        values = [str(value or "").strip() for value in installed if str(value or "").strip()]
+        selected = str(current or "").strip()
+        if selected and selected not in values:
+            values.insert(0, selected)
+        return (values or [placeholder], selected or (values[0] if values else placeholder))
+
+    def reload_models(self, reevaluate=False):
+        if self._model_check_running or self._disposed:
+            return
+        if reevaluate and self.chat_model_mode_option.get().casefold() != "auto":
+            self.result_label.configure(
+                text="Switch Chat Model Mode to Auto and save before re-running the recommendation.",
+                text_color=status_color("warning"),
+            )
+            return
+        self._model_check_running = True
+        self.reload_models_button.configure(state="disabled", text="Scanning...")
+        self.reevaluate_models_button.configure(state="disabled")
+
+        def worker():
+            try:
+                report = RuntimeDependencyManager(self.settings).check_models(
+                    timeout=1.0,
+                    reevaluate_models=bool(reevaluate),
+                )
+            except Exception as error:
+                report = None
+                if self.logger:
+                    self.logger.error(
+                        f"Model refresh failed: {type(error).__name__}: {error}"
+                    )
+
+            def finish():
+                self._model_check_running = False
+                self.reload_models_button.configure(state="normal", text="Reload Models")
+                self.reevaluate_models_button.configure(state="normal")
+                if report is None:
+                    self.chat_model_status.set_status(
+                        "warning", "Models could not be checked. Try again."
+                    )
+                    return
+                ollama = report.get("ollama", {})
+                chat_names = [
+                    item.get("name", "")
+                    for item in ollama.get("models", {}).get("chat", [])
+                    if item.get("name")
+                ]
+                embedding_names = [
+                    item.get("name", "")
+                    for item in ollama.get("models", {}).get("embedding", [])
+                    if item.get("name")
+                ]
+                chat_item = ollama.get("chat_model", {})
+                embedding_item = ollama.get("embedding_model", {})
+                chat_value = str(chat_item.get("data", {}).get("configured") or "")
+                embedding_value = str(
+                    embedding_item.get("data", {}).get("configured") or ""
+                )
+                chat_values, chat_selected = self._model_picker_values(
+                    chat_names,
+                    chat_value,
+                    "No installed Chat models",
+                )
+                embedding_values, embedding_selected = self._model_picker_values(
+                    embedding_names,
+                    embedding_value,
+                    "No installed Embedding models",
+                )
+                self.chat_model_entry.configure(values=chat_values)
+                self.chat_model_entry.set(chat_selected)
+                self.embedding_model_entry.configure(values=embedding_values)
+                self.embedding_model_entry.set(embedding_selected)
+                self.chat_model_status.set_status(
+                    self._runtime_status_style(chat_item.get("status")),
+                    chat_item.get("detail") or "Not checked",
+                )
+                self.embedding_model_status.set_status(
+                    self._runtime_status_style(embedding_item.get("status")),
+                    embedding_item.get("detail") or "Optional",
+                )
+                self.initial_chat_model_mode = str(
+                    self.settings.get("chat_model_mode", "auto") or "auto"
+                ).casefold()
+                self.initial_embedding_model_mode = str(
+                    self.settings.get("embedding_model_mode", "manual") or "manual"
+                ).casefold()
+                self._model_mode_changed()
+
+            self._after(finish)
+
+        threading.Thread(target=worker, daemon=True).start()
+
+    @staticmethod
+    def _runtime_status_style(status):
+        return {
+            "Ready": "healthy",
+            "Missing": "warning",
+            "Offline": "error",
+            "Optional": "disabled",
+            "Degraded": "warning",
+        }.get(str(status or ""), "disabled")
 
     def build_voice_section(self):
         self.add_section_title("Voice")
@@ -404,15 +572,59 @@ class SettingsWindow(ctk.CTkToplevel):
             self.t("appearance_dark"): "Dark"
         }.get(self.appearance_option.get(), "System")
         selected_language = self.language_code(self.language_option.get())
-        return {
+        chat_mode = self.chat_model_mode_option.get().casefold()
+        embedding_mode = self.embedding_model_mode_option.get().casefold()
+        chat_model = self._selected_model(
+            self.chat_model_entry, "No installed Chat models"
+        )
+        embedding_model = self._selected_model(
+            self.embedding_model_entry, "No installed Embedding models"
+        )
+        if chat_mode == "auto":
+            chat_model = (
+                self.settings.get("chat_model", "")
+                if self.initial_chat_model_mode == "auto"
+                else ""
+            )
+        if embedding_mode == "auto":
+            embedding_model = (
+                self.settings.get("embedding_model", "")
+                if self.initial_embedding_model_mode == "auto"
+                else ""
+            )
+        values = {
             "appearance": selected_appearance,
             "theme": self.theme_option.get(),
             "ollama.host": self.ollama_host_entry.get().strip(),
             "ollama.auto_start": bool(self.auto_start_ollama_var.get()),
             "services.ollama.command": self.ollama_command_entry.get().strip(),
             "status.refresh_interval": self.refresh_interval_entry.get().strip(),
-            "chat_model": self.chat_model_entry.get().strip(),
-            "embedding_model": self.embedding_model_entry.get().strip(),
+            "chat_model_mode": chat_mode,
+            "chat_model": chat_model,
+            "resolved_chat_model": (
+                self.settings.get("resolved_chat_model", "")
+                if chat_mode == "auto" and self.initial_chat_model_mode == "auto"
+                else ""
+            ),
+            "chat_model_resolution_reason": (
+                self.settings.get("chat_model_resolution_reason", "")
+                if chat_mode == "auto" and self.initial_chat_model_mode == "auto"
+                else "manual_selection"
+            ),
+            "embedding_model_mode": embedding_mode,
+            "embedding_model": embedding_model,
+            "resolved_embedding_model": (
+                self.settings.get("resolved_embedding_model", "")
+                if embedding_mode == "auto"
+                and self.initial_embedding_model_mode == "auto"
+                else ""
+            ),
+            "embedding_model_resolution_reason": (
+                self.settings.get("embedding_model_resolution_reason", "")
+                if embedding_mode == "auto"
+                and self.initial_embedding_model_mode == "auto"
+                else "manual_selection"
+            ),
             "voice.enabled": bool(self.voice_enabled_var.get()),
             "voice.stt.provider": "faster_whisper",
             "voice.tts.provider": "edge_tts",
@@ -429,6 +641,9 @@ class SettingsWindow(ctk.CTkToplevel):
             "knowledge.max_results": self.max_knowledge_entry.get().strip(),
             "language": selected_language
         }
+        if chat_mode == "manual" and chat_model:
+            values["last_successful_chat_model"] = chat_model
+        return values
 
     def refresh_after_settings_change(self, saved_values):
         selected_appearance = saved_values.get("appearance", "System")
@@ -471,6 +686,13 @@ class SettingsWindow(ctk.CTkToplevel):
 
         saved_values = result.get("values", {})
         self.refresh_after_settings_change(saved_values)
+        self.initial_chat_model_mode = str(
+            saved_values.get("chat_model_mode", "auto") or "auto"
+        ).casefold()
+        self.initial_embedding_model_mode = str(
+            saved_values.get("embedding_model_mode", "manual") or "manual"
+        ).casefold()
+        self.reload_models()
         self.logger.info("Settings saved")
         self.logger.info("Language changed")
         if (

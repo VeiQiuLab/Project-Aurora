@@ -159,8 +159,17 @@ class FirstRunController:
             if self.is_existing_chat_model(self.configured_chat_model):
                 self.selected_chat_model = self.configured_chat_model
             else:
+                resolution = source.get("model_resolution", {})
+                resolution = resolution if isinstance(resolution, Mapping) else {}
+                chat_resolution = resolution.get("chat", {})
+                chat_resolution = (
+                    chat_resolution if isinstance(chat_resolution, Mapping) else {}
+                )
+                resolved = _clean_model(chat_resolution.get("model"))
                 recommended = _clean_model(source.get("recommendation", {}).get("model"))
-                if self.is_existing_chat_model(recommended):
+                if self.is_existing_chat_model(resolved):
+                    self.selected_chat_model = resolved
+                elif self.is_existing_chat_model(recommended):
                     self.selected_chat_model = recommended
                 elif self.chat_models:
                     self.selected_chat_model = self.chat_models[0]["name"]
@@ -223,9 +232,24 @@ class FirstRunController:
         self.model_decision = "use_existing"
         return normalized
 
+    def use_automatically(self) -> str:
+        if not self.is_existing_chat_model(self.selected_chat_model):
+            raise ValueError("No installed Chat Supported model is available.")
+        self.model_decision = "auto"
+        return self.selected_chat_model
+
     def accept_recommended_existing_or_skip(self) -> str:
         if self.is_existing_chat_model(self.selected_chat_model):
-            self.model_decision = "use_existing"
+            resolution = self.report.get("model_resolution", {})
+            chat_resolution = (
+                resolution.get("chat", {}) if isinstance(resolution, Mapping) else {}
+            )
+            self.model_decision = (
+                "auto"
+                if isinstance(chat_resolution, Mapping)
+                and chat_resolution.get("mode") == "auto"
+                else "use_existing"
+            )
         else:
             self.model_decision = "skipped"
         return self.model_decision
@@ -277,10 +301,41 @@ class FirstRunController:
         """Return one idempotent Settings.update_many payload."""
 
         updates: dict[str, Any] = {"first_run.completed": True}
-        if self.model_decision in {"use_existing", "downloaded"}:
+        if self.model_decision == "auto":
+            model = _clean_model(self.selected_chat_model)
+            if model and self.is_existing_chat_model(model):
+                resolution = self.report.get("model_resolution", {})
+                chat_resolution = (
+                    resolution.get("chat", {})
+                    if isinstance(resolution, Mapping)
+                    else {}
+                )
+                reason = (
+                    str(chat_resolution.get("reason") or "only_compatible_model")
+                    if isinstance(chat_resolution, Mapping)
+                    else "only_compatible_model"
+                )
+                updates.update(
+                    {
+                        "chat_model_mode": "auto",
+                        "chat_model": model,
+                        "resolved_chat_model": model,
+                        "chat_model_resolution_reason": reason,
+                        "last_successful_chat_model": model,
+                    }
+                )
+        elif self.model_decision in {"use_existing", "downloaded"}:
             model = _clean_model(self.selected_chat_model)
             if model and infer_model_capability(model) == "Chat Supported":
-                updates["chat_model"] = model
+                updates.update(
+                    {
+                        "chat_model_mode": "manual",
+                        "chat_model": model,
+                        "resolved_chat_model": "",
+                        "chat_model_resolution_reason": "manual_selection",
+                        "last_successful_chat_model": model,
+                    }
+                )
         if self.selected_embedding_model and self.is_embedding_model(
             self.selected_embedding_model
         ):

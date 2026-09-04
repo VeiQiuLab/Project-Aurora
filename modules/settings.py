@@ -111,8 +111,15 @@ class Settings:
                 "inspector_preview_limit": 4000,
                 "adaptive_enabled": False
             },
+            "chat_model_mode": "auto",
             "chat_model": "",
+            "resolved_chat_model": "",
+            "chat_model_resolution_reason": "",
+            "last_successful_chat_model": "",
+            "embedding_model_mode": "manual",
             "embedding_model": "",
+            "resolved_embedding_model": "",
+            "embedding_model_resolution_reason": "",
             "window": {
                 "width": 1200,
                 "height": 760
@@ -173,9 +180,9 @@ class Settings:
         changed = False
         if self._migrate_first_run_settings():
             changed = True
-        if self._merge_defaults(self.data, self.default_settings):
-            changed = True
         if self._migrate_model_settings():
+            changed = True
+        if self._merge_defaults(self.data, self.default_settings):
             changed = True
         if self._migrate_language_settings():
             changed = True
@@ -267,9 +274,36 @@ class Settings:
             or ""
         ).strip()
         current_chat_model = str(self.data.get("chat_model", "") or "").strip()
-        if legacy_model and (not current_chat_model or current_chat_model == self.default_settings["chat_model"]):
+        if legacy_model and (
+            not current_chat_model
+            or current_chat_model == str(self.default_settings.get("chat_model", "") or "")
+        ):
             self.data["chat_model"] = legacy_model
+            current_chat_model = legacy_model
             changed = True
+        if "chat_model_mode" not in self.data:
+            # A non-empty model from an older Aurora release was an explicit
+            # user choice.  Preserve it as a pinned Manual selection.
+            self.data["chat_model_mode"] = "manual" if current_chat_model else "auto"
+            changed = True
+        else:
+            normalized_chat_mode = str(self.data.get("chat_model_mode") or "").strip().casefold()
+            if normalized_chat_mode not in {"auto", "manual"}:
+                self.data["chat_model_mode"] = "manual" if current_chat_model else "auto"
+                changed = True
+
+        if "embedding_model_mode" not in self.data:
+            # Embedding remains opt-in.  Existing values stay pinned and an
+            # empty legacy value does not silently enable semantic features.
+            self.data["embedding_model_mode"] = "manual"
+            changed = True
+        else:
+            normalized_embedding_mode = str(
+                self.data.get("embedding_model_mode") or ""
+            ).strip().casefold()
+            if normalized_embedding_mode not in {"auto", "manual"}:
+                self.data["embedding_model_mode"] = "manual"
+                changed = True
         default_chat_model = str(self.default_settings.get("chat_model", "") or "").strip()
         default_embedding_model = str(self.default_settings.get("embedding_model", "") or "").strip()
         if default_chat_model and not str(self.data.get("chat_model", "") or "").strip():

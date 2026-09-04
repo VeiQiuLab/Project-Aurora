@@ -8,6 +8,10 @@ from modules.chat import ChatError, ChatSession
 from modules.conversation import ConversationManager, schedule_conversation_intelligence
 from modules.conversation_intelligence import fallback_title
 from modules.experience.state import CompanionState, CompanionStateStore
+from modules.runtime_dependencies import (
+    RuntimeDependencyManager,
+    persist_manual_model_selection,
+)
 from modules.search import search_conversations
 from widgets.components.chat_panel import ChatPanel
 
@@ -320,7 +324,7 @@ class ChatPage(ctk.CTkFrame):
                 self.logger.info("Embedding model blocked from chat")
                 return
             self.selected_model["name"] = model
-            self.settings.set("chat_model", model)
+            persist_manual_model_selection(self.settings, model, kind="chat")
             self.set_model_display(model, "healthy")
             self.logger.info(f"Chat model selected: {model}")
 
@@ -349,11 +353,22 @@ class ChatPage(ctk.CTkFrame):
         self.logger.info("Model capability checked")
 
     def load_models(self):
+        records = []
         try:
-            records = self.model_records_provider() if callable(self.model_records_provider) else []
+            report = RuntimeDependencyManager(self.settings).check_models(timeout=1.0)
+            records = list(
+                report.get("ollama", {}).get("models", {}).get("all", [])
+            )
         except Exception as error:
-            self.logger.error(f"Chat model loading failed: {error}")
-            records = []
+            self.logger.info(
+                f"Automatic Chat model resolution unavailable: {type(error).__name__}"
+            )
+        if not records:
+            try:
+                records = self.model_records_provider() if callable(self.model_records_provider) else []
+            except Exception as error:
+                self.logger.error(f"Chat model loading failed: {error}")
+                records = []
         try:
             self.after(0, lambda: self.update_models(records))
         except Exception:

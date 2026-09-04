@@ -1,9 +1,9 @@
-"""Read-only runtime and optional-dependency diagnostics for Aurora.
+"""Runtime, model-selection, and optional-dependency diagnostics for Aurora.
 
 This module is the single backend contract used by first-run and dependency
-screens.  It deliberately does not install packages, start services, download
-models, open audio devices, or write settings.  Actions that change the host
-must remain explicit UI/application operations performed after user consent.
+screens. Probes never install packages, start services, or download models.
+Successful model discovery may persist Aurora's Auto selection metadata, but
+actions that change the host remain explicit UI operations after user consent.
 """
 
 from __future__ import annotations
@@ -135,8 +135,18 @@ class RuntimeDependencyManager:
         self._disk_path = Path(disk_path) if disk_path is not None else PROGRAM_ROOT
         self._environment = os.environ if environment is None else environment
 
-    def check(self, *, timeout: float = 1.0) -> dict[str, Any]:
-        """Return the complete dependency report; probe failures never escape."""
+    def check(
+        self,
+        *,
+        timeout: float = 1.0,
+        reevaluate_models: bool = False,
+    ) -> dict[str, Any]:
+        """Return the complete dependency report; probe failures never escape.
+
+        Installed models are resolved without downloading anything.  A real
+        Settings store persists stable Auto selections; read-only adapters and
+        plain mappings receive the same resolution in the returned report.
+        """
 
         core = RuntimeItem(
             key="aurora_core",
@@ -146,14 +156,17 @@ class RuntimeDependencyManager:
             required=True,
             available=True,
         )
-        ollama = self.check_ollama(timeout=timeout)
+        model_report = self.check_models(
+            timeout=timeout,
+            reevaluate_models=reevaluate_models,
+        )
+        ollama = model_report["ollama"]
         ffmpeg = self.check_ffmpeg()
         voice = self.check_voice(ffmpeg=ffmpeg)
-        hardware = self.inspect_hardware()
-        recommendation = self.recommend_chat_model(
-            hardware,
-            ollama.get("models", {}).get("chat", []),
-        )
+        hardware = model_report["hardware"]
+        recommendation = model_report["recommendation"]
+        resolution = model_report["model_resolution"]
+        persisted = bool(resolution.get("persisted"))
 
         items = [
             core.as_dict(),
@@ -183,8 +196,322 @@ class RuntimeDependencyManager:
             "voice": voice,
             "hardware": hardware,
             "recommendation": recommendation,
-            "side_effects": [],
+            "model_resolution": {
+                "chat": dict(resolution["chat"]),
+                "embedding": dict(resolution["embedding"]),
+                "persisted": persisted,
+            },
+            "side_effects": ["settings:model_resolution"] if persisted else [],
         }
+
+    def check_models(
+        self,
+        *,
+        timeout: float = 1.0,
+        reevaluate_models: bool = False,
+    ) -> dict[str, Any]:
+        """Probe and resolve local models without checking optional Voice hardware."""
+
+        ollama = self.check_ollama(timeout=timeout)
+        hardware = self.inspect_hardware()
+        recommendation = self.recommend_chat_model(
+            hardware,
+            ollama.get("models", {}).get("chat", []),
+        )
+        resolution = self.resolve_model_selection(
+            ollama,
+            recommendation,
+            reevaluate_chat=reevaluate_models,
+        )
+        persisted = self._persist_model_resolution(resolution.get("updates", {}))
+        self._apply_model_resolution(ollama, resolution)
+        return {
+            "ollama": ollama,
+            "hardware": hardware,
+            "recommendation": recommendation,
+            "model_resolution": {
+                "chat": dict(resolution["chat"]),
+                "embedding": dict(resolution["embedding"]),
+                "persisted": persisted,
+            },
+            "side_effects": ["settings:model_resolution"] if persisted else [],
+        }
+
+    def resolve_model_selection(
+        self,
+        ollama: Mapping[str, Any],
+        recommendation: Mapping[str, Any],
+        *,
+        reevaluate_chat: bool = False,
+    ) -> dict[str, Any]:
+        """Resolve stable effective models from the installed, classified set."""
+
+        api_available = bool(ollama.get("available"))
+        raw_models = ollama.get("models") if isinstance(ollama, Mapping) else {}
+        raw_models = raw_models if isinstance(raw_models, Mapping) else {}
+        chat_names = [
+            str(item.get("name") or "").strip()
+            for item in raw_models.get("chat", [])
+            if isinstance(item, Mapping) and str(item.get("name") or "").strip()
+        ]
+        embedding_names = [
+            str(item.get("name") or "").strip()
+            for item in raw_models.get("embedding", [])
+            if isinstance(item, Mapping) and str(item.get("name") or "").strip()
+        ]
+
+        configured_chat = str(_get_setting(self.settings, "chat_model", "") or "").strip()
+        raw_chat_mode = _get_setting(self.settings, "chat_model_mode", None)
+        chat_mode = _normalize_model_mode(
+            raw_chat_mode,
+            fallback="manual" if configured_chat and raw_chat_mode is None else "auto",
+        )
+        resolved_chat = str(
+            _get_setting(self.settings, "resolved_chat_model", "") or ""
+        ).strip()
+        stored_chat_reason = str(
+            _get_setting(self.settings, "chat_model_resolution_reason", "") or ""
+        ).strip()
+        chat_model = configured_chat
+        chat_reason = "manual_selection" if chat_mode == "manual" else "not_checked"
+        if api_available and chat_mode == "auto":
+            preserved = "" if reevaluate_chat else _available_model_name(resolved_chat, chat_names)
+            if preserved:
+                chat_model = preserved
+                chat_reason = stored_chat_reason or "preserved_auto_selection"
+            elif len(chat_names) == 1:
+                chat_model = chat_names[0]
+                chat_reason = (
+                    "explicit_reevaluation"
+                    if reevaluate_chat
+                    else (
+                        "previous_model_unavailable"
+                        if resolved_chat
+                        else "only_compatible_model"
+                    )
+                )
+            elif chat_names:
+                recommended = _available_model_name(
+                    str(recommendation.get("model") or ""), chat_names
+                )
+                chat_model = recommended or sorted(chat_names, key=str.casefold)[0]
+                chat_reason = (
+                    "explicit_reevaluation"
+                    if reevaluate_chat
+                    else (
+                        "previous_model_unavailable"
+                        if resolved_chat
+                        else "hardware_recommendation"
+                    )
+                )
+            else:
+                chat_model = ""
+                chat_reason = "no_compatible_model"
+        elif not api_available and chat_mode == "auto":
+            chat_model = resolved_chat or configured_chat
+            chat_reason = "service_offline"
+
+        configured_embedding = str(
+            _get_setting(self.settings, "embedding_model", "") or ""
+        ).strip()
+        raw_embedding_mode = _get_setting(self.settings, "embedding_model_mode", None)
+        embedding_mode = _normalize_model_mode(raw_embedding_mode, fallback="manual")
+        resolved_embedding = str(
+            _get_setting(self.settings, "resolved_embedding_model", "") or ""
+        ).strip()
+        stored_embedding_reason = str(
+            _get_setting(
+                self.settings, "embedding_model_resolution_reason", ""
+            )
+            or ""
+        ).strip()
+        embedding_model = configured_embedding
+        embedding_reason = (
+            "manual_selection" if embedding_mode == "manual" else "not_checked"
+        )
+        if api_available and embedding_mode == "auto":
+            preserved_embedding = _available_model_name(
+                resolved_embedding, embedding_names
+            )
+            if preserved_embedding:
+                embedding_model = preserved_embedding
+                embedding_reason = (
+                    stored_embedding_reason or "preserved_auto_selection"
+                )
+            elif embedding_names:
+                embedding_model = _preferred_embedding_model(embedding_names)
+                embedding_reason = (
+                    "only_compatible_model"
+                    if len(embedding_names) == 1
+                    else "preferred_compatible_model"
+                )
+            else:
+                embedding_model = ""
+                embedding_reason = "no_compatible_model"
+        elif not api_available and embedding_mode == "auto":
+            embedding_model = resolved_embedding or configured_embedding
+            embedding_reason = "service_offline"
+
+        updates: dict[str, Any] = {}
+        if api_available and chat_mode == "auto":
+            _add_setting_update(updates, self.settings, "chat_model_mode", "auto")
+            _add_setting_update(updates, self.settings, "chat_model", chat_model)
+            _add_setting_update(
+                updates, self.settings, "resolved_chat_model", chat_model
+            )
+            _add_setting_update(
+                updates,
+                self.settings,
+                "chat_model_resolution_reason",
+                chat_reason,
+            )
+            if chat_model:
+                _add_setting_update(
+                    updates,
+                    self.settings,
+                    "last_successful_chat_model",
+                    chat_model,
+                )
+        if api_available and embedding_mode == "auto":
+            _add_setting_update(
+                updates, self.settings, "embedding_model_mode", "auto"
+            )
+            _add_setting_update(
+                updates, self.settings, "embedding_model", embedding_model
+            )
+            _add_setting_update(
+                updates,
+                self.settings,
+                "resolved_embedding_model",
+                embedding_model,
+            )
+            _add_setting_update(
+                updates,
+                self.settings,
+                "embedding_model_resolution_reason",
+                embedding_reason,
+            )
+
+        return {
+            "chat": {
+                "mode": chat_mode,
+                "model": chat_model,
+                "resolved_model": chat_model if chat_mode == "auto" else "",
+                "reason": chat_reason,
+                "available": _model_is_available(chat_model, chat_names),
+            },
+            "embedding": {
+                "mode": embedding_mode,
+                "model": embedding_model,
+                "resolved_model": embedding_model if embedding_mode == "auto" else "",
+                "reason": embedding_reason,
+                "available": _model_is_available(embedding_model, embedding_names),
+            },
+            "updates": updates,
+        }
+
+    def _persist_model_resolution(self, updates: Mapping[str, Any]) -> bool:
+        if not updates:
+            return False
+        try:
+            if hasattr(self.settings, "update_many"):
+                self.settings.update_many(dict(updates), save=True)
+                return True
+            if hasattr(self.settings, "set") and not isinstance(self.settings, Mapping):
+                for key, value in updates.items():
+                    self.settings.set(key, value)
+                return True
+        except Exception:
+            return False
+        return False
+
+    @staticmethod
+    def _apply_model_resolution(
+        ollama: dict[str, Any], resolution: Mapping[str, Any]
+    ) -> None:
+        api_available = bool(ollama.get("available"))
+        chat = dict(resolution.get("chat") or {})
+        embedding = dict(resolution.get("embedding") or {})
+        chat_names = [
+            str(item.get("name") or "")
+            for item in ollama.get("models", {}).get("chat", [])
+            if isinstance(item, Mapping)
+        ]
+        embedding_names = [
+            str(item.get("name") or "")
+            for item in ollama.get("models", {}).get("embedding", [])
+            if isinstance(item, Mapping)
+        ]
+
+        if not api_available:
+            chat_status = RuntimeStatus.OFFLINE
+            chat_detail = "Chat models cannot be checked while the Ollama API is offline."
+        elif chat.get("mode") == "manual" and chat.get("available"):
+            chat_status = RuntimeStatus.READY
+            chat_detail = f"Selected: {chat.get('model')}"
+        elif chat.get("mode") == "manual" and chat.get("model"):
+            chat_status = RuntimeStatus.DEGRADED
+            chat_detail = f"Selected Chat model is no longer installed: {chat.get('model')}"
+        elif chat.get("available"):
+            chat_status = RuntimeStatus.READY
+            chat_detail = f"Auto-selected: {chat.get('model')}"
+        else:
+            chat_status = RuntimeStatus.MISSING
+            chat_detail = "No Chat Supported Ollama model is installed."
+
+        if not api_available:
+            embedding_status = RuntimeStatus.OPTIONAL
+            embedding_detail = "Embedding models can be checked when the Ollama API is online."
+        elif embedding.get("mode") == "manual" and embedding.get("available"):
+            embedding_status = RuntimeStatus.READY
+            embedding_detail = f"Selected: {embedding.get('model')}"
+        elif embedding.get("mode") == "manual" and embedding.get("model"):
+            embedding_status = RuntimeStatus.DEGRADED
+            embedding_detail = (
+                f"Selected embedding model is no longer installed: {embedding.get('model')}"
+            )
+        elif embedding.get("available"):
+            embedding_status = RuntimeStatus.READY
+            embedding_detail = f"Auto-selected: {embedding.get('model')}"
+        else:
+            embedding_status = RuntimeStatus.OPTIONAL
+            embedding_detail = (
+                "Embedding is optional. Chat, Memory, and token/relevance RAG continue without it."
+            )
+
+        ollama["chat_model"] = RuntimeItem(
+            key="chat_model",
+            name="Chat Model",
+            status=chat_status,
+            detail=chat_detail,
+            required=True,
+            available=bool(chat.get("available")),
+            data={
+                "configured": chat.get("model", ""),
+                "configured_available": bool(chat.get("available")),
+                "models": chat_names,
+                "mode": chat.get("mode", "auto"),
+                "resolved": chat.get("resolved_model", ""),
+                "resolution_reason": chat.get("reason", ""),
+            },
+        ).as_dict()
+        ollama["embedding_model"] = RuntimeItem(
+            key="embedding_model",
+            name="Embedding",
+            status=embedding_status,
+            detail=embedding_detail,
+            required=False,
+            available=bool(embedding.get("available")),
+            data={
+                "configured": embedding.get("model", ""),
+                "configured_available": bool(embedding.get("available")),
+                "models": embedding_names,
+                "mode": embedding.get("mode", "manual"),
+                "resolved": embedding.get("resolved_model", ""),
+                "resolution_reason": embedding.get("reason", ""),
+                "recommended": "nomic-embed-text",
+            },
+        ).as_dict()
 
     def check_ollama(self, *, timeout: float = 1.0) -> dict[str, Any]:
         """Report Ollama executable, API state, and classified local models."""
@@ -878,6 +1205,49 @@ def check_runtime_dependencies(
     return RuntimeDependencyManager(settings).check(timeout=timeout)
 
 
+def persist_manual_model_selection(
+    settings: Any,
+    model: str,
+    *,
+    kind: str = "chat",
+) -> dict[str, Any]:
+    """Persist a user-picked installed model without disguising it as Auto."""
+
+    selected = str(model or "").strip()
+    capability = infer_model_capability(selected)
+    normalized_kind = str(kind or "chat").strip().casefold()
+    if normalized_kind == "embedding":
+        if capability != "Embedding Only":
+            raise ValueError("The selected model is not an embedding model.")
+        values = {
+            "embedding_model_mode": "manual",
+            "embedding_model": selected,
+            "resolved_embedding_model": "",
+            "embedding_model_resolution_reason": "manual_selection",
+        }
+    else:
+        if capability != "Chat Supported":
+            raise ValueError("The selected model does not support chat.")
+        values = {
+            "chat_model_mode": "manual",
+            "chat_model": selected,
+            "resolved_chat_model": "",
+            "chat_model_resolution_reason": "manual_selection",
+            "last_successful_chat_model": selected,
+        }
+
+    if hasattr(settings, "update_many"):
+        settings.update_many(values, save=True)
+    elif hasattr(settings, "set") and not isinstance(settings, Mapping):
+        for key, value in values.items():
+            settings.set(key, value)
+    elif isinstance(settings, dict):
+        settings.update(values)
+    else:
+        raise TypeError("Settings store does not support model selection.")
+    return values
+
+
 def resolve_ollama_executable(
     command: str = "ollama serve",
     *,
@@ -939,6 +1309,8 @@ def classify_ollama_models(models: Iterable[Mapping[str, Any] | str]) -> dict[st
 
     records: list[dict[str, Any]] = []
     seen: set[str] = set()
+    if isinstance(models, (str, bytes, Mapping)):
+        models = ()
     for raw in models or ():
         if isinstance(raw, Mapping):
             name = str(raw.get("name") or raw.get("model") or "").strip()
@@ -987,6 +1359,42 @@ def _get_setting(settings: Any, key: str, default: Any) -> Any:
         except Exception:
             return default
     return default
+
+
+def _normalize_model_mode(value: Any, *, fallback: str) -> str:
+    normalized = str(value or "").strip().casefold()
+    return normalized if normalized in {"auto", "manual"} else fallback
+
+
+def _available_model_name(model: str, available_names: Iterable[str]) -> str:
+    target = _model_key(model)
+    if not target:
+        return ""
+    for name in available_names:
+        candidate = str(name or "").strip()
+        if _model_key(candidate) == target:
+            return candidate
+    return ""
+
+
+def _preferred_embedding_model(available_names: Iterable[str]) -> str:
+    names = [str(name or "").strip() for name in available_names if str(name or "").strip()]
+    if not names:
+        return ""
+    return min(
+        names,
+        key=lambda name: (
+            0 if "nomic-embed-text" in name.casefold() else 1,
+            name.casefold(),
+        ),
+    )
+
+
+def _add_setting_update(
+    updates: dict[str, Any], settings: Any, key: str, value: Any
+) -> None:
+    if _get_setting(settings, key, None) != value:
+        updates[key] = value
 
 
 def _optional_component_status(
@@ -1070,5 +1478,6 @@ __all__ = [
     "RuntimeStatus",
     "check_runtime_dependencies",
     "classify_ollama_models",
+    "persist_manual_model_selection",
     "resolve_ollama_executable",
 ]

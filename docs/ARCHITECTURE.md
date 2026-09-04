@@ -123,7 +123,7 @@ mature realtime full-duplex voice interaction.
 
 ## First Run and Runtime Dependencies
 
-`RuntimeDependencyManager` is the shared read-only diagnostics boundary used by
+`RuntimeDependencyManager` is the shared diagnostics boundary used by
 First Run, Settings, and the production Voice startup gate. It distinguishes an
 absent Ollama install, an installed but offline service, and a ready API; it also
 classifies local models as Chat Supported or Embedding Only. Optional probe
@@ -133,11 +133,20 @@ devices; hardware access begins only after Voice is enabled or the user explicit
 requests a device test. Ordinary status rows use actionable descriptions instead
 of exposing raw driver, DirectShow, HTTP, or subprocess exception strings.
 
-First Run persists no model choice until the user selects an existing model or
-confirms a download. Hardware recommendations use RAM, CPU/core count, reliable
-VRAM when available, and free disk space. Unknown VRAM remains unknown. Checks
-and downloads run away from the GUI thread, and only Aurora-owned download or
-service processes may be cancelled or stopped.
+Model probes never install, download, start, or remove software. In Chat Auto
+mode, a successful probe may persist only the effective installed model,
+resolution reason, and last successful model. A valid resolved model remains
+stable when new models are installed; it is recalculated only when removed, when
+the user changes mode, or after an explicit Re-evaluate action. Legacy non-empty
+`chat_model` values migrate to Manual so existing user choices remain pinned.
+Embedding-only models never enter Chat choices; Embedding Auto remains optional
+and does not gate Chat, Memory, or token/relevance RAG.
+
+First Run prefers an existing Chat Supported model and offers Auto use or an
+installed-model picker before any download action. Hardware recommendations use
+RAM, CPU/core count, reliable VRAM when available, and free disk space. Unknown
+VRAM remains unknown. Checks and downloads run away from the GUI thread, and
+only Aurora-owned download or service processes may be cancelled or stopped.
 
 ## State and Concurrency
 

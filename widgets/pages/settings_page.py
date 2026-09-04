@@ -11,6 +11,7 @@ from modules.experience.audio.device_discovery import (
     resolve_voice_input_device,
     select_voice_input_device,
 )
+from modules.runtime_dependencies import RuntimeDependencyManager
 from modules.ui_theme import (
     COLOR_ERROR,
     COLOR_MUTED,
@@ -86,6 +87,9 @@ class SettingsPage(ctk.CTkFrame):
         self.voice_environment_button = None
         self.voice_device_label = None
         self.voice_device_status = None
+        self.ai_model_status_label = None
+        self.ai_model_current_label = None
+        self.ai_model_scan_running = False
         self.current_category = "ai"
         self.active_panel = None
 
@@ -160,6 +164,8 @@ class SettingsPage(ctk.CTkFrame):
 
     def _clear_body(self):
         self.active_panel = None
+        self.ai_model_status_label = None
+        self.ai_model_current_label = None
         for child in self.body.winfo_children():
             child.destroy()
 
@@ -201,15 +207,92 @@ class SettingsPage(ctk.CTkFrame):
 
     def _build_ai(self):
         card = self._card("模型设置", "模型、Persona、Memory 与 Knowledge/RAG 统一放在 AI 设置下。")
-        self._setting_row(card.body, "Chat Model", self.settings.get("chat_model", ""))
+        mode = str(self.settings.get("chat_model_mode", "auto") or "auto").casefold()
+        self._setting_row(card.body, "模式", "自动选择（推荐）" if mode == "auto" else "手动选择")
+        self.ai_model_current_label = self._setting_row(
+            card.body,
+            "当前 Chat Model",
+            self.settings.get("chat_model", "") or "尚未解析",
+        )
+        self.ai_model_status_label = self._setting_row(
+            card.body,
+            "状态",
+            "正在读取已安装模型...",
+        )
         self._setting_row(card.body, "Embedding Model", self.settings.get("embedding_model", ""))
         self._setting_row(card.body, "Ollama", self.settings.get("ollama.host", ""))
-        self._action_button(card.body, "打开模型设置", self.open_settings_editor)
+        model_actions = ctk.CTkFrame(card.body, fg_color="transparent")
+        model_actions.pack(fill="x", pady=SPACING_SMALL)
+        SecondaryButton(
+            model_actions,
+            text="重新扫描",
+            command=self._rescan_ai_models,
+        ).pack(side="left", padx=(0, SPACING_SMALL))
+        SecondaryButton(
+            model_actions,
+            text="重新推荐",
+            command=lambda: self._rescan_ai_models(reevaluate=True),
+        ).pack(side="left", padx=(0, SPACING_SMALL))
+        SecondaryButton(
+            model_actions,
+            text="选择模式 / 模型",
+            command=self.open_settings_editor,
+        ).pack(side="left")
+        self.after(0, self._rescan_ai_models)
 
         tools = self._card("AI 能力")
         self._action_button(tools.body, "Persona", self._show_persona_panel)
         self._action_button(tools.body, "Memory", self._show_memory_panel)
         self._action_button(tools.body, "Knowledge / RAG", self._show_knowledge_panel)
+
+    def _rescan_ai_models(self, reevaluate=False):
+        if self.ai_model_scan_running:
+            return
+        if reevaluate and str(
+            self.settings.get("chat_model_mode", "auto") or "auto"
+        ).casefold() != "auto":
+            if self.ai_model_status_label is not None:
+                self.ai_model_status_label.configure(
+                    text="当前是手动模式；请先在模型设置中切换为自动模式。"
+                )
+            return
+        self.ai_model_scan_running = True
+
+        def worker():
+            try:
+                report = RuntimeDependencyManager(self.settings).check_models(
+                    timeout=1.0,
+                    reevaluate_models=bool(reevaluate),
+                )
+                item = report.get("ollama", {}).get("chat_model", {})
+                result = {
+                    "model": item.get("data", {}).get("configured") or "尚未解析",
+                    "detail": item.get("detail") or "未检测",
+                }
+            except Exception as error:
+                result = {"model": None, "detail": "模型检测暂时不可用，请稍后重试。"}
+                if self.logger:
+                    self.logger.error(
+                        f"AI model scan failed: {type(error).__name__}: {error}"
+                    )
+
+            def finish():
+                self.ai_model_scan_running = False
+                if self.ai_model_current_label is None or self.ai_model_status_label is None:
+                    return
+                try:
+                    if result["model"] is not None:
+                        self.ai_model_current_label.configure(text=result["model"])
+                    self.ai_model_status_label.configure(text=result["detail"])
+                except Exception:
+                    return
+
+            try:
+                self.after(0, finish)
+            except Exception:
+                return
+
+        threading.Thread(target=worker, daemon=True).start()
 
     def _build_runtime(self):
         center = DependencyCenter(

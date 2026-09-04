@@ -204,31 +204,60 @@ class FirstRunWizard(ctk.CTkToplevel):
 
         recommendation = self.controller.recommendation()
         model_card = self._card(
-            "Recommended Chat Model",
-            "Recommendation only: use an existing Chat Supported model, choose another Ollama model, or skip.",
+            "Existing Chat Model",
+            "Aurora prefers an installed Chat Supported model. It will not download another model unless you explicitly confirm it.",
         )
         self._row(model_card.body, "Tier", f"{recommendation.get('tier')} · {recommendation.get('parameter_range')}", color=COLOR_SUCCESS)
         self._row(model_card.body, "Model", recommendation.get("model") or "")
-        self._row(model_card.body, "Approx. Download", f"{recommendation.get('approximate_download_gb')} GB")
+        self._row(
+            model_card.body,
+            "Download",
+            (
+                "Already installed"
+                if not recommendation.get("download_required", True)
+                else f"Approx. {recommendation.get('approximate_download_gb')} GB"
+            ),
+        )
         self._row(model_card.body, "Why", recommendation.get("reason") or "")
         for warning in recommendation.get("warnings", []):
             self._row(model_card.body, "Warning", warning, color=COLOR_WARNING)
 
         existing = self.controller.existing_chat_names()
         if existing:
+            self._row(
+                model_card.body,
+                "Recommended existing model",
+                self.controller.selected_chat_model,
+                color=COLOR_SUCCESS,
+            )
             selector = ctk.CTkFrame(model_card.body, fg_color="transparent")
             selector.pack(fill="x", pady=(SPACING_MEDIUM, SPACING_SMALL))
             self.model_variable = ctk.StringVar(value=self.controller.selected_chat_model or existing[0])
             ctk.CTkOptionMenu(selector, values=existing, variable=self.model_variable, width=330).pack(side="left", padx=(0, SPACING_SMALL))
-            SecondaryButton(selector, text="Use Existing Model", command=self.use_existing_model).pack(side="left")
+            SecondaryButton(selector, text="Choose Model", command=self.use_existing_model).pack(side="left")
         else:
             self._row(model_card.body, "Existing", "No Chat Supported model detected", color=COLOR_WARNING)
 
         actions = ctk.CTkFrame(model_card.body, fg_color="transparent")
         actions.pack(fill="x", pady=(SPACING_SMALL, 0))
-        self.download_button = PrimaryButton(actions, text="Download Recommended", command=self.download_recommended)
+        if existing:
+            PrimaryButton(
+                actions,
+                text=f"Use {self.controller.selected_chat_model} Automatically",
+                command=self.use_automatically,
+            ).pack(side="left", padx=(0, SPACING_SMALL))
+        self.download_button = SecondaryButton(
+            actions,
+            text="Download Another" if existing else "Download Recommended",
+            command=self.choose_another if existing else self.download_recommended,
+        )
         self.download_button.pack(side="left", padx=(0, SPACING_SMALL))
-        SecondaryButton(actions, text="Choose Another", command=self.choose_another).pack(side="left", padx=(0, SPACING_SMALL))
+        if not existing:
+            SecondaryButton(
+                actions,
+                text="Choose Another",
+                command=self.choose_another,
+            ).pack(side="left", padx=(0, SPACING_SMALL))
         SecondaryButton(actions, text="Skip For Now", command=self.skip_model_setup).pack(side="left")
         self.cancel_button = SecondaryButton(actions, text="Cancel Download", command=self.cancel_download)
         if self.pull_task is not None:
@@ -248,7 +277,7 @@ class FirstRunWizard(ctk.CTkToplevel):
         self.title_label.configure(text=self._text("first_run_complete_title", "Setup Complete"))
         card = self._card("Aurora Core", "Optional features can be configured later in Settings → Runtime / Dependencies.")
         self._row(card.body, "Core", "Ready", color=COLOR_SUCCESS)
-        selected = self.controller.selected_chat_model if self.controller.model_decision in {"use_existing", "downloaded"} else "Skipped for now"
+        selected = self.controller.selected_chat_model if self.controller.model_decision in {"auto", "use_existing", "downloaded"} else "Skipped for now"
         self._row(card.body, "Chat Model", selected)
         self._row(card.body, "Embedding", self.controller.selected_embedding_model or "Optional / not changed")
         self._row(card.body, "Voice", "Optional / configure later")
@@ -350,6 +379,17 @@ class FirstRunWizard(ctk.CTkToplevel):
             self.footer.message.configure(text=str(error), text_color=COLOR_ERROR)
             return
         self.footer.message.configure(text="Existing Chat model selected; no download is needed.", text_color=COLOR_SUCCESS)
+
+    def use_automatically(self):
+        try:
+            model = self.controller.use_automatically()
+        except ValueError as error:
+            self.footer.message.configure(text=str(error), text_color=COLOR_ERROR)
+            return
+        self.footer.message.configure(
+            text=f"Aurora will use {model} automatically; no download is needed.",
+            text_color=COLOR_SUCCESS,
+        )
 
     def download_recommended(self):
         self._confirm_and_download(self.controller.recommendation().get("model"))

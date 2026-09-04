@@ -15,7 +15,10 @@ from modules.dependency_actions import (
     download_whisper_model,
     open_official_ollama_download,
 )
-from modules.runtime_dependencies import RuntimeDependencyManager
+from modules.runtime_dependencies import (
+    RuntimeDependencyManager,
+    persist_manual_model_selection,
+)
 from modules.ui_theme import COLOR_ERROR, COLOR_MUTED, COLOR_SUCCESS, COLOR_WARNING, FONT_NORMAL, FONT_SMALL, SPACING_MEDIUM, SPACING_SMALL
 from widgets.ui_components import PrimaryButton, SecondaryButton, SectionCard
 
@@ -113,6 +116,12 @@ class DependencyCenter(ctk.CTkFrame):
         actions.pack(fill="x", pady=(SPACING_MEDIUM, 0))
         self.check_button = PrimaryButton(actions, text="Check Again", command=self.check_again)
         self.check_button.pack(side="left", padx=(0, SPACING_SMALL))
+        self.reevaluate_button = SecondaryButton(
+            actions,
+            text="Re-evaluate",
+            command=lambda: self.check_again(reevaluate=True),
+        )
+        self.reevaluate_button.pack(side="left", padx=(0, SPACING_SMALL))
         self.install_button = SecondaryButton(actions, text="Install / Download", command=self.install_or_download)
         self.install_button.pack(side="left", padx=(0, SPACING_SMALL))
         self.configure_button = SecondaryButton(actions, text="Configure", command=self.configure)
@@ -178,11 +187,12 @@ class DependencyCenter(ctk.CTkFrame):
         except Exception:
             return
 
-    def check_again(self):
+    def check_again(self, reevaluate=False):
         if self._disposed or self._check_running or self.pull_task is not None:
             return
         self._check_running = True
         self.check_button.configure(state="disabled", text="Checking...")
+        self.reevaluate_button.configure(state="disabled")
         self.install_button.configure(state="disabled")
         self.repair_button.configure(state="disabled")
         self.embedding_button.configure(state="disabled")
@@ -191,7 +201,13 @@ class DependencyCenter(ctk.CTkFrame):
 
         def worker():
             try:
-                report = self.runtime_manager.check(timeout=1.0)
+                if reevaluate:
+                    report = self.runtime_manager.check(
+                        timeout=1.0,
+                        reevaluate_models=True,
+                    )
+                else:
+                    report = self.runtime_manager.check(timeout=1.0)
             except Exception as error:
                 report = None
                 error_text = (
@@ -205,6 +221,7 @@ class DependencyCenter(ctk.CTkFrame):
             def finish():
                 self._check_running = False
                 self.check_button.configure(state="normal", text="Check Again")
+                self.reevaluate_button.configure(state="normal")
                 self.install_button.configure(state="normal")
                 self.repair_button.configure(state="normal")
                 self.embedding_button.configure(state="normal")
@@ -265,7 +282,7 @@ class DependencyCenter(ctk.CTkFrame):
         recommendation = report.get("recommendation", {})
         if not recommendation.get("download_required"):
             self.message.configure(
-                text="A compatible existing Chat model is available. Choose Configure to select it.",
+                text="Aurora is using a compatible installed Chat model. Choose Configure to change the selection mode.",
                 text_color=COLOR_SUCCESS,
             )
             return
@@ -346,6 +363,7 @@ class DependencyCenter(ctk.CTkFrame):
         self.cancel_event = cancel_event
         self.install_button.configure(text="Cancel", command=self.cancel_download, state="normal")
         self.check_button.configure(state="disabled")
+        self.reevaluate_button.configure(state="disabled")
         self.repair_button.configure(state="disabled")
         self.embedding_button.configure(state="disabled")
         self.whisper_button.configure(state="disabled")
@@ -368,6 +386,7 @@ class DependencyCenter(ctk.CTkFrame):
             def finish():
                 self.install_button.configure(text="Install / Download", command=self.install_or_download, state="normal")
                 self.check_button.configure(state="normal")
+                self.reevaluate_button.configure(state="normal")
                 self.repair_button.configure(state="normal")
                 self.embedding_button.configure(state="normal")
                 if not self._whisper_running:
@@ -388,15 +407,11 @@ class DependencyCenter(ctk.CTkFrame):
         threading.Thread(target=worker, daemon=True).start()
 
     def _persist_model_selection(self, kind, model):
-        key = "embedding_model" if str(kind).casefold() == "embedding" else "chat_model"
-        if hasattr(self.settings, "update_many"):
-            self.settings.update_many({key: model}, save=True)
-        elif hasattr(self.settings, "set"):
-            self.settings.set(key, model)
-        elif isinstance(self.settings, dict):
-            self.settings[key] = model
-        else:
-            raise TypeError("Settings store does not support model selection.")
+        persist_manual_model_selection(
+            self.settings,
+            model,
+            kind="embedding" if str(kind).casefold() == "embedding" else "chat",
+        )
 
     def cancel_download(self):
         if self.cancel_event is not None:

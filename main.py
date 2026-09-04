@@ -1893,6 +1893,29 @@ def startup_check():
         ollama_connected = status.get("ollama", False) or status.get("api", False)
         if ollama_connected:
             logger.info("Ollama connected")
+            try:
+                model_report = RuntimeDependencyManager(settings).check_models(
+                    timeout=1.0
+                )
+                chat_resolution = model_report.get("model_resolution", {}).get(
+                    "chat", {}
+                )
+                resolved_model = str(chat_resolution.get("model") or "")
+                if resolved_model:
+                    logger.info(
+                        "Chat model ready: "
+                        f"mode={chat_resolution.get('mode')}, model={resolved_model}, "
+                        f"reason={chat_resolution.get('reason')}"
+                    )
+                    if not shutdown_manager.shutting_down:
+                        app.after(0, refresh_status)
+                else:
+                    logger.warning("No Chat Supported Ollama model is installed")
+            except Exception as error:
+                logger.warning(
+                    "Automatic Chat model resolution could not be completed: "
+                    f"{type(error).__name__}"
+                )
         else:
             logger.info("Ollama unavailable")
             if settings.get("ollama.auto_start", False):

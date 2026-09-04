@@ -44,6 +44,13 @@ class SettingsController:
             if key in normalized and not self._is_valid_url(normalized.get(key)):
                 errors.append(f"Invalid URL: {key}")
 
+        for key in ("chat_model_mode", "embedding_model_mode"):
+            if key in normalized:
+                mode = str(normalized.get(key) or "").strip().casefold()
+                normalized[key] = mode
+                if mode not in {"auto", "manual"}:
+                    errors.append(f"Invalid model selection mode: {key}")
+
         if "chat_model" in normalized:
             chat_model = str(normalized.get("chat_model") or "").strip()
             normalized["chat_model"] = chat_model

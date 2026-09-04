@@ -13,6 +13,11 @@ features that were later removed from the current product direction.
   FFmpeg, microphone, STT/Whisper, TTS, playback, and hardware diagnostics.
 - Added a Settings Dependency Center with explicit confirmation for model
   downloads; Aurora never starts a large model download on launch.
+- Added stable Auto/Manual model selection. Auto resolves only installed Chat
+  Supported models, preserves a valid prior resolution, falls back when that
+  model is removed, and never starts a model download.
+- Updated First Run and AI Settings to prefer existing local models, expose
+  model pickers, and provide explicit rescan and re-recommendation actions.
 - Isolated optional Voice startup failures so missing FFmpeg, devices, models,
   or providers degrade Voice without terminating Aurora Core.
 

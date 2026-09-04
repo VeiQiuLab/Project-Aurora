@@ -2,6 +2,7 @@ from types import SimpleNamespace
 
 from modules.runtime_dependencies import RuntimeDependencyManager
 from widgets.components.dependency_center import DependencyCenter, _VISIBLE_ITEMS
+from widgets.pages.chat_page import ChatPage
 from widgets.pages.settings_page import SettingsPage
 from widgets.settings_window import SettingsWindow
 
@@ -45,8 +46,25 @@ def test_successful_dependency_download_selection_is_persisted():
     )
 
     assert store.calls == [
-        ({"chat_model": "qwen3:8b"}, True),
-        ({"embedding_model": "nomic-embed-text"}, True),
+        (
+            {
+                "chat_model_mode": "manual",
+                "chat_model": "qwen3:8b",
+                "resolved_chat_model": "",
+                "chat_model_resolution_reason": "manual_selection",
+                "last_successful_chat_model": "qwen3:8b",
+            },
+            True,
+        ),
+        (
+            {
+                "embedding_model_mode": "manual",
+                "embedding_model": "nomic-embed-text",
+                "resolved_embedding_model": "",
+                "embedding_model_resolution_reason": "manual_selection",
+            },
+            True,
+        ),
     ]
 
 
@@ -136,3 +154,71 @@ def test_voice_device_status_hides_dshow_exception_text(monkeypatch):
     assert statuses[-1][1] == "error"
     assert "DirectShow" not in statuses[-1][0]
     assert "FFmpeg" in statuses[-1][0]
+
+
+def test_chat_page_prefers_unified_api_model_catalog(monkeypatch):
+    received = []
+    fallback_calls = []
+
+    class Manager:
+        def __init__(self, _settings):
+            pass
+
+        def check_models(self, timeout=1.0):
+            return {
+                "ollama": {
+                    "models": {
+                        "all": [{"name": "qwen3:4b", "capability": "Chat Supported"}]
+                    }
+                }
+            }
+
+    monkeypatch.setattr("widgets.pages.chat_page.RuntimeDependencyManager", Manager)
+    page = SimpleNamespace(
+        settings={},
+        logger=SimpleNamespace(info=lambda *_args: None, error=lambda *_args: None),
+        model_records_provider=lambda: fallback_calls.append(True),
+        after=lambda _delay, callback: callback(),
+        update_models=lambda records: received.extend(records),
+    )
+
+    ChatPage.load_models(page)
+
+    assert [item["name"] for item in received] == ["qwen3:4b"]
+    assert fallback_calls == []
+
+
+def test_chat_page_user_picker_pins_manual_selection():
+    class Store:
+        def __init__(self):
+            self.values = {}
+
+        def update_many(self, values, save=True):
+            self.values.update(values)
+
+    store = Store()
+    page = SimpleNamespace(
+        t=lambda key: key,
+        model_capability_provider=lambda _model: "Chat Supported",
+        selected_model={"name": ""},
+        settings=store,
+        set_model_display=lambda *_args: None,
+        set_status=lambda *_args: None,
+        logger=SimpleNamespace(info=lambda *_args: None),
+    )
+
+    ChatPage.select_model(page, "qwen3:4b")
+
+    assert store.values["chat_model_mode"] == "manual"
+    assert store.values["chat_model"] == "qwen3:4b"
+
+
+def test_settings_model_picker_preserves_manual_value_while_ollama_is_offline():
+    values, selected = SettingsWindow._model_picker_values(
+        [],
+        "qwen3:4b",
+        "No installed Chat models",
+    )
+
+    assert values == ["qwen3:4b"]
+    assert selected == "qwen3:4b"

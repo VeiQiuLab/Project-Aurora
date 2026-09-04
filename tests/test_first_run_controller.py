@@ -50,7 +50,11 @@ def test_fully_configured_uses_existing_chat_and_embedding_models():
 
     assert controller.completion_updates() == {
         "first_run.completed": True,
+        "chat_model_mode": "manual",
         "chat_model": "qwen3:8b",
+        "resolved_chat_model": "",
+        "chat_model_resolution_reason": "manual_selection",
+        "last_successful_chat_model": "qwen3:8b",
         "embedding_model": "nomic-embed-text:latest",
     }
 
@@ -77,6 +81,55 @@ def test_existing_suitable_model_is_preferred_over_download():
     assert controller.selected_chat_model == "qwen3:8b"
     assert controller.accept_recommended_existing_or_skip() == "use_existing"
     assert controller.completion_updates()["chat_model"] == "qwen3:8b"
+
+
+def test_first_run_single_existing_model_can_use_auto_without_download():
+    report = _report(
+        ["qwen3:4b"],
+        recommendation={
+            "model": "qwen3:4b",
+            "existing_model": True,
+            "download_required": False,
+        },
+    )
+    report["model_resolution"] = {
+        "chat": {
+            "mode": "auto",
+            "model": "qwen3:4b",
+            "reason": "only_compatible_model",
+        }
+    }
+    controller = FirstRunController(report)
+
+    assert controller.use_automatically() == "qwen3:4b"
+    updates = controller.completion_updates()
+    assert updates["chat_model_mode"] == "auto"
+    assert updates["resolved_chat_model"] == "qwen3:4b"
+    assert updates["chat_model"] == "qwen3:4b"
+
+
+def test_first_run_multiple_models_uses_resolved_existing_recommendation():
+    report = _report(
+        ["qwen3:4b", "qwen3:8b"],
+        recommendation={
+            "model": "qwen3:8b",
+            "existing_model": True,
+            "download_required": False,
+        },
+    )
+    report["model_resolution"] = {
+        "chat": {
+            "mode": "auto",
+            "model": "qwen3:8b",
+            "reason": "hardware_recommendation",
+        }
+    }
+
+    controller = FirstRunController(report)
+
+    assert controller.selected_chat_model == "qwen3:8b"
+    assert controller.recommendation()["download_required"] is False
+    assert controller.accept_recommended_existing_or_skip() == "auto"
 
 
 def test_download_success_is_the_only_download_state_that_persists_model():
