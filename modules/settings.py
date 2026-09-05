@@ -55,6 +55,8 @@ class Settings:
             "voice": {
                 "enabled": False,
                 "recorder": {
+                    "device_id": "windows-default-input",
+                    "device_display_name": "",
                     "device_name": "",
                     "preferred_device_keyword": "",
                     "last_successful_device_guid": "",

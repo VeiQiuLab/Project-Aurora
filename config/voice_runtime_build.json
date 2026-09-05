@@ -1,0 +1,19 @@
+{
+  "schema_version": 1,
+  "distribution": "Aurora Full Build",
+  "install_policy": "build-time-only",
+  "components": {
+    "faster-whisper": "1.2.1",
+    "ctranslate2": "4.8.2",
+    "edge-tts": "7.2.8",
+    "pygame": "2.6.1",
+    "sounddevice": "0.5.6",
+    "av": "18.1.0"
+  },
+  "integrity": "sha256-build-manifest",
+  "controlled_location": "Aurora/_internal",
+  "runtime_package_install": false,
+  "ffmpeg_binary_bundled": false,
+  "codec_license_review_required": true,
+  "rollback": "Keep the Core-only build and replace the Full Build directory as one unit."
+}

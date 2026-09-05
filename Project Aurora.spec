@@ -1,4 +1,5 @@
 from pathlib import Path
+import os
 import unicodedata
 
 from PyInstaller.utils.hooks import collect_data_files, collect_submodules
@@ -34,6 +35,7 @@ if not assets_dir.is_dir():
 datas = [
     (str(project_root / "locales"), "locales"),
     (str(project_root / "config" / "default_settings.json"), "config"),
+    (str(project_root / "config" / "voice_runtime_build.json"), "config"),
     (str(assets_dir), "assets"),
     *collect_data_files("customtkinter"),
 ]
@@ -42,7 +44,13 @@ datas = [
 # PyAV dependency redistributes FFmpeg codec libraries.  Aurora must not ship
 # those optional binaries until their release/licensing obligations are handled
 # explicitly.  Runtime diagnostics report these components as optional/missing.
-optional_voice_excludes = [
+full_voice_build = os.environ.get("AURORA_FULL_VOICE_BUILD") == "1"
+if full_voice_build and os.environ.get("AURORA_VOICE_CODEC_LICENSE_REVIEW") != "approved":
+    raise RuntimeError(
+        "Full Voice Build is gated until FFmpeg/PyAV codec licensing is explicitly reviewed."
+    )
+
+optional_voice_excludes = [] if full_voice_build else [
     "av",
     "ctranslate2",
     "edge_tts",
@@ -50,6 +58,10 @@ optional_voice_excludes = [
     "pygame",
     "sounddevice",
 ]
+voice_hiddenimports = []
+if full_voice_build:
+    for package in ("faster_whisper", "ctranslate2", "edge_tts", "pygame", "sounddevice", "av"):
+        voice_hiddenimports.extend(collect_submodules(package))
 
 version_info = VSVersionInfo(
     ffi=FixedFileInfo(
@@ -89,6 +101,7 @@ a = Analysis(
     hiddenimports=[
         "customtkinter",
         *collect_submodules("customtkinter"),
+        *voice_hiddenimports,
         "unicodedata",
     ],
     hookspath=[],

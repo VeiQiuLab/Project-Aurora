@@ -114,11 +114,12 @@ class AppShell(ctk.CTkFrame):
     """Navigation shell for the future v2.6 page-based UI."""
 
     DEFAULT_SETTINGS_CATEGORIES = [
-        ("ai", "AI"),
-        ("voice", "Voice"),
-        ("appearance", "Appearance"),
-        ("data", "Data"),
-        ("developer", "Developer")
+        ("ai", "ai"),
+        ("runtime", "runtime_title"),
+        ("voice", "runtime_domain_voice"),
+        ("appearance", "appearance"),
+        ("data", "settings_category_data"),
+        ("developer", "developer")
     ]
 
     DEFAULT_NAV_ITEMS = [
@@ -264,18 +265,11 @@ class AppShell(ctk.CTkFrame):
     def _build_settings_sidebar(self):
         self.return_button = SecondaryButton(
             self.settings_sidebar,
-            text="← 返回",
+            text=f"← {self.t('nav_back')}",
             command=lambda: self.show_page("chat"),
             anchor="w"
         )
         self.return_button.pack(fill="x", padx=SPACING_MEDIUM, pady=(SPACING_LARGE, SPACING_MEDIUM))
-
-        ctk.CTkLabel(
-            self.settings_sidebar,
-            text=self.t("settings"),
-            font=FONT_HEADER,
-            anchor="w"
-        ).pack(fill="x", padx=SPACING_LARGE, pady=(0, SPACING_MEDIUM))
 
     def _show_chat_sidebar(self):
         self.settings_sidebar.pack_forget()
@@ -308,7 +302,12 @@ class AppShell(ctk.CTkFrame):
         self.settings_category_buttons = {}
 
         categories = getattr(page, "CATEGORIES", self.DEFAULT_SETTINGS_CATEGORIES)
-        for category_id, label_key in categories:
+        category_keys = getattr(page, "CATEGORY_KEYS", {})
+        normalized_categories = [
+            item if isinstance(item, (tuple, list)) and len(item) == 2 else (item, category_keys.get(item, item))
+            for item in categories
+        ]
+        for category_id, label_key in normalized_categories:
             button = SecondaryButton(
                 self.settings_sidebar,
                 text=self.t(label_key),

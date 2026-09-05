@@ -156,6 +156,9 @@ def test_voice_device_status_hides_dshow_exception_text(monkeypatch):
     )
     page = SimpleNamespace(
         settings={"voice": {"recorder": {"ffmpeg_path": "ffmpeg"}}},
+        t=lambda key: {
+            "voice_device_not_found": "未检测到可用麦克风。请确认 FFmpeg 后重试。"
+        }.get(key, key),
         _set_voice_device_status=lambda text, status: statuses.append((text, status)),
     )
 

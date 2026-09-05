@@ -1,0 +1,8 @@
+# Aurora 3.8 Full Build Voice Runtime. Versions are validated before packaging.
+# This file is not consumed by Aurora at runtime and is never installed silently.
+faster-whisper==1.2.1
+ctranslate2==4.8.2
+edge-tts==7.2.8
+pygame==2.6.1
+sounddevice==0.5.6
+av==18.1.0

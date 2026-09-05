@@ -11,8 +11,6 @@ import customtkinter as ctk
 from modules.dependency_actions import (
     OllamaPullTask,
     RECOMMENDED_EMBEDDING_MODEL,
-    WHISPER_MODEL_OPTIONS,
-    download_whisper_model,
     open_official_ollama_download,
 )
 from modules.i18n import t as i18n_t
@@ -23,6 +21,7 @@ from modules.runtime_dependencies import (
 )
 from modules.ui_theme import COLOR_ERROR, COLOR_MUTED, COLOR_SUCCESS, COLOR_WARNING, FONT_NORMAL, FONT_SMALL, SPACING_MEDIUM, SPACING_SMALL
 from widgets.ui_components import PrimaryButton, SecondaryButton, SectionCard
+from widgets.voice_setup_wizard import VoiceSetupWizard
 
 
 _STATUS_COLORS = {
@@ -45,6 +44,18 @@ _VISIBLE_ITEMS = (
     "tts",
     "playback",
 )
+
+
+def runtime_domain_status_text(key, item, translate):
+    """Use the four product statuses allowed in the compact Runtime view."""
+
+    status = str(item.get("status") or "Degraded")
+    enabled = (item.get("data") or {}).get("enabled")
+    if status == "Ready":
+        return translate("runtime_status_ready")
+    if status == "Optional":
+        return translate("runtime_status_not_enabled" if key == "voice" or enabled is False else "runtime_status_not_configured")
+    return translate("runtime_status_needs_attention")
 
 
 class DependencyCenter(ctk.CTkFrame):
@@ -78,6 +89,9 @@ class DependencyCenter(ctk.CTkFrame):
         self.whisper_button = None
         self.whisper_tier = None
         self.voice_actions = None
+        self.more_actions = None
+        self.cancel_button = None
+        self.voice_setup_frame = None
         self._disposed = False
         self._check_running = False
         self._whisper_running = False
@@ -108,21 +122,6 @@ class DependencyCenter(ctk.CTkFrame):
             detail.grid(row=0, column=2, sticky="e")
             self.domain_rows[key] = (status, detail)
 
-        components = SectionCard(self, self.t("runtime_component_details"))
-        components.pack(fill="x", pady=(0, SPACING_MEDIUM))
-        for key in _VISIBLE_ITEMS:
-            row = ctk.CTkFrame(components.body, fg_color="transparent")
-            row.pack(fill="x", pady=3)
-            row.grid_columnconfigure(1, weight=1)
-            placeholder = {"key": key, "name": key}
-            name = localized_runtime_item(placeholder, self.t)["name"]
-            ctk.CTkLabel(row, text=name, font=FONT_NORMAL, anchor="w", width=150).grid(row=0, column=0, sticky="w")
-            status = ctk.CTkLabel(row, text=self.t("runtime_status_checking"), font=FONT_SMALL, text_color=COLOR_MUTED, anchor="w")
-            status.grid(row=0, column=1, sticky="w", padx=(SPACING_SMALL, SPACING_SMALL))
-            detail = ctk.CTkLabel(row, text="", font=FONT_SMALL, text_color=COLOR_MUTED, anchor="e", wraplength=380)
-            detail.grid(row=0, column=2, sticky="e")
-            self.rows[key] = (status, detail)
-
         self.message = ctk.CTkLabel(
             summary.body,
             text="",
@@ -138,62 +137,42 @@ class DependencyCenter(ctk.CTkFrame):
         actions.pack(fill="x", pady=(SPACING_MEDIUM, 0))
         self.check_button = PrimaryButton(actions, text=self.t("runtime_check_again"), command=self.check_again)
         self.check_button.pack(side="left", padx=(0, SPACING_SMALL))
-        self.reevaluate_button = SecondaryButton(
+        self._more_action_callbacks = {
+            self.t("runtime_reevaluate"): lambda: self.check_again(reevaluate=True),
+            self.t("runtime_install_download"): self.install_or_download,
+            self.t("runtime_configure"): self.configure,
+            self.t("runtime_repair"): self.repair,
+            self.t("runtime_diagnostics"): self.show_diagnostics,
+        }
+        self.more_actions = ctk.CTkOptionMenu(
             actions,
-            text=self.t("runtime_reevaluate"),
-            command=lambda: self.check_again(reevaluate=True),
+            values=list(self._more_action_callbacks),
+            command=self._run_more_action,
+            width=180,
         )
-        self.reevaluate_button.pack(side="left", padx=(0, SPACING_SMALL))
-        self.install_button = SecondaryButton(actions, text=self.t("runtime_install_download"), command=self.install_or_download)
-        self.install_button.pack(side="left", padx=(0, SPACING_SMALL))
-        self.configure_button = SecondaryButton(actions, text=self.t("runtime_configure"), command=self.configure)
-        self.configure_button.pack(side="left", padx=(0, SPACING_SMALL))
-        self.repair_button = SecondaryButton(actions, text=self.t("runtime_repair"), command=self.repair)
-        self.repair_button.pack(side="left", padx=(0, SPACING_SMALL))
-        self.diagnostics_button = SecondaryButton(actions, text=self.t("runtime_diagnostics"), command=self.show_diagnostics)
-        self.diagnostics_button.pack(side="left")
+        self.more_actions.set(self.t("runtime_more_actions"))
+        self.more_actions.pack(side="left")
+        self.cancel_button = SecondaryButton(actions, text=self.t("cancel"), command=self.cancel_download)
 
-        optional = SectionCard(self, self.t("runtime_optional_features"))
-        optional.pack(fill="x")
+        self.voice_setup_frame = SectionCard(self, self.t("runtime_domain_voice"))
         ctk.CTkLabel(
-            optional.body,
-            text=self.t("runtime_optional_features_hint"),
-            font=FONT_SMALL,
+            self.voice_setup_frame.body,
+            text=self.t("voice_setup_incomplete"),
+            font=FONT_NORMAL,
             text_color=COLOR_MUTED,
             anchor="w",
-            justify="left",
-            wraplength=720,
         ).pack(fill="x")
-        self.embedding_button = SecondaryButton(
-            optional.body,
-            text=self.t("runtime_download_embedding"),
-            command=self.download_embedding,
-        )
-        self.embedding_button.pack(anchor="w", pady=(SPACING_MEDIUM, 0))
+        PrimaryButton(
+            self.voice_setup_frame.body,
+            text=self.t("voice_setup_one_click"),
+            command=self.open_voice_setup,
+        ).pack(anchor="w", pady=(SPACING_MEDIUM, 0))
 
-        self.voice_configure_button = SecondaryButton(
-            optional.body,
-            text=self.t("runtime_configure_voice"),
-            command=self.configure,
-        )
-        self.voice_configure_button.pack(anchor="w", pady=(SPACING_MEDIUM, 0))
-        self.voice_actions = ctk.CTkFrame(optional.body, fg_color="transparent")
-        self.voice_actions.pack(fill="x", pady=(SPACING_MEDIUM, 0))
-        self.whisper_tier = ctk.StringVar(value="recommended")
-        ctk.CTkOptionMenu(
-            self.voice_actions,
-            values=list(WHISPER_MODEL_OPTIONS),
-            variable=self.whisper_tier,
-            width=180,
-        ).pack(side="left", padx=(0, SPACING_SMALL))
-        self.whisper_button = SecondaryButton(
-            self.voice_actions,
-            text=self.t("runtime_download_whisper"),
-            command=self.download_whisper,
-        )
-        self.whisper_button.pack(side="left")
-        if not bool(self.settings.get("voice.enabled", False)):
-            self.voice_actions.pack_forget()
+    def _run_more_action(self, label):
+        callback = self._more_action_callbacks.get(str(label))
+        self.more_actions.set(self.t("runtime_more_actions"))
+        if callable(callback):
+            callback()
 
     def _after(self, callback):
         if self._disposed:
@@ -219,11 +198,7 @@ class DependencyCenter(ctk.CTkFrame):
             return
         self._check_running = True
         self.check_button.configure(state="disabled", text=self.t("checking"))
-        self.reevaluate_button.configure(state="disabled")
-        self.install_button.configure(state="disabled")
-        self.repair_button.configure(state="disabled")
-        self.embedding_button.configure(state="disabled")
-        self.whisper_button.configure(state="disabled")
+        self.more_actions.configure(state="disabled")
         self.message.configure(text=self.t("runtime_checking"), text_color=COLOR_MUTED)
 
         def worker():
@@ -246,12 +221,7 @@ class DependencyCenter(ctk.CTkFrame):
             def finish():
                 self._check_running = False
                 self.check_button.configure(state="normal", text=self.t("runtime_check_again"))
-                self.reevaluate_button.configure(state="normal")
-                self.install_button.configure(state="normal")
-                self.repair_button.configure(state="normal")
-                self.embedding_button.configure(state="normal")
-                if not self._whisper_running:
-                    self.whisper_button.configure(state="normal")
+                self.more_actions.configure(state="normal")
                 if report is None:
                     self.message.configure(text=error_text, text_color=COLOR_ERROR)
                     return
@@ -270,16 +240,15 @@ class DependencyCenter(ctk.CTkFrame):
             display = localized_runtime_item(item, self.t)
             status = str(item.get("status") or "Degraded")
             labels[0].configure(
-                text=display["status"],
+                text=runtime_domain_status_text(key, item, self.t),
                 text_color=_STATUS_COLORS.get(status, COLOR_MUTED),
             )
-            labels[1].configure(text=display["detail"], text_color=COLOR_MUTED)
-        for key, labels in self.rows.items():
-            item = items.get(key, {})
-            status = str(item.get("status") or "Optional")
-            display = localized_runtime_item(item, self.t)
-            labels[0].configure(text=display["status"], text_color=_STATUS_COLORS.get(status, COLOR_MUTED))
-            labels[1].configure(text=display["detail"], text_color=COLOR_MUTED)
+            detail = display["detail"]
+            if key == "local_ai":
+                detail = localized_runtime_item(items.get("chat_model", {}), self.t)["detail"]
+            elif key == "knowledge":
+                detail = localized_runtime_item(items.get("embedding_model", {}), self.t)["detail"]
+            labels[1].configure(text=detail, text_color=COLOR_MUTED)
         overall = str(report.get("status") or "Degraded")
         self.message.configure(
             text=self.t(
@@ -289,24 +258,21 @@ class DependencyCenter(ctk.CTkFrame):
             ),
             text_color=_STATUS_COLORS.get(overall, COLOR_MUTED),
         )
-        embedding_ready = items.get("embedding_model", {}).get("status") == "Ready"
-        self.embedding_button.configure(
-            text=self.t("runtime_embedding_installed") if embedding_ready else self.t("runtime_download_embedding"),
-            state="disabled" if embedding_ready else "normal",
-        )
         voice_enabled = bool(report.get("voice", {}).get("enabled"))
-        if not self._whisper_running:
-            stt_ready = items.get("stt", {}).get("status") == "Ready"
-            whisper_ready = items.get("whisper_model", {}).get("status") == "Ready"
-            show_whisper_action = voice_enabled and stt_ready and not whisper_ready
-            if show_whisper_action:
-                self.voice_actions.pack(fill="x", pady=(SPACING_MEDIUM, 0))
-            else:
-                self.voice_actions.pack_forget()
-            self.whisper_button.configure(
-                text=(self.t("runtime_status_ready") if whisper_ready else self.t("runtime_download_whisper")),
-                state="normal" if show_whisper_action else "disabled",
-            )
+        voice_ready = bool(report.get("voice", {}).get("ready"))
+        if voice_enabled and not voice_ready:
+            self.voice_setup_frame.pack(fill="x", pady=(0, SPACING_MEDIUM))
+        else:
+            self.voice_setup_frame.pack_forget()
+
+    def open_voice_setup(self):
+        VoiceSetupWizard(
+            self,
+            settings=self.settings,
+            runtime_manager=self.runtime_manager,
+            logger=self.logger,
+            translate=self.t,
+        )
 
     def configure(self):
         if callable(self.open_settings_callback):
@@ -335,6 +301,10 @@ class DependencyCenter(ctk.CTkFrame):
             return
         recommendation = report.get("recommendation", {})
         if not recommendation.get("download_required"):
+            embedding_ready = report.get("items_by_key", {}).get("embedding_model", {}).get("status") == "Ready"
+            if not embedding_ready:
+                self.download_embedding()
+                return
             self.message.configure(
                 text=self.t("runtime_chat_model_ready_action"),
                 text_color=COLOR_SUCCESS,
@@ -386,37 +356,7 @@ class DependencyCenter(ctk.CTkFrame):
                 text_color=COLOR_WARNING,
             )
             return
-        tier = str(self.whisper_tier.get() if self.whisper_tier is not None else "recommended")
-        option = WHISPER_MODEL_OPTIONS.get(tier, WHISPER_MODEL_OPTIONS["recommended"])
-        confirmed = messagebox.askyesno(
-            self.t("runtime_download_whisper_title"),
-            self.t("runtime_download_whisper_prompt").format(
-                tier=self.t(f"runtime_whisper_tier_{tier}"),
-                model=option["model"],
-                size=self.t(f"runtime_whisper_size_{tier}"),
-                reason=self.t(f"runtime_whisper_reason_{tier}"),
-            ),
-            parent=self.winfo_toplevel(),
-        )
-        if not confirmed:
-            return
-        self._whisper_running = True
-        self.whisper_button.configure(state="disabled", text=self.t("runtime_downloading"))
-        self.message.configure(text=self.t("runtime_downloading_model").format(model=f"Whisper {option['model']}"), text_color=COLOR_MUTED)
-
-        def worker():
-            result = download_whisper_model(option["model"], confirmed=True)
-
-            def finish():
-                self._whisper_running = False
-                self.whisper_button.configure(state="normal", text=self.t("runtime_download_whisper"))
-                self.message.configure(text=self._action_result_text(result, "whisper"), text_color=COLOR_SUCCESS if result.ok else COLOR_ERROR)
-                if result.ok:
-                    self.check_again()
-
-            self._after(finish)
-
-        threading.Thread(target=worker, daemon=True).start()
+        self.open_voice_setup()
 
     def _start_pull(self, model, *, kind):
         if self.pull_task is not None:
@@ -426,12 +366,9 @@ class DependencyCenter(ctk.CTkFrame):
         cancel_event = threading.Event()
         self.pull_task = task
         self.cancel_event = cancel_event
-        self.install_button.configure(text=self.t("cancel"), command=self.cancel_download, state="normal")
+        self.more_actions.configure(state="disabled")
+        self.cancel_button.pack(side="left", padx=(SPACING_SMALL, 0))
         self.check_button.configure(state="disabled")
-        self.reevaluate_button.configure(state="disabled")
-        self.repair_button.configure(state="disabled")
-        self.embedding_button.configure(state="disabled")
-        self.whisper_button.configure(state="disabled")
         self.message.configure(text=self.t("runtime_starting_model_download").format(model=model), text_color=COLOR_MUTED)
 
         def progress(line):
@@ -456,13 +393,9 @@ class DependencyCenter(ctk.CTkFrame):
                     selection_error = str(error).strip().splitlines()[0][:180]
 
             def finish():
-                self.install_button.configure(text=self.t("runtime_install_download"), command=self.install_or_download, state="normal")
+                self.cancel_button.pack_forget()
+                self.more_actions.configure(state="normal")
                 self.check_button.configure(state="normal")
-                self.reevaluate_button.configure(state="normal")
-                self.repair_button.configure(state="normal")
-                self.embedding_button.configure(state="normal")
-                if not self._whisper_running:
-                    self.whisper_button.configure(state="normal")
                 color = COLOR_SUCCESS if result.ok else (COLOR_MUTED if result.status == "cancelled" else COLOR_ERROR)
                 message = self._action_result_text(result, str(kind).casefold(), model=model)
                 if selection_error:

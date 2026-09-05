@@ -53,6 +53,7 @@ foreach ($required in @(
     "Aurora.exe",
     "_internal",
     "_internal\config\default_settings.json",
+    "_internal\config\voice_runtime_build.json",
     "_internal\locales",
     "_internal\customtkinter\assets"
 )) {

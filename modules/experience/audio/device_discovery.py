@@ -18,16 +18,31 @@ class AudioDeviceDiscoveryError(RuntimeError):
     """Raised when FFmpeg cannot enumerate a usable audio input device."""
 
 
+WINDOWS_DEFAULT_INPUT_ID = "windows-default-input"
+
+
 @dataclass(frozen=True)
 class DiscoveredAudioDevice:
-    """A dshow audio device and its stable alternative-name identifier."""
+    """One audio input with separate product-facing and backend identities."""
 
     name: str
     alternative_name: str
+    backend_name: str = "DirectShow"
+    is_default: bool = False
+
+    @property
+    def stable_id(self) -> str:
+        return self.alternative_name or self.name
+
+    @property
+    def display_name(self) -> str:
+        return friendly_device_name(self.name)
 
     @property
     def device_name(self) -> str:
-        return self.alternative_name or self.name
+        """Backward-compatible backend identifier used by FFmpeg."""
+
+        return self.stable_id
 
 
 _AUDIO_DEVICE_RE = re.compile(r'"(?P<name>.+)"\s+\(audio\)\s*$')
@@ -98,7 +113,18 @@ def enumerate_dshow_audio_devices(
         raise AudioDeviceDiscoveryError(
             f"FFmpeg returned no dshow audio devices (return_code={result.returncode})"
         )
-    return devices
+    default_device = _match_windows_default_input(devices)
+    if default_device is None:
+        return devices
+    return [
+        DiscoveredAudioDevice(
+            device.name,
+            device.alternative_name,
+            device.backend_name,
+            device.stable_id == default_device.stable_id,
+        )
+        for device in devices
+    ]
 
 
 def resolve_ffmpeg_path(ffmpeg_path: str = "ffmpeg") -> str:
@@ -119,6 +145,9 @@ def resolve_voice_input_device(
         return explicit_name.strip()
 
     ffmpeg_path = str(_get_setting(settings, "voice.recorder.ffmpeg_path", "ffmpeg"))
+    configured_id = str(
+        _get_setting(settings, "voice.recorder.device_id", "")
+    ).strip()
     configured_name = str(_get_setting(settings, "voice.recorder.device_name", "")).strip()
     cached_guid = str(
         _get_setting(settings, "voice.recorder.last_successful_device_guid", "")
@@ -135,6 +164,22 @@ def resolve_voice_input_device(
         if cached_guid:
             return cached_guid
         raise
+
+    use_windows_default = configured_id == WINDOWS_DEFAULT_INPUT_ID or not any(
+        (configured_id, configured_name, cached_guid, keyword)
+    )
+    if use_windows_default:
+        default_match = _match_windows_default_input(devices)
+        if default_match:
+            return default_match.stable_id
+
+    if configured_id and configured_id != WINDOWS_DEFAULT_INPUT_ID:
+        configured_id_match = next(
+            (device for device in devices if device.stable_id == configured_id),
+            None,
+        )
+        if configured_id_match:
+            return _cache_device(settings, configured_id_match)
 
     if configured_name:
         configured_match = next(
@@ -156,10 +201,6 @@ def resolve_voice_input_device(
         if cached_match:
             return _cache_device(settings, cached_match)
 
-    default_match = _match_windows_default_input(devices)
-    if default_match:
-        return _cache_device(settings, default_match)
-
     if keyword:
         keyword_match = next(
             (
@@ -173,19 +214,40 @@ def resolve_voice_input_device(
         if keyword_match:
             return _cache_device(settings, keyword_match)
 
+    # A disconnected saved USB device must not make Voice crash. Resolve the
+    # current Windows default for this run without overwriting the saved ID.
+    default_match = _match_windows_default_input(devices)
+    if default_match:
+        return default_match.stable_id
+
     raise AudioDeviceDiscoveryError(
         "No usable dshow audio input device was resolved. Please select a microphone in Settings."
     )
 
 
-def select_voice_input_device(settings: Any, device_name: str) -> str:
-    """Persist a user-selected microphone while keeping cached GUID compatibility."""
+def select_voice_input_device(
+    settings: Any,
+    device_id: str,
+    *,
+    display_name: str = "",
+) -> str:
+    """Persist a stable device ID while keeping the UI-facing name separate."""
 
-    selected = str(device_name or "").strip()
+    selected = str(device_id or "").strip()
     if not selected:
-        raise ValueError("device_name must not be empty")
+        raise ValueError("device_id must not be empty")
+    _set_setting(settings, "voice.recorder.device_id", selected)
+    _set_setting(settings, "voice.recorder.device_display_name", str(display_name or "").strip())
+    if selected == WINDOWS_DEFAULT_INPUT_ID:
+        _set_setting(settings, "voice.recorder.device_name", "")
+        _set_setting(settings, "voice.recorder.last_successful_device_guid", "")
+        return selected
     _set_setting(settings, "voice.recorder.device_name", selected)
-    _set_setting(settings, "voice.recorder.last_successful_device_guid", "")
+    _set_setting(
+        settings,
+        "voice.recorder.last_successful_device_guid",
+        selected if selected.startswith("@device_") else "",
+    )
     return selected
 
 
@@ -197,6 +259,9 @@ def _cache_device(settings: Any, device: DiscoveredAudioDevice) -> str:
 
 
 def _match_windows_default_input(devices: list[DiscoveredAudioDevice]) -> DiscoveredAudioDevice | None:
+    marked = next((device for device in devices if device.is_default), None)
+    if marked is not None:
+        return marked
     default_name = _windows_default_input_name()
     if not default_name:
         return devices[0] if devices else None
@@ -224,6 +289,38 @@ def _windows_default_input_name() -> str:
     if not isinstance(device, dict):
         return ""
     return str(device.get("name", "") or "").strip()
+
+
+def friendly_device_name(value: str) -> str:
+    """Return a safe human-readable fallback without exposing endpoint IDs."""
+
+    text = str(value or "").strip().strip('"')
+    text = re.sub(r"\s+\(audio\)\s*$", "", text, flags=re.IGNORECASE).strip()
+    if not text or text.startswith("@device_") or re.search(r"\{[0-9A-F-]{20,}\}", text, re.IGNORECASE):
+        return ""
+    return text
+
+
+def device_choice_map(
+    devices: list[DiscoveredAudioDevice],
+    *,
+    default_label: str,
+    fallback_label: str = "Microphone",
+) -> dict[str, str]:
+    """Map unique friendly labels to stable IDs for the microphone picker."""
+
+    choices = {str(default_label): WINDOWS_DEFAULT_INPUT_ID}
+    totals: dict[str, int] = {}
+    for device in devices:
+        base = device.display_name or fallback_label
+        totals[base] = totals.get(base, 0) + 1
+    seen: dict[str, int] = {}
+    for device in devices:
+        base = device.display_name or fallback_label
+        seen[base] = seen.get(base, 0) + 1
+        label = base if totals[base] == 1 else f"{base} · {seen[base]}"
+        choices[label] = device.stable_id
+    return choices
 
 
 def _resolve_ffmpeg_path(ffmpeg_path: str) -> str:

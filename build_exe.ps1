@@ -1,5 +1,7 @@
 param(
-    [string]$Python = ""
+    [string]$Python = "",
+    [switch]$FullVoice,
+    [switch]$VoiceCodecLicenseReviewed
 )
 
 $ErrorActionPreference = "Stop"
@@ -57,6 +59,20 @@ if ($LASTEXITCODE -ne 0 -or -not $releaseVersion) {
 }
 Write-Host "Building Project Aurora $releaseVersion with $Python"
 
+if ($FullVoice) {
+    if (-not $VoiceCodecLicenseReviewed) {
+        Write-Error "Full Voice Build requires an explicit completed codec/FFmpeg license review. Pass -VoiceCodecLicenseReviewed only after approval."
+    }
+    $voicePolicy = Join-Path $projectRoot "config\voice_runtime_build.json"
+    $voiceValidator = Join-Path $projectRoot "scripts\validate_voice_runtime.py"
+    & $Python $voiceValidator --policy $voicePolicy --validate-environment
+    if ($LASTEXITCODE -ne 0) {
+        Write-Error "The build environment does not match the pinned Aurora Voice Runtime versions."
+    }
+    $env:AURORA_FULL_VOICE_BUILD = "1"
+    $env:AURORA_VOICE_CODEC_LICENSE_REVIEW = "approved"
+}
+
 & $Python -m PyInstaller --version | Out-Host
 if ($LASTEXITCODE -ne 0) {
     Write-Error "PyInstaller is not installed in this Python environment. Run: & '$Python' -m pip install pyinstaller"
@@ -66,9 +82,15 @@ if (-not (Test-Path -LiteralPath (Join-Path $projectRoot "assets"))) {
     Write-Error "Missing release resource directory: assets"
 }
 
-Write-Host "FFmpeg/PyAV codec libraries and optional Voice runtimes are not bundled in this Core-only test package."
+if ($FullVoice) {
+    Write-Host "Building the pinned Full Voice Runtime after the explicit codec license gate. FFmpeg.exe is not bundled."
+} else {
+    Write-Host "FFmpeg/PyAV codec libraries and optional Voice runtimes are not bundled in this Core-only test package."
+}
 
 & $Python -m PyInstaller --noconfirm --clean "Project Aurora.spec"
+$env:AURORA_FULL_VOICE_BUILD = $null
+$env:AURORA_VOICE_CODEC_LICENSE_REVIEW = $null
 if ($LASTEXITCODE -ne 0) {
     Write-Error "PyInstaller build failed."
 }
@@ -83,6 +105,7 @@ foreach ($required in @(
     "_internal",
     "_internal\assets",
     "_internal\config\default_settings.json",
+    "_internal\config\voice_runtime_build.json",
     "_internal\locales",
     "_internal\customtkinter\assets"
 )) {
@@ -93,3 +116,12 @@ foreach ($required in @(
 }
 
 Write-Host "Build complete: dist\Aurora\Aurora.exe"
+
+if ($FullVoice) {
+    $integrityPath = Join-Path $distRoot "voice-runtime-integrity.json"
+    & $Python $voiceValidator --policy $voicePolicy --build-root $distRoot --output $integrityPath
+    if ($LASTEXITCODE -ne 0 -or -not (Test-Path -LiteralPath $integrityPath)) {
+        Write-Error "Voice Runtime integrity manifest generation failed."
+    }
+    Write-Host "Full Voice Build integrity manifest: $integrityPath"
+}

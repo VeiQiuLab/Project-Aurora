@@ -27,7 +27,7 @@ def test_runtime_status_and_details_are_natural_in_chinese():
         "status": "Ready",
         "data": {"configured": "qwen3:4b", "mode": "auto"},
     }
-    assert localized_runtime_item(item)["detail"] == "qwen3:4b · 自动选择"
+    assert localized_runtime_item(item)["detail"] == "qwen3:4b · 自动"
 
 
 def test_critical_chinese_runtime_strings_do_not_fall_back_to_english():
@@ -37,7 +37,11 @@ def test_critical_chinese_runtime_strings_do_not_fall_back_to_english():
         "runtime_status_ready",
         "runtime_status_missing",
         "runtime_status_optional",
+        "runtime_status_not_configured",
+        "runtime_status_not_enabled",
+        "runtime_status_needs_attention",
         "runtime_check_again",
+        "runtime_more_actions",
         "runtime_reevaluate",
         "runtime_install_download",
         "runtime_configure",
@@ -50,6 +54,8 @@ def test_critical_chinese_runtime_strings_do_not_fall_back_to_english():
         "first_run_choose_model",
         "ai_model_rerecommend",
         "voice_environment_hint",
+        "voice_setup_one_click",
+        "voice_setup_incomplete",
     }
     forbidden = (
         "Runtime / Dependencies",

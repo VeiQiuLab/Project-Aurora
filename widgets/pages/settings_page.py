@@ -7,7 +7,10 @@ import customtkinter as ctk
 from modules.app_paths import CONVERSATIONS_DIR, KNOWLEDGE_DIR, MEMORY_DIR, PERSONA_DIR
 from modules.experience.audio.device_discovery import (
     AudioDeviceDiscoveryError,
+    WINDOWS_DEFAULT_INPUT_ID,
+    device_choice_map,
     enumerate_dshow_audio_devices,
+    friendly_device_name,
     resolve_voice_input_device,
     select_voice_input_device,
 )
@@ -32,6 +35,7 @@ from widgets.components.memory_panel import MemoryPanel
 from widgets.components.persona_panel import PersonaPanel
 from widgets.components.dependency_center import DependencyCenter
 from widgets.ui_components import PrimaryButton, SecondaryButton, SectionCard
+from widgets.voice_setup_wizard import VoiceSetupWizard
 
 
 class SettingsPage(ctk.CTkFrame):
@@ -89,6 +93,8 @@ class SettingsPage(ctk.CTkFrame):
         self.voice_environment_button = None
         self.voice_device_label = None
         self.voice_device_status = None
+        self.voice_setup_button = None
+        self.voice_setup_status = None
         self.ai_model_status_label = None
         self.ai_model_current_label = None
         self.ai_embedding_current_label = None
@@ -172,6 +178,8 @@ class SettingsPage(ctk.CTkFrame):
         self.ai_model_current_label = None
         self.ai_embedding_current_label = None
         self.ai_embedding_status_label = None
+        self.voice_setup_button = None
+        self.voice_setup_status = None
         for child in self.body.winfo_children():
             child.destroy()
 
@@ -337,19 +345,24 @@ class SettingsPage(ctk.CTkFrame):
 
     def _build_voice(self):
         card = self._card(self.t("runtime_domain_voice"), self.t("voice_settings_hint"))
-        self._setting_row(card.body, self.t("voice_enabled"), self.t("yes") if self.settings.get("voice.enabled", False) else self.t("no"))
+        voice_enabled = bool(self.settings.get("voice.enabled", False))
+        self._setting_row(card.body, self.t("voice_enabled"), self.t("yes") if voice_enabled else self.t("no"))
         self.voice_device_label = self._setting_row(
             card.body,
-            "当前输入设备",
+            self.t("voice_current_input"),
             self._current_voice_device_text()
         )
         device_actions = ctk.CTkFrame(card.body, fg_color="transparent")
         device_actions.pack(fill="x", pady=(0, SPACING_SMALL))
-        SecondaryButton(device_actions, text="选择设备", command=self._choose_voice_input_device).pack(
+        choose_button = SecondaryButton(device_actions, text=self.t("voice_choose_device"), command=self._choose_voice_input_device)
+        choose_button.pack(
             side="left",
             padx=(0, SPACING_SMALL)
         )
-        SecondaryButton(device_actions, text="开始测试", command=self._test_voice_input_device).pack(side="left")
+        test_button = SecondaryButton(device_actions, text=self.t("voice_test_device"), command=self._test_voice_input_device)
+        test_button.pack(side="left")
+        if not voice_enabled:
+            device_actions.pack_forget()
         self.voice_device_status = ctk.CTkLabel(
             card.body,
             text="",
@@ -360,9 +373,23 @@ class SettingsPage(ctk.CTkFrame):
             wraplength=720
         )
         self.voice_device_status.pack(fill="x", pady=(0, SPACING_SMALL))
-        self._setting_row(card.body, "STT", self.settings.get("voice.stt.provider", "Faster Whisper"))
-        self._setting_row(card.body, "TTS", self.settings.get("voice.tts.provider", self.t("voice_default_device")))
-        self._setting_row(card.body, self.t("runtime_item_playback"), self.settings.get("voice.playback.device", self.t("voice_default_device")))
+        if voice_enabled:
+            self.voice_setup_status = ctk.CTkLabel(
+                card.body,
+                text=self.t("runtime_status_checking"),
+                font=FONT_SMALL,
+                text_color=COLOR_MUTED,
+                anchor="w",
+            )
+            self.voice_setup_status.pack(fill="x", pady=(SPACING_SMALL, 0))
+            self.voice_setup_button = PrimaryButton(
+                card.body,
+                text=self.t("voice_setup_one_click"),
+                command=self._open_voice_setup,
+            )
+            self.voice_setup_button.pack(anchor="w", pady=(SPACING_SMALL, SPACING_MEDIUM))
+            self.voice_setup_button.configure(state="disabled")
+            self._refresh_voice_setup_state()
         self._action_button(card.body, self.t("voice_open_settings"), self.open_settings_editor)
 
         environment = self._card(self.t("voice_environment"))
@@ -378,24 +405,24 @@ class SettingsPage(ctk.CTkFrame):
         self._action_button(environment.body, self.t("voice_open_runtime"), lambda: self.show_category("runtime"))
 
     def _build_appearance(self):
-        card = self._card("Appearance", "主题、语言和窗口设置集中在外观设置中。")
-        self._setting_row(card.body, "主题", self.settings.get("theme", "blue"))
-        self._setting_row(card.body, "外观", self.settings.get("appearance", "System"))
-        self._setting_row(card.body, "语言", self.settings.get("language", "zh_CN"))
+        card = self._card(self.t("appearance"), self.t("appearance_settings_hint"))
+        self._setting_row(card.body, self.t("theme"), self.settings.get("theme", "blue"))
+        self._setting_row(card.body, self.t("appearance"), self.settings.get("appearance", "System"))
+        self._setting_row(card.body, self.t("language"), self.settings.get("language", "zh_CN"))
         window_size = f"{self.settings.get('window.width', '')} x {self.settings.get('window.height', '')}"
-        self._setting_row(card.body, "窗口", window_size)
-        self._action_button(card.body, "打开外观设置", self.open_settings_editor)
+        self._setting_row(card.body, self.t("window"), window_size)
+        self._action_button(card.body, self.t("appearance_open_settings"), self.open_settings_editor)
 
     def _build_data(self):
-        card = self._card("Data", "会话、Memory 与 Knowledge 数据入口集中在这里。")
-        self._setting_row(card.body, "会话数据", CONVERSATIONS_DIR)
-        self._setting_row(card.body, "Memory 数据", MEMORY_DIR)
-        self._setting_row(card.body, "Knowledge 数据", KNOWLEDGE_DIR)
-        self._setting_row(card.body, "Persona 数据", PERSONA_DIR)
+        card = self._card(self.t("settings_category_data"), self.t("data_settings_hint"))
+        self._setting_row(card.body, self.t("data_conversations"), CONVERSATIONS_DIR)
+        self._setting_row(card.body, self.t("data_memory"), MEMORY_DIR)
+        self._setting_row(card.body, self.t("data_knowledge"), KNOWLEDGE_DIR)
+        self._setting_row(card.body, self.t("data_persona"), PERSONA_DIR)
 
-        actions = self._card("数据管理")
-        self._action_button(actions.body, "Memory 数据", self._show_memory_panel)
-        self._action_button(actions.body, "Knowledge 数据", self._show_knowledge_panel)
+        actions = self._card(self.t("data_management"))
+        self._action_button(actions.body, self.t("data_memory"), self._show_memory_panel)
+        self._action_button(actions.body, self.t("data_knowledge"), self._show_knowledge_panel)
 
     def _build_developer(self):
         card = self._card("")
@@ -405,17 +432,17 @@ class SettingsPage(ctk.CTkFrame):
         ctk.CTkLabel(logo, text="A", font=(FONT_TITLE[0], 34, "bold"), text_color="white").pack(expand=True)
 
         ctk.CTkLabel(card.body, text="Project Aurora", font=FONT_TITLE).pack(anchor="center")
-        ctk.CTkLabel(card.body, text="Private AI companion", font=FONT_NORMAL, text_color=COLOR_MUTED).pack(
+        ctk.CTkLabel(card.body, text=self.t("developer_product_tagline"), font=FONT_NORMAL, text_color=COLOR_MUTED).pack(
             anchor="center",
             pady=(0, SPACING_LARGE)
         )
-        self._setting_row(card.body, "Version", VERSION)
-        self._setting_row(card.body, "Build Date", BUILD_DATE)
+        self._setting_row(card.body, self.t("developer_version"), VERSION)
+        self._setting_row(card.body, self.t("developer_build_date"), BUILD_DATE)
         self._setting_row(card.body, "Git", self._git_info())
 
         changelog = self._recent_changelog()
         if changelog:
-            ctk.CTkLabel(card.body, text="更新日志", font=FONT_NORMAL_BOLD, anchor="w").pack(
+            ctk.CTkLabel(card.body, text=self.t("developer_changelog"), font=FONT_NORMAL_BOLD, anchor="w").pack(
                 fill="x",
                 pady=(SPACING_MEDIUM, SPACING_SMALL)
             )
@@ -429,18 +456,58 @@ class SettingsPage(ctk.CTkFrame):
                 wraplength=720
             ).pack(fill="x")
 
-        actions = self._card("开发者入口")
-        self._action_button(actions.body, "打开完整设置 / 调试日志入口", self.open_settings_editor)
+        actions = self._card(self.t("developer_entry"))
+        self._action_button(actions.body, self.t("developer_open_full_settings"), self.open_settings_editor)
 
     def _current_voice_device_text(self):
+        device_id = str(self.settings.get("voice.recorder.device_id", "") or "").strip()
+        display_name = str(self.settings.get("voice.recorder.device_display_name", "") or "").strip()
         configured = str(self.settings.get("voice.recorder.device_name", "") or "").strip()
-        cached = str(self.settings.get("voice.recorder.last_successful_device_guid", "") or "").strip()
         keyword = str(self.settings.get("voice.recorder.preferred_device_keyword", "") or "").strip()
-        return configured or cached or (
+        if device_id == WINDOWS_DEFAULT_INPUT_ID or not any((device_id, configured, keyword)):
+            return self.t("voice_windows_default_input")
+        return display_name or friendly_device_name(configured) or (
             f"{self.t('voice_default_device')} / {keyword}"
             if keyword
-            else self.t("voice_windows_default_input")
+            else self.t("voice_saved_device")
         )
+
+    def _open_voice_setup(self):
+        VoiceSetupWizard(self, settings=self.settings, logger=self.logger, translate=self.t)
+
+    def _refresh_voice_setup_state(self):
+        button = self.voice_setup_button
+        status_label = self.voice_setup_status
+        if button is None or status_label is None:
+            return
+
+        def worker():
+            try:
+                ready = bool(RuntimeDependencyManager(self.settings).check_voice_requirements()["ready"])
+            except Exception:
+                ready = False
+
+            def finish():
+                try:
+                    if not button.winfo_exists() or not status_label.winfo_exists():
+                        return
+                    status_label.configure(
+                        text=self.t("voice_setup_ready" if ready else "voice_setup_incomplete"),
+                        text_color=COLOR_SUCCESS if ready else COLOR_MUTED,
+                    )
+                    if ready:
+                        button.pack_forget()
+                    else:
+                        button.configure(state="normal")
+                except Exception:
+                    return
+
+            try:
+                self.after(0, finish)
+            except Exception:
+                return
+
+        threading.Thread(target=worker, daemon=True).start()
 
     def _set_voice_device_status(self, text, status="disabled"):
         if self.voice_device_status is None:
@@ -463,20 +530,25 @@ class SettingsPage(ctk.CTkFrame):
             devices = enumerate_dshow_audio_devices(ffmpeg_path)
         except AudioDeviceDiscoveryError:
             self._set_voice_device_status(
-                "未检测到可用麦克风。请确认 FFmpeg 已安装、Windows 已允许麦克风权限，然后重试。",
+                self.t("voice_device_not_found"),
                 "error",
             )
             return
 
         window = ctk.CTkToplevel(self)
-        window.title("选择麦克风")
+        window.title(self.t("voice_choose_device"))
         window.geometry("560x180")
         window.transient(self.winfo_toplevel())
         window.grab_set()
 
-        values = [device.device_name for device in devices]
-        selected = ctk.StringVar(value=values[0] if values else "")
-        ctk.CTkLabel(window, text="当前输入设备", font=FONT_NORMAL).pack(
+        choices = device_choice_map(
+            devices,
+            default_label=self.t("voice_windows_default_input"),
+            fallback_label=self.t("runtime_item_microphone"),
+        )
+        values = list(choices)
+        selected = ctk.StringVar(value=values[0])
+        ctk.CTkLabel(window, text=self.t("voice_current_input"), font=FONT_NORMAL).pack(
             anchor="w",
             padx=SPACING_MEDIUM,
             pady=(SPACING_MEDIUM, SPACING_SMALL)
@@ -488,25 +560,29 @@ class SettingsPage(ctk.CTkFrame):
         )
 
         def save_selection():
-            select_voice_input_device(self.settings, selected.get())
+            label = selected.get()
+            select_voice_input_device(self.settings, choices[label], display_name="" if choices[label] == WINDOWS_DEFAULT_INPUT_ID else label)
             self._refresh_voice_device_label()
-            self._set_voice_device_status(f"已选择: {selected.get()}", "healthy")
+            self._set_voice_device_status(self.t("voice_device_selected").format(device=label), "healthy")
             window.grab_release()
             window.destroy()
 
-        PrimaryButton(window, text="保存", command=save_selection).pack(anchor="e", padx=SPACING_MEDIUM)
+        PrimaryButton(window, text=self.t("save"), command=save_selection).pack(anchor="e", padx=SPACING_MEDIUM)
 
     def _test_voice_input_device(self):
-        self._set_voice_device_status("正在检测麦克风设备...", "disabled")
+        if not bool(self.settings.get("voice.enabled", False)):
+            self._set_voice_device_status(self.t("voice_device_test_disabled"), "disabled")
+            return
+        self._set_voice_device_status(self.t("voice_device_testing"), "disabled")
 
         def run_test():
             try:
-                device = resolve_voice_input_device(self.settings)
-                result = {"ok": True, "message": f"麦克风可用: {device}"}
+                resolve_voice_input_device(self.settings)
+                result = {"ok": True, "message": self.t("voice_device_available").format(device=self._current_voice_device_text())}
             except Exception:
                 result = {
                     "ok": False,
-                    "message": "麦克风暂不可用。请检查 FFmpeg、Windows 麦克风权限和输入设备选择。",
+                    "message": self.t("voice_device_unavailable"),
                 }
 
             def finish():
@@ -594,10 +670,10 @@ class SettingsPage(ctk.CTkFrame):
                 check=False
             ).stdout.strip()
         except Exception:
-            return "Unavailable"
+            return self.t("developer_unavailable")
         if commit and branch:
             return f"{branch} @ {commit}"
-        return commit or branch or "Unavailable"
+        return commit or branch or self.t("developer_unavailable")
 
     def _recent_changelog(self):
         path = Path(__file__).resolve().parents[2] / "CHANGELOG.md"
