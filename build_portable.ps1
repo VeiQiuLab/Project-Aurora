@@ -1,16 +1,19 @@
 param(
     [string]$Python = "",
     [string]$OutputPath = "",
-    [switch]$SkipBuild
+    [switch]$SkipBuild,
+    [switch]$FullVoice,
+    [string]$VoiceCodecOverlay = "build\voice-codec-overlay"
 )
 
 $ErrorActionPreference = "Stop"
 
 $projectRoot = Split-Path -Parent $MyInvocation.MyCommand.Path
 $buildScript = Join-Path $projectRoot "build_exe.ps1"
-$distRoot = Join-Path $projectRoot "dist\Aurora"
-$portableRoot = Join-Path $projectRoot "build\portable-test"
-$stageRoot = Join-Path $portableRoot "Aurora-Windows-Test"
+$buildProfile = if ($FullVoice) { 'Full' } else { 'Core' }
+$distRoot = Join-Path $projectRoot "dist\Aurora-$buildProfile"
+$portableRoot = Join-Path $projectRoot "build\portable-$buildProfile-test"
+$stageRoot = Join-Path $portableRoot "Aurora-Windows-$buildProfile-Test"
 $validator = Join-Path $projectRoot "scripts\validate_portable_package.py"
 
 function Resolve-BuildPython {
@@ -43,7 +46,7 @@ function Resolve-BuildPython {
 
 $Python = Resolve-BuildPython -PreferredPath $Python
 if (-not $SkipBuild) {
-    & $buildScript -Python $Python
+    & $buildScript -Python $Python -FullVoice:$FullVoice -VoiceCodecOverlay $VoiceCodecOverlay
     if ($LASTEXITCODE -ne 0) {
         Write-Error "Aurora executable build failed."
     }
@@ -82,6 +85,7 @@ if ($projectRoot.Length -ge 8) {
     $forbiddenValues += $projectRoot
 }
 $validatorArgs = @($validator, $stageRoot)
+if ($FullVoice) { $validatorArgs += '--full-voice' }
 foreach ($value in $forbiddenValues) {
     $validatorArgs += @("--forbidden-text", $value)
 }
@@ -91,7 +95,7 @@ if ($LASTEXITCODE -ne 0) {
 }
 
 if (-not $OutputPath) {
-    $OutputPath = Join-Path $projectRoot "dist\Aurora-Windows-Test.zip"
+    $OutputPath = Join-Path $projectRoot "dist\Aurora-Windows-$buildProfile-Test.zip"
 } elseif (-not [System.IO.Path]::IsPathRooted($OutputPath)) {
     $OutputPath = Join-Path $projectRoot $OutputPath
 }

@@ -13,6 +13,7 @@ _COMPONENT_CATEGORIES = {
     "stt": "STT",
     "whisper_model": "STT",
     "tts": "TTS",
+    "tts_service": "TTS",
     "playback": "Audio",
 }
 

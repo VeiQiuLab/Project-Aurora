@@ -10,14 +10,17 @@ from __future__ import annotations
 from dataclasses import dataclass
 from pathlib import Path
 import queue
+import os
 import re
 import subprocess
 import threading
 from typing import Callable, Iterable
 import webbrowser
+from uuid import uuid4
 
 
 OLLAMA_WINDOWS_DOWNLOAD_URL = "https://ollama.com/download/windows"
+FFMPEG_DOWNLOAD_URL = "https://ffmpeg.org/download.html#build-windows"
 RECOMMENDED_EMBEDDING_MODEL = "nomic-embed-text"
 
 CHAT_MODEL_OPTIONS = {
@@ -57,6 +60,7 @@ WHISPER_MODEL_OPTIONS = {
 }
 
 _MODEL_NAME = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._/-]*(?::[A-Za-z0-9][A-Za-z0-9._-]*)?$")
+_WHISPER_DOWNLOAD_LOCK = threading.Lock()
 
 
 @dataclass(frozen=True)
@@ -214,16 +218,52 @@ def download_whisper_model(
         return ActionResult("cancelled", "Download cancelled.")
     if downloader is None:
         try:
-            from faster_whisper.utils import download_model as downloader
+            from faster_whisper.utils import download_model
+            from modules.voice_models import managed_model_path, model_download_directory, publish_model_integrity, valid_model_directory
+
+            def downloader(name):
+                target = managed_model_path(name)
+                if valid_model_directory(target):
+                    return str(target)
+                target.parent.mkdir(parents=True, exist_ok=True)
+                staging = target.with_name(name + ".download")
+                # A completed but corrupt staged file may be trusted by Hub's
+                # timestamp cache. Keep it for recovery and retry into a fresh
+                # staging directory. Incomplete Hub downloads remain resumable.
+                if (staging / "model.bin").is_file() and not valid_model_directory(staging):
+                    os.replace(staging, staging.with_name(staging.name + ".invalid-" + uuid4().hex))
+                download_model(name, output_dir=model_download_directory(staging))
+                publish_model_integrity(staging)
+                if target.exists():
+                    os.replace(target, target.with_name(name + ".invalid-" + uuid4().hex))
+                os.replace(staging, target)
+                return str(target)
         except (ImportError, OSError):
             return ActionResult("error", "Faster-Whisper is not installed.")
     try:
-        downloader(normalized)
+        # Multiple UI entry points must not publish the same staging directory
+        # concurrently. Failed downloads remain resumable on an explicit retry.
+        with _WHISPER_DOWNLOAD_LOCK:
+            downloader(normalized)
     except Exception as error:
         return ActionResult("error", _safe_error(error, "Whisper model download failed."))
     if cancel_event is not None and cancel_event.is_set():
         return ActionResult("cancelled", "Download cancelled.")
     return ActionResult("success", f"Whisper model downloaded: {normalized}")
+
+
+def select_whisper_model(settings, model: str) -> None:
+    """Select the successfully downloaded tier for both diagnostics and STT."""
+
+    allowed = {item["model"] for item in WHISPER_MODEL_OPTIONS.values()}
+    if model not in allowed:
+        raise ValueError("Unsupported Whisper model choice")
+    if hasattr(settings, "update_many"):
+        settings.update_many({"voice.stt.model_size": model}, save=True)
+    elif isinstance(settings, dict):
+        settings.setdefault("voice", {}).setdefault("stt", {})["model_size"] = model
+    else:
+        settings.set("voice.stt.model_size", model)
 
 
 def _safe_error(error: BaseException, fallback: str) -> str:

@@ -15,7 +15,7 @@ from modules.experience.voice.providers.faster_whisper import FasterWhisperProvi
 
 RUN_REAL_VOICE_E2E = os.environ.get("AURORA_RUN_REAL_VOICE_E2E") == "1"
 TEST_AUDIO_PATH = Path(
-    os.environ.get("AURORA_TEST_AUDIO_PATH", r"C:\Users\X\Desktop\test.wav")
+    os.environ.get("AURORA_TEST_AUDIO_PATH", r"C:\AuroraTest\sample.wav")
 )
 
 

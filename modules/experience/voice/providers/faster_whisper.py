@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from pathlib import Path
+import sys
 from threading import Event, RLock
 from time import monotonic
 from typing import Any, Callable
@@ -31,8 +32,12 @@ class FasterWhisperProvider(SpeechToTextProvider):
         model_loader: ModelLoader | None = None,
     ):
         self.model_size = model_size
-        self.device = device
-        self.compute_type = compute_type
+        # Full's supported portable runtime is CPU. An NVIDIA driver alone is
+        # not a CUDA/cuDNN installation. Only automatic selection is adjusted;
+        # an explicit advanced device/compute choice remains the user's choice.
+        packaged_auto = bool(getattr(sys, "frozen", False)) and device == "auto"
+        self.device = "cpu" if packaged_auto else device
+        self.compute_type = "int8" if packaged_auto and compute_type == "auto" else compute_type
         self.beam_size = beam_size
         self.language = language
         self._model = model
@@ -139,11 +144,12 @@ class FasterWhisperProvider(SpeechToTextProvider):
     @staticmethod
     def _default_model_loader(model_size: str, device: str, compute_type: str) -> Any:
         from faster_whisper import WhisperModel
+        from modules.voice_models import local_model_path
 
         # Model downloads belong to the explicit Dependency Center flow. A
         # first transcription must never start a large background download.
         return WhisperModel(
-            model_size,
+            str(local_model_path(model_size) or model_size),
             device=device,
             compute_type=compute_type,
             local_files_only=True,

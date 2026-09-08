@@ -113,3 +113,23 @@ def test_runtime_delegates_to_frame_session_manager_and_preserves_shared_state()
     assert result.stage == "inactivity_timeout"
     assert runtime.orchestrator.state_store is manager.state_store
     assert state_store.current_state is CompanionState.IDLE
+
+
+def test_close_after_frame_session_detaches_original_subscription():
+    """Production frame sessions do not return a per-session orchestrator."""
+    state_store = CompanionStateStore()
+    manager = VoiceSessionManager(
+        state_store=state_store,
+        wait_for_voice=lambda _cancel, _timeout: False,
+        run_cycle=lambda: None,
+        inactivity_timeout_seconds=0.02,
+        wait_slice_seconds=0.005,
+    )
+    runtime = build_runtime(state_store=state_store, session_manager=manager)
+    runtime.orchestrator_factory = lambda: None
+    assert runtime.start_voice_session()
+    assert runtime.wait_for_session(timeout_seconds=2).success
+    assert runtime.orchestrator is None
+    assert runtime.close() is True
+    assert state_store.unsubscribe(runtime._forward_state_event) is False
+    assert runtime.close() is True

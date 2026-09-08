@@ -9,7 +9,6 @@ from modules.conversation import ConversationManager, schedule_conversation_inte
 from modules.conversation_intelligence import fallback_title
 from modules.experience.state import CompanionState, CompanionStateStore
 from modules.runtime_dependencies import (
-    RuntimeDependencyManager,
     persist_manual_model_selection,
 )
 from modules.search import search_conversations
@@ -39,6 +38,7 @@ class ChatPage(ctk.CTkFrame):
         set_active_conversation_id=None,
         register_load_callback=None,
         voice_runtime=None,
+        runtime_state=None,
         companion_state=None,
         **kwargs
     ):
@@ -60,6 +60,7 @@ class ChatPage(ctk.CTkFrame):
         self.set_active_conversation_id = set_active_conversation_id or (lambda _value: None)
         self.register_load_callback = register_load_callback
         self.voice_runtime = voice_runtime
+        self.runtime_state = runtime_state
         if not isinstance(companion_state, CompanionStateStore):
             raise TypeError("companion_state must be the application CompanionStateStore")
         self.companion_state = companion_state
@@ -91,8 +92,23 @@ class ChatPage(ctk.CTkFrame):
         if callable(self.register_load_callback):
             self.register_load_callback(self.load_conversation_by_id)
         self.refresh_conversations()
-        threading.Thread(target=self.load_models, daemon=True).start()
+        self._runtime_unsubscribe = None
+        if self.runtime_state is not None:
+            self._runtime_unsubscribe = self.runtime_state.subscribe(self._on_runtime_snapshot)
+        else:
+            threading.Thread(target=self.load_models, daemon=True).start()
         self.after(100, self.focus_input)
+
+    def attach_voice_runtime(self, runtime, *, available):
+        """Refresh the existing chat surface without recreating chat state."""
+        if runtime is not self.voice_runtime:
+            if self.voice_runtime is not None:
+                self.voice_runtime.unsubscribe_state(self._on_voice_state)
+            self.voice_runtime = runtime
+            if runtime is not None:
+                runtime.subscribe_state(self._on_voice_state)
+        self.panel.voice_available = bool(available and runtime is not None)
+        self._on_voice_state_value(self.companion_state.current_state)
 
     def _initial_context(self):
         if callable(self.initial_context_provider):
@@ -327,6 +343,8 @@ class ChatPage(ctk.CTkFrame):
             persist_manual_model_selection(self.settings, model, kind="chat")
             self.set_model_display(model, "healthy")
             self.logger.info(f"Chat model selected: {model}")
+            if self.runtime_state is not None:
+                self.runtime_state.refresh()
 
     def update_models(self, records):
         if not self.is_open():
@@ -352,27 +370,26 @@ class ChatPage(ctk.CTkFrame):
         self.logger.info(f"Chat models loaded: {len(names)}")
         self.logger.info("Model capability checked")
 
+    def _on_runtime_snapshot(self, snapshot):
+        if not snapshot.checking and snapshot.revision:
+            self.update_models(snapshot.report.get("ollama", {}).get("models", {}).get("all", []))
+
     def load_models(self):
-        records = []
-        try:
-            report = RuntimeDependencyManager(self.settings).check_models(timeout=1.0)
-            records = list(
-                report.get("ollama", {}).get("models", {}).get("all", [])
-            )
-        except Exception as error:
-            self.logger.info(
-                f"Automatic Chat model resolution unavailable: {type(error).__name__}"
-            )
-        if not records:
-            try:
-                records = self.model_records_provider() if callable(self.model_records_provider) else []
-            except Exception as error:
-                self.logger.error(f"Chat model loading failed: {error}")
-                records = []
-        try:
-            self.after(0, lambda: self.update_models(records))
-        except Exception:
+        if self.runtime_state is not None:
+            self.runtime_state.refresh()
             return
+        try:
+            records = self.model_records_provider() if callable(self.model_records_provider) else []
+        except Exception:
+            records = []
+        self.after(0, lambda: self.update_models(records))
+
+    def destroy(self):
+        if self._runtime_unsubscribe:
+            self._runtime_unsubscribe()
+        if self.voice_runtime is not None:
+            self.voice_runtime.unsubscribe_state(self._on_voice_state)
+        super().destroy()
 
     def render_messages(self, messages):
         self.panel.render_messages(messages)

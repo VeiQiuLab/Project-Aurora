@@ -22,6 +22,7 @@ _NAME_KEYS = {
     "stt": "runtime_item_stt",
     "whisper_model": "runtime_item_whisper_model",
     "tts": "runtime_item_tts",
+    "tts_service": "runtime_item_tts_service",
     "playback": "runtime_item_playback",
 }
 
@@ -88,7 +89,7 @@ def runtime_item_detail(item: Mapping[str, Any], translate=default_translate) ->
             return _text(translate, "runtime_detail_embedding_optional", "Embedding is optional and not configured.")
         translation_key = "runtime_detail_chat_missing" if key == "chat_model" else "runtime_detail_embedding_missing"
         return _text(translate, translation_key, str(item.get("detail") or ""))
-    if status == "Optional" and key in {"microphone", "stt", "whisper_model", "tts", "playback"}:
+    if status == "Optional" and key in {"microphone", "stt", "whisper_model", "tts", "tts_service", "playback"}:
         return _text(translate, "runtime_detail_voice_component_skipped", "Voice is off; this item was not checked.")
     if key == "ollama":
         path = str(data.get("path") or "").strip()
@@ -101,6 +102,12 @@ def runtime_item_detail(item: Mapping[str, Any], translate=default_translate) ->
         path = str(data.get("path") or "").strip()
         translation_key = "runtime_detail_ffmpeg_ready" if status == "Ready" else "runtime_detail_ffmpeg_missing"
         return _text(translate, translation_key, str(item.get("detail") or "")).format(path=path)
+    if key == "tts":
+        translation_key = "runtime_detail_tts_runtime_ready" if status == "Ready" else "runtime_detail_tts_runtime_missing"
+        return _text(translate, translation_key, str(item.get("detail") or ""))
+    if key == "tts_service":
+        translation_key = "runtime_detail_tts_service_ready" if status == "Ready" else "runtime_detail_tts_service_unavailable"
+        return _text(translate, translation_key, str(item.get("detail") or ""))
     if status == "Ready":
         return _text(translate, "runtime_detail_component_ready", "Ready.")
     if status in {"Missing", "Degraded", "Offline"}:

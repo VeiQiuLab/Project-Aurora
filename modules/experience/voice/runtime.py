@@ -37,7 +37,10 @@ class RuntimeService:
         self._last_result: VoiceOrchestrationResult | None = None
         self._run_token: str | None = None
         self._state_callbacks: list[StateCallback] = []
-        self.orchestrator.state_store.subscribe(self._forward_state_event)
+        # The session manager may replace the per-session orchestrator. Keep
+        # the subscription owner independently so close always detaches it.
+        self._state_store = orchestrator.state_store
+        self._state_store.subscribe(self._forward_state_event)
         if state_callback is not None:
             self.subscribe_state(state_callback)
 
@@ -104,6 +107,20 @@ class RuntimeService:
             self.session_manager.cancel_session()
         else:
             self.orchestrator.cancel()
+        return True
+
+    def close(self) -> bool:
+        """Stop capture before replacement; never leave a second audio owner."""
+        self.cancel_voice_session()
+        threads = [self._thread, getattr(self.session_manager, "_thread", None)]
+        for thread in threads:
+            if thread is not None and thread.is_alive():
+                thread.join(timeout=2.0)
+        if any(thread is not None and thread.is_alive() for thread in threads):
+            return False
+        self._state_store.unsubscribe(self._forward_state_event)
+        with self._lock:
+            self._state_callbacks.clear()
         return True
 
     def subscribe_state(self, callback: StateCallback) -> StateCallback:

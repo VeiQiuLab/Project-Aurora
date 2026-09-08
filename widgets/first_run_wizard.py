@@ -9,7 +9,8 @@ import customtkinter as ctk
 
 from modules.dependency_actions import OllamaPullTask, open_official_ollama_download
 from modules.first_run import FIRST_RUN_STEPS, FirstRunController, empty_runtime_report
-from modules.runtime_dependencies import RuntimeDependencyManager
+from modules.runtime_state import shared_runtime_state
+from widgets.voice_setup_wizard import VoiceSetupWizard
 from modules.runtime_display import localized_runtime_item
 from modules.ui_theme import (
     COLOR_ERROR,
@@ -50,6 +51,8 @@ class FirstRunWizard(ctk.CTkToplevel):
         on_complete,
         logger,
         runtime_manager=None,
+        runtime_state=None,
+        settings=None,
         service_manager=None,
     ):
         super().__init__(parent)
@@ -59,7 +62,8 @@ class FirstRunWizard(ctk.CTkToplevel):
         self.settings_get = settings_get
         self.on_complete = on_complete
         self.logger = logger
-        self.runtime_manager = runtime_manager or RuntimeDependencyManager(_SettingsView(settings_get))
+        self.settings = settings or _SettingsView(settings_get)
+        self.runtime_state = runtime_state or shared_runtime_state(self.settings, parent, runtime_manager)
         self.service_manager = service_manager
         self.controller = FirstRunController(
             empty_runtime_report(),
@@ -85,6 +89,7 @@ class FirstRunWizard(ctk.CTkToplevel):
         self._build_ui()
         self.logger.info("First Run Wizard opened")
         self.render()
+        self._unsubscribe = self.runtime_state.subscribe(self._on_snapshot)
 
     def _text(self, key):
         value = str(self.t(key))
@@ -280,7 +285,10 @@ class FirstRunWizard(ctk.CTkToplevel):
         selected = self.controller.selected_chat_model if self.controller.model_decision in {"auto", "use_existing", "downloaded"} else self._text("first_run_skipped")
         self._row(card.body, self._text("chat_model"), selected)
         self._row(card.body, self._text("runtime_item_embedding"), self.controller.selected_embedding_model or self._text("first_run_optional_unchanged"))
-        self._row(card.body, self._text("runtime_domain_voice"), self._text("first_run_optional_later"))
+        voice = self.controller.report.get("voice", {})
+        key = "runtime_status_not_enabled" if not voice.get("enabled") else "runtime_status_ready" if voice.get("ready") else "runtime_status_needs_configuration"
+        self._row(card.body, self._text("runtime_domain_voice"), self._text(key))
+        SecondaryButton(card.body, text=self._text("voice_setup_configure"), command=self._setup_voice).pack(anchor="w", pady=SPACING_SMALL)
 
     def _format_gb(self, value):
         try:
@@ -304,34 +312,22 @@ class FirstRunWizard(ctk.CTkToplevel):
         self.skip_button.configure(state="disabled" if downloading else "normal")
 
     def refresh_environment(self):
-        if self.check_running:
+        self.runtime_state.refresh()
+
+    def _on_snapshot(self, snapshot):
+        if self._disposed:
             return
-        self.check_running = True
-        self.footer.message.configure(text=self._text("runtime_checking"), text_color=COLOR_MUTED)
+        self.check_running = snapshot.checking
+        self.has_checked = snapshot.revision > 0
+        self.controller.apply_report(snapshot.report)
+        self.footer.message.configure(text=self._text("runtime_checking" if snapshot.checking else "runtime_check_failed" if snapshot.error else "first_run_environment_complete"))
+        self.render()
 
-        def worker():
-            try:
-                report = self.runtime_manager.check(timeout=1.0)
-            except Exception as error:
-                report = empty_runtime_report()
-                message = self._text("first_run_environment_failed")
-                if self.logger:
-                    self.logger.error(
-                        f"First Run environment check failed: {type(error).__name__}: {error}"
-                    )
-            else:
-                message = self._text("first_run_environment_complete")
-
-            def finish():
-                self.check_running = False
-                self.has_checked = True
-                self.controller.apply_report(report)
-                self.footer.message.configure(text=message, text_color=COLOR_SUCCESS if report.get("core_ready") else COLOR_WARNING)
-                self.render()
-
-            self._after(finish)
-
-        threading.Thread(target=worker, daemon=True).start()
+    def _setup_voice(self):
+        self.settings.set("voice.enabled", True)
+        self.runtime_state.refresh()
+        VoiceSetupWizard(self, settings=self.settings, runtime_state=self.runtime_state,
+                         logger=self.logger, translate=self.t, on_close=self.grab_set)
 
     def _after(self, callback):
         if self._disposed:
@@ -532,6 +528,7 @@ class FirstRunWizard(ctk.CTkToplevel):
         if self._disposed:
             return
         self._disposed = True
+        self._unsubscribe()
         if self.cancel_event is not None:
             self.cancel_event.set()
         if self.pull_task is not None:

@@ -8,7 +8,7 @@ $ErrorActionPreference = "Stop"
 $installerRoot = Split-Path -Parent $MyInvocation.MyCommand.Path
 $projectRoot = Split-Path -Parent $installerRoot
 $scriptPath = Join-Path $installerRoot "Aurora.iss"
-$distRoot = Join-Path $projectRoot "dist\Aurora"
+$distRoot = Join-Path $projectRoot "dist\Aurora-Core"
 
 if ($Python) {
     if (-not (Test-Path -LiteralPath $Python -PathType Leaf)) {
@@ -92,7 +92,7 @@ foreach ($required in @(
 )) {
     $path = Join-Path $distRoot $required
     if (-not (Test-Path -LiteralPath $path)) {
-        Write-Error "Release directory is incomplete: dist\Aurora\$required"
+        Write-Error "Release directory is incomplete: dist\Aurora-Core\$required"
     }
 }
 

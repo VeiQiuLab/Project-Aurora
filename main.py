@@ -6,6 +6,14 @@ from modules.single_instance import enforce_single_instance
 # background workers, downloads, or model resolution imports/initialization.
 single_instance_guard = enforce_single_instance()
 
+if __name__ == "__main__" and "--voice-runtime-check" in sys.argv:
+    from modules.voice_runtime_check import main as check_voice_distribution
+
+    try:
+        raise SystemExit(check_voice_distribution())
+    finally:
+        single_instance_guard.close()
+
 
 import customtkinter as ctk
 import copy
@@ -130,7 +138,6 @@ from modules.search import search_memories, search_conversations
 from modules.memory_retrieval import build_memory_retrieval_config, format_memory_context, retrieve_memories
 from modules.retrieval import format_knowledge_context, search_knowledge, retrieval_summary
 from modules.service_manager import ServiceManager
-from modules.runtime_dependencies import RuntimeDependencyManager
 from modules.shutdown_manager import ShutdownManager
 from modules.experience.audio.device_discovery import resolve_ffmpeg_path, resolve_voice_input_device
 from modules.experience.audio.recorder import FFmpegMicrophoneRecorder
@@ -152,7 +159,7 @@ from widgets.pages.library_page import LibraryPage
 from widgets.pages.memory_page import MemoryPage
 from widgets.pages.persona_page import PersonaPage
 from widgets.pages.settings_page import SettingsPage
-from widgets.settings_window import SettingsWindow
+from modules.runtime_state import RuntimeState, mark_voice_unavailable
 
 def apply_language(language):
     normalized = normalize_language(language)
@@ -424,6 +431,7 @@ def show_first_run_wizard():
     def complete_first_run(updates, wizard):
         global first_run_window
         settings.update_many(updates, save=True)
+        runtime_state.refresh()
         logger.info("First Run Wizard completed")
         wizard.grab_release()
         wizard.destroy()
@@ -441,6 +449,8 @@ def show_first_run_wizard():
             build=BUILD,
             translate=t,
             settings_get=settings.get,
+            settings=settings,
+            runtime_state=runtime_state,
             service_manager=service_manager,
             on_complete=complete_first_run,
             logger=logger,
@@ -1237,7 +1247,7 @@ def build_voice_text_input_handler():
     return handle_voice_text
 
 
-def create_application_voice_runtime():
+def create_application_voice_runtime(report):
     """Create the one application Voice Runtime and share its state store."""
 
     def build_runtime():
@@ -1266,7 +1276,13 @@ def create_application_voice_runtime():
             ).lower() != "ffmpeg",
         )
 
-    runtime, diagnostics = create_optional_voice_runtime(settings, build_runtime)
+    requirements = {
+        "ready": bool(report.get("voice", {}).get("ready")),
+        "missing": [],
+    }
+    runtime, diagnostics = create_optional_voice_runtime(
+        settings, build_runtime, dependency_checker=lambda _settings: requirements,
+    )
     if diagnostics["success"]:
         if runtime is not None:
             logger.info("Voice Runtime ready")
@@ -1494,44 +1510,8 @@ btn_knowledge.pack(fill="x", padx=40, pady=8)
 
 
 def show_settings():
-    global settings_window
-
-    if settings_window is not None and settings_window.winfo_exists():
-        settings_window.focus()
-        settings_window.lift()
-        return
-
-    logger.info("Open Settings")
-
-    def clear_settings_window():
-        global settings_window
-        settings_window = None
-
-    settings_window = SettingsWindow(
-        app,
-        settings=settings,
-        controller=settings_controller,
-        text=TEXT,
-        translate=t,
-        language_display=language_display,
-        language_code=language_code,
-        apply_language=apply_language,
-        refresh_main_texts=refresh_main_texts,
-        logger=logger,
-        persona_status_provider=lambda: persona_store.status(
-            settings.get("persona.enabled", True),
-            persona_store.load(update_timestamp=False)
-        ),
-        health_report_provider=lambda: system_self_check(timeout=2),
-        service_test_callback=lambda service_name, url, callback: test_settings_service_connection(
-            settings_window,
-            service_name,
-            url,
-            callback
-        ),
-        model_capability_provider=infer_model_capability,
-        on_close=clear_settings_window
-    )
+    """All Settings entry points open the same category destinations."""
+    create_app_shell().navigate("settings")
 
 
 settings_button = ui_button(
@@ -1555,6 +1535,11 @@ def refresh_main_texts():
     btn_persona.configure(text=t("persona"))
     btn_knowledge.configure(text=t("knowledge_base"))
     settings_button.configure(text=t("settings"))
+    if app_shell is not None:
+        app_shell.return_button.configure(text=f"← {t('nav_back')}")
+        for key, button in app_shell.settings_category_buttons.items():
+            button.configure(text=t(SettingsPage.CATEGORY_KEYS[key]))
+        app_shell._refresh_header(app_shell.current_page)
 
 
 def health_check_legacy():
@@ -1896,115 +1881,28 @@ def startup_check():
     logger.info("Configuration loaded")
     logger.info("Logger initialized")
     logger.info("Required modules loaded")
-    if settings.get("voice.enabled", False):
-        def check_voice_environment():
-            try:
-                voice_dependency_report = RuntimeDependencyManager(
-                    settings
-                ).check_voice_requirements()
-            except Exception as error:
-                logger.warning(f"Voice dependency check failed: {error}")
-                return
-            if voice_dependency_report["ready"]:
-                logger.info("Voice dependencies ready")
-                return
-            missing_names = [
-                item["name"] for item in voice_dependency_report["missing"]
-            ]
-            logger.warning(
-                "Voice dependency missing: " + ", ".join(missing_names)
-            )
+    handled = False
 
-        threading.Thread(target=check_voice_environment, daemon=True).start()
-    else:
-        logger.info("Voice disabled; optional Voice dependencies do not block Core")
-
-    def check_services():
-        service_started = time.perf_counter()
-        try:
-            status = check_all()
-        except Exception as error:
-            logger.error(f"Startup service check failed: {error}")
-            logger.info(
-                f"Service check duration: {int((time.perf_counter() - service_started) * 1000)}ms"
-            )
-            logger.info(
-                f"Startup Check finished: {int((time.perf_counter() - startup_started) * 1000)}ms"
-            )
+    def after_runtime_probe(snapshot):
+        nonlocal handled
+        if handled or snapshot.checking or snapshot.revision == 0 or shutdown_manager.shutting_down:
             return
+        handled = True
+        report = snapshot.report
+        logger.info(f"Startup runtime snapshot: revision={snapshot.revision}, voice={report.get('voice', {}).get('status')}")
+        if report.get("ollama", {}).get("state") == "Installed / Server Offline" and settings.get("ollama.auto_start", False):
+            def ollama_event(event):
+                if event == "started":
+                    mark_service_started_by_app("ollama")
+                if event in ("started", "online") and not shutdown_manager.shutting_down:
+                    app.after(0, runtime_state.refresh)
+            service_manager.start_ollama(
+                settings.get("services.ollama.command", "ollama serve"),
+                settings.get("ollama.host", "http://127.0.0.1:11434"),
+                callback=ollama_event,
+            )
 
-        ollama_connected = status.get("ollama", False) or status.get("api", False)
-        if ollama_connected:
-            logger.info("Ollama connected")
-            try:
-                model_report = RuntimeDependencyManager(settings).check_models(
-                    timeout=1.0
-                )
-                chat_resolution = model_report.get("model_resolution", {}).get(
-                    "chat", {}
-                )
-                resolved_model = str(chat_resolution.get("model") or "")
-                if resolved_model:
-                    logger.info(
-                        "Chat model ready: "
-                        f"mode={chat_resolution.get('mode')}, model={resolved_model}, "
-                        f"reason={chat_resolution.get('reason')}"
-                    )
-                    if not shutdown_manager.shutting_down:
-                        app.after(0, refresh_status)
-                else:
-                    logger.warning("No Chat Supported Ollama model is installed")
-            except Exception as error:
-                logger.warning(
-                    "Automatic Chat model resolution could not be completed: "
-                    f"{type(error).__name__}"
-                )
-        else:
-            logger.info("Ollama unavailable")
-            if settings.get("ollama.auto_start", False):
-                def ollama_event(event):
-                    if isinstance(event, dict):
-                        if event.get("event") == "ollama_snapshot_before_start":
-                            logger.info(f"[OLLAMA SNAPSHOT BEFORE START] {event.get('processes')}")
-                        elif event.get("event") == "ollama_root_started":
-                            logger.info(
-                                f"Ollama root started: pid={event.get('pid')}, "
-                                f"executable={event.get('executable')}, args={event.get('args')}"
-                            )
-                        elif event.get("event") == "ollama_snapshot_after_start":
-                            logger.info(f"[OLLAMA SNAPSHOT AFTER START] {event.get('processes')}")
-                        elif event.get("event") == "ollama_owned_processes":
-                            logger.info(f"[OLLAMA OWNERSHIP RESULT] {event.get('processes')}")
-                        return
-                    if event == "starting":
-                        logger.info("Starting Ollama")
-                    elif event == "started":
-                        mark_service_started_by_app("ollama")
-                        logger.info("Ollama started")
-                        if not shutdown_manager.shutting_down:
-                            app.after(0, refresh_status)
-                    elif event == "command_not_found":
-                        logger.error("Ollama start failed: command not found")
-                    elif event == "failed":
-                        logger.error("Ollama start failed")
-
-                service_manager.start_ollama(
-                    settings.get("services.ollama.command", "ollama serve"),
-                    settings.get("ollama.host", "http://127.0.0.1:11434"),
-                    callback=ollama_event
-                )
-
-        logger.info("Startup Diagnostic:")
-        logger.info(f"Ollama: {'Ready' if ollama_connected else 'Offline'}")
-        logger.info("Startup diagnostic completed")
-        logger.info(
-            f"Service check duration: {int((time.perf_counter() - service_started) * 1000)}ms"
-        )
-        logger.info(
-            f"Startup Check finished: {int((time.perf_counter() - startup_started) * 1000)}ms"
-        )
-
-    threading.Thread(target=check_services, daemon=True).start()
+    runtime_state.subscribe(after_runtime_probe)
 
 
 def navigate_app_shell(page_name):
@@ -2146,7 +2044,8 @@ def app_shell_persona_status_provider():
 def app_shell_settings_status_provider():
     return {
         "status": "healthy",
-        "text": t("settings_page_reuse_note")
+        "text": t("runtime_checking") if runtime_state.snapshot.checking else t("runtime_title"),
+        "runtime_snapshot": runtime_state.snapshot.report
     }
 
 
@@ -2172,6 +2071,7 @@ def create_app_shell():
             settings=settings,
             conversation_manager=ConversationManager(),
             voice_runtime=voice_runtime,
+            runtime_state=runtime_state,
             companion_state=companion_state_store,
             **build_chat_runtime_callbacks()
         ),
@@ -2187,7 +2087,9 @@ def create_app_shell():
             version=VERSION,
             retrieval_summary=retrieval_summary,
             final_prompt_preview_callback=build_persona_final_prompt_preview,
-            open_settings_callback=show_settings,
+            runtime_state=runtime_state,
+            apply_language_callback=apply_language,
+            refresh_text_callback=refresh_main_texts,
             settings_status_provider=app_shell_settings_status_provider,
             service_manager=service_manager,
             logger=logger
@@ -2218,8 +2120,48 @@ logger.info("Application started")
 
 app.protocol("WM_DELETE_WINDOW", lambda: shutdown_app("wm_delete_window"))
 
-voice_runtime = create_application_voice_runtime()
+voice_runtime_signature = None
+
+
+def apply_runtime_voice(report):
+    """Make startup and post-setup checks use the same live Voice gate."""
+    global voice_runtime, voice_runtime_signature
+    import copy
+    signature = copy.deepcopy(settings.get("voice", {}))
+    signature.get("recorder", {}).pop("last_successful_device_guid", None)
+    enabled = bool(report.get("voice", {}).get("enabled"))
+    ready = bool(report.get("voice", {}).get("ready"))
+    changed = signature != voice_runtime_signature
+    if voice_runtime is not None and (not enabled or changed):
+        if not voice_runtime.close():
+            mark_voice_unavailable(report, "previous_session_stopping")
+            if active_chat_page is not None:
+                active_chat_page.attach_voice_runtime(voice_runtime, available=False)
+            return
+        voice_runtime = None
+    if enabled and ready and settings.get("runtime.restart_required", False):
+        mark_voice_unavailable(report, "native_restart_required")
+        ready = False
+    if enabled and ready and voice_runtime is None:
+        voice_runtime = create_application_voice_runtime(report)
+        if voice_runtime is None:
+            mark_voice_unavailable(report, "initialization_failed")
+            ready = False
+        else:
+            voice_runtime_signature = signature
+    if active_chat_page is not None:
+        active_chat_page.attach_voice_runtime(voice_runtime, available=enabled and ready)
+
+
+runtime_state = RuntimeState(
+    settings, dispatch=lambda callback: app.after(0, callback),
+    prepare_voice=apply_runtime_voice, logger=logger,
+)
+settings._runtime_state = runtime_state
+shutdown_manager.register_cleanup(runtime_state.close, "runtime_snapshot")
+shutdown_manager.register_cleanup(lambda: voice_runtime.close() if voice_runtime else None, "voice_runtime")
 create_app_shell()
+runtime_state.refresh()
 
 if first_run_required:
     schedule_after(100, show_first_run_wizard)

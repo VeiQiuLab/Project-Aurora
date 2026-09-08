@@ -1,8 +1,11 @@
 from pathlib import Path
 import os
+import sys
+import json
+import hashlib
 import unicodedata
 
-from PyInstaller.utils.hooks import collect_data_files, collect_submodules
+from PyInstaller.utils.hooks import collect_data_files, collect_submodules, collect_dynamic_libs, copy_metadata
 from PyInstaller.utils.win32.versioninfo import (
     FixedFileInfo,
     StringFileInfo,
@@ -40,15 +43,53 @@ datas = [
     *collect_data_files("customtkinter"),
 ]
 
-# Keep the portable test package Core-only.  In particular, faster-whisper's
-# PyAV dependency redistributes FFmpeg codec libraries.  Aurora must not ship
-# those optional binaries until their release/licensing obligations are handled
-# explicitly.  Runtime diagnostics report these components as optional/missing.
+# Core excludes Voice. Full uses a locked, hash-verified LGPL PyAV overlay;
+# an unrestricted PyPI codec wheel must not leak into the distribution.
 full_voice_build = os.environ.get("AURORA_FULL_VOICE_BUILD") == "1"
-if full_voice_build and os.environ.get("AURORA_VOICE_CODEC_LICENSE_REVIEW") != "approved":
-    raise RuntimeError(
-        "Full Voice Build is gated until FFmpeg/PyAV codec licensing is explicitly reviewed."
-    )
+voice_binaries = []
+voice_paths = []
+voice_runtime_hooks = []
+if full_voice_build:
+    overlay = Path(os.environ.get("AURORA_VOICE_CODEC_OVERLAY", ""))
+    integrity = json.loads((overlay / "overlay-integrity.json").read_text(encoding="utf-8"))
+    actual_files = {
+        path.relative_to(overlay).as_posix()
+        for path in overlay.rglob("*")
+        if path.is_file() and path != overlay / "overlay-integrity.json"
+        and "__pycache__" not in path.parts and path.suffix != ".pyc"
+    }
+    if not integrity.get("files") or set(integrity["files"]) != actual_files:
+        raise RuntimeError("Codec overlay file inventory differs from its integrity manifest")
+    for relative, expected in integrity["files"].items():
+        path = (overlay / relative).resolve()
+        if not path.is_relative_to(overlay.resolve()):
+            raise RuntimeError("Invalid codec overlay path")
+        with path.open("rb") as stream:
+            if hashlib.file_digest(stream, "sha256").hexdigest() != expected:
+                raise RuntimeError(f"Codec overlay integrity mismatch: {relative}")
+    expected_lock = json.loads((project_root / "config/voice_codec_lock.json").read_text(encoding="utf-8"))
+    actual_lock = json.loads((overlay / "third_party/voice-codecs/codec-lock.json").read_text(encoding="utf-8"))
+    if actual_lock != expected_lock:
+        raise RuntimeError("Codec overlay is not the reviewed locked build")
+    expected_dlls = {Path(name).name.casefold() for package in expected_lock["packages"] for name in package["files"]}
+    actual_dlls = {path.name.casefold() for path in (overlay / "voice_codecs").iterdir() if path.is_file()}
+    if not expected_dlls or actual_dlls != expected_dlls:
+        raise RuntimeError("Codec overlay DLL inventory differs from the reviewed lock")
+    if not (overlay / "third_party/playback/sources-lock.json").is_file():
+        raise RuntimeError("Playback notices and corresponding source are required")
+    if json.loads((overlay / "third_party/playback/sources-lock.json").read_text(encoding="utf-8")) != json.loads((project_root / "config/voice_playback_sources_lock.json").read_text(encoding="utf-8")):
+        raise RuntimeError("Playback source lock mismatch")
+    voice_paths = [str(overlay / "python")]
+    sys.path.insert(0, voice_paths[0])
+    codec_dll_handle = os.add_dll_directory(str(overlay / "voice_codecs"))
+    voice_binaries = [(str(path), "voice_codecs") for path in (overlay / "voice_codecs").glob("*.dll")]
+    datas.append((str(overlay / "third_party"), "third_party"))
+    voice_runtime_hooks = [str(project_root / "scripts/pyi_voice_codecs.py")]
+    # Cython imports do not appear in Python bytecode. Enumerate every PyAV
+    # extension from the reviewed overlay (not from an installed PyPI wheel).
+    for extension in (overlay / "python/av").rglob("*.pyd"):
+        destination = extension.parent.relative_to(overlay / "python").as_posix()
+        voice_binaries.append((str(extension), destination))
 
 optional_voice_excludes = [] if full_voice_build else [
     "av",
@@ -61,7 +102,11 @@ optional_voice_excludes = [] if full_voice_build else [
 voice_hiddenimports = []
 if full_voice_build:
     for package in ("faster_whisper", "ctranslate2", "edge_tts", "pygame", "sounddevice", "av"):
-        voice_hiddenimports.extend(collect_submodules(package))
+        voice_hiddenimports.extend(collect_submodules(package, filter=lambda name: ".tests" not in name and ".examples" not in name))
+        datas.extend(collect_data_files(package, excludes=["tests/**", "examples/**"]))
+        voice_binaries.extend(collect_dynamic_libs(package))
+    for distribution in ("faster-whisper", "ctranslate2", "edge-tts", "pygame", "sounddevice", "av"):
+        datas.extend(copy_metadata(distribution, recursive=True))
 
 version_info = VSVersionInfo(
     ffi=FixedFileInfo(
@@ -95,8 +140,8 @@ version_info = VSVersionInfo(
 
 a = Analysis(
     [str(project_root / "main.py")],
-    pathex=[str(project_root)],
-    binaries=[(str(unicodedata_binary), ".")],
+    pathex=[*voice_paths, str(project_root)],
+    binaries=[(str(unicodedata_binary), "."), *voice_binaries],
     datas=datas,
     hiddenimports=[
         "customtkinter",
@@ -106,7 +151,7 @@ a = Analysis(
     ],
     hookspath=[],
     hooksconfig={},
-    runtime_hooks=[],
+    runtime_hooks=voice_runtime_hooks,
     excludes=optional_voice_excludes,
     noarchive=False
 )
@@ -133,5 +178,5 @@ coll = COLLECT(
     a.datas,
     strip=False,
     upx=True,
-    name="Aurora"
+    name="Aurora-Full" if full_voice_build else "Aurora-Core"
 )

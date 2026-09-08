@@ -8,6 +8,7 @@ actions that change the host remain explicit UI operations after user consent.
 
 from __future__ import annotations
 
+import importlib
 import importlib.util
 import json
 import os
@@ -96,6 +97,7 @@ ApiProbe = Callable[[str, float], dict[str, Any]]
 ModuleFinder = Callable[[str], Any]
 AvailabilityProbe = Callable[[], tuple[bool | None, str]]
 WhisperModelProbe = Callable[[str], tuple[bool | None, str]]
+ServiceProbe = Callable[[float], tuple[bool | None, str]]
 HardwareProbe = Callable[[], dict[str, Any]]
 
 
@@ -115,10 +117,13 @@ class RuntimeDependencyManager:
         which: Callable[[str], str | None] = shutil.which,
         bundled_tool_finder: Callable[[str], Path | None] = find_bundled_tool,
         module_finder: ModuleFinder = importlib.util.find_spec,
+        module_importer: ModuleFinder = importlib.import_module,
         ollama_api_probe: ApiProbe | None = None,
         microphone_probe: AvailabilityProbe | None = None,
         playback_device_probe: AvailabilityProbe | None = None,
         whisper_model_probe: WhisperModelProbe | None = None,
+        tts_service_probe: ServiceProbe | None = None,
+        ffmpeg_probe: Callable[[str], bool] | None = None,
         hardware_probe: HardwareProbe | None = None,
         disk_path: str | os.PathLike[str] | None = None,
         environment: Mapping[str, str] | None = None,
@@ -127,10 +132,13 @@ class RuntimeDependencyManager:
         self._which = which
         self._find_bundled_tool = bundled_tool_finder
         self._find_module = module_finder
+        self._import_module = module_importer
         self._ollama_api_probe = ollama_api_probe or self._probe_ollama_api
         self._microphone_probe = microphone_probe or self._probe_microphone
         self._playback_device_probe = playback_device_probe or self._probe_playback_device
         self._whisper_model_probe = whisper_model_probe or self._probe_whisper_model
+        self._tts_service_probe = tts_service_probe or self._probe_edge_tts_service
+        self._ffmpeg_probe = ffmpeg_probe or self._probe_ffmpeg_executable
         self._hardware_probe = hardware_probe
         self._disk_path = Path(disk_path) if disk_path is not None else PROGRAM_ROOT
         self._environment = os.environ if environment is None else environment
@@ -162,7 +170,7 @@ class RuntimeDependencyManager:
         )
         ollama = model_report["ollama"]
         ffmpeg = self.check_ffmpeg()
-        voice = self.check_voice(ffmpeg=ffmpeg)
+        voice = self.check_voice(ffmpeg=ffmpeg, timeout=timeout)
         hardware = model_report["hardware"]
         recommendation = model_report["recommendation"]
         resolution = model_report["model_resolution"]
@@ -818,28 +826,39 @@ class RuntimeDependencyManager:
         except Exception:
             path, source = "", ""
 
+        usable = bool(path)
+        if usable and bool(_get_setting(self.settings, "voice.enabled", False)):
+            try:
+                usable = bool(self._ffmpeg_probe(path))
+            except Exception:
+                usable = False
         return RuntimeItem(
             key="ffmpeg",
             name="FFmpeg",
-            status=RuntimeStatus.READY if path else RuntimeStatus.MISSING,
+            status=RuntimeStatus.READY if usable else RuntimeStatus.MISSING,
             detail=(
                 f"FFmpeg found via {source}: {path}"
-                if path
+                if usable
                 else "FFmpeg was not found; Voice recording is unavailable."
             ),
             required=False,
-            available=bool(path),
+            available=usable,
             data={"path": path, "source": source, "configured": configured},
         ).as_dict()
 
-    def check_voice(self, *, ffmpeg: Mapping[str, Any] | None = None) -> dict[str, Any]:
+    def check_voice(
+        self,
+        *,
+        ffmpeg: Mapping[str, Any] | None = None,
+        timeout: float = 2.0,
+    ) -> dict[str, Any]:
         """Check optional Voice components without loading models or devices."""
 
         voice_enabled = bool(_get_setting(self.settings, "voice.enabled", False))
         ffmpeg_item = dict(ffmpeg or self.check_ffmpeg())
 
-        faster_whisper = self._module_available("faster_whisper")
-        ctranslate2 = self._module_available("ctranslate2")
+        faster_whisper = self._runtime_available("faster_whisper", enabled=voice_enabled)
+        ctranslate2 = self._runtime_available("ctranslate2", enabled=voice_enabled)
         stt_ready = faster_whisper and ctranslate2
         stt_detail = (
             "Faster-Whisper runtime is installed."
@@ -889,14 +908,32 @@ class RuntimeDependencyManager:
                     "Microphone access could not be checked. Verify Windows microphone permission and try again."
                 )
 
-        edge_tts = self._module_available("edge_tts")
+        edge_tts = self._runtime_available("edge_tts", enabled=voice_enabled)
         tts_detail = (
-            "Edge-TTS runtime is installed; online synthesis is checked when used."
+            "Edge-TTS runtime is installed."
             if edge_tts
             else "edge-tts is not installed."
         )
+        if not voice_enabled:
+            tts_service_available = None
+            tts_service_detail = (
+                "Voice is turned off. The Edge TTS service will be checked after Voice is enabled."
+            )
+        elif not edge_tts:
+            tts_service_available = False
+            tts_service_detail = "The Edge TTS service cannot be checked until its runtime is available."
+        else:
+            try:
+                tts_service_available, tts_service_detail = self._tts_service_probe(
+                    max(float(timeout), 0.1)
+                )
+            except Exception:
+                tts_service_available = None
+                tts_service_detail = (
+                    "The Edge TTS service could not be checked. Verify the network connection and try again."
+                )
 
-        pygame_available = self._module_available("pygame")
+        pygame_available = self._runtime_available("pygame", enabled=voice_enabled)
         if not voice_enabled:
             output_available = None
             output_detail = (
@@ -920,6 +957,7 @@ class RuntimeDependencyManager:
             "stt": stt_ready,
             "whisper_model": whisper_available,
             "tts": edge_tts,
+            "tts_service": tts_service_available,
             "playback": output_available if pygame_available else False,
         }
         details = {
@@ -928,6 +966,7 @@ class RuntimeDependencyManager:
             "stt": stt_detail,
             "whisper_model": whisper_detail,
             "tts": tts_detail,
+            "tts_service": tts_service_detail,
             "playback": output_detail,
         }
         names = {
@@ -935,14 +974,32 @@ class RuntimeDependencyManager:
             "microphone": "Microphone",
             "stt": "STT",
             "whisper_model": "Whisper Model",
-            "tts": "TTS",
+            "tts": "TTS Runtime",
+            "tts_service": "TTS Service",
             "playback": "Playback",
         }
 
         items = []
-        for key in ("microphone", "stt", "whisper_model", "tts", "playback"):
+        for key in (
+            "microphone",
+            "stt",
+            "whisper_model",
+            "tts",
+            "tts_service",
+            "playback",
+        ):
             available = component_values[key]
-            status = _optional_component_status(available, voice_enabled)
+            status = (
+                RuntimeStatus.OPTIONAL
+                if not voice_enabled
+                else RuntimeStatus.READY
+                if available is True
+                else RuntimeStatus.DEGRADED
+                if key == "tts_service"
+                else RuntimeStatus.MISSING
+                if available is False
+                else RuntimeStatus.DEGRADED
+            )
             items.append(
                 RuntimeItem(
                     key=key,
@@ -954,6 +1011,14 @@ class RuntimeDependencyManager:
                     data=(
                         {"model_size": model_size}
                         if key == "whisper_model"
+                        else {
+                            "provider": "Edge TTS",
+                            "kind": "service" if key == "tts_service" else "runtime",
+                            "network_required": key == "tts_service",
+                        }
+                        if key in {"tts", "tts_service"}
+                        else {"runtime_available": pygame_available}
+                        if key == "playback"
                         else {}
                     ),
                 ).as_dict()
@@ -993,11 +1058,11 @@ class RuntimeDependencyManager:
             "components": component_values,
         }
 
-    def check_voice_requirements(self) -> dict[str, Any]:
+    def check_voice_requirements(self, *, timeout: float = 2.0) -> dict[str, Any]:
         """Return the unified Voice startup gate used by production callers."""
 
         ffmpeg = self.check_ffmpeg()
-        voice = self.check_voice(ffmpeg=ffmpeg)
+        voice = self.check_voice(ffmpeg=ffmpeg, timeout=timeout)
         items = [ffmpeg, *voice["items"]]
         missing = [item for item in items if item.get("available") is not True]
         return {
@@ -1133,22 +1198,45 @@ class RuntimeDependencyManager:
         except Exception:
             return False
 
-    def _probe_microphone(self) -> tuple[bool | None, str]:
-        if not self._module_available("sounddevice"):
-            return False, "sounddevice is not installed."
+    def _runtime_available(self, name: str, *, enabled: bool) -> bool:
+        if not self._module_available(name):
+            return False
+        if not enabled:
+            return True
         try:
-            import sounddevice
+            self._import_module(name)
+            return True
+        except Exception:
+            # A package directory whose extension/DLL cannot load is not usable.
+            return False
 
-            device = sounddevice.query_devices(kind="input")
+    def _probe_microphone(self) -> tuple[bool | None, str]:
+        try:
+            from modules.experience.audio.device_discovery import enumerate_dshow_audio_devices
+
+            # Production input is DirectShow, not PortAudio's default device.
+            # Enumeration does not capture audio or change the saved selection.
+            devices = enumerate_dshow_audio_devices(
+                str(_get_setting(self.settings, "voice.recorder.ffmpeg_path", "ffmpeg")),
+                timeout_seconds=5.0,
+            )
         except Exception:
             return False, (
                 "No usable microphone was detected. Check Windows microphone permission "
                 "and select an input device in Settings."
             )
-        name = str(device.get("name", "") or "").strip() if isinstance(device, Mapping) else ""
-        if not name:
+        if not devices:
             return False, "No usable microphone was detected."
-        return True, f"Microphone detected: {name}"
+        return True, "A DirectShow microphone is available."
+
+    @staticmethod
+    def _probe_ffmpeg_executable(path: str) -> bool:
+        result = subprocess.run(
+            [path, "-version"], capture_output=True, text=True,
+            encoding="utf-8", errors="replace", timeout=3.0, check=False,
+            **with_hidden_console(),
+        )
+        return result.returncode == 0 and "ffmpeg version" in result.stdout.casefold()
 
     def _probe_playback_device(self) -> tuple[bool | None, str]:
         # Device enumeration is read-only.  Do not initialize pygame.mixer here.
@@ -1168,27 +1256,37 @@ class RuntimeDependencyManager:
             return False, "No usable audio output device was detected."
         return True, f"Playback device detected: {name}"
 
-    def _probe_whisper_model(self, model_size: str) -> tuple[bool | None, str]:
-        configured = Path(model_size).expanduser()
-        if configured.exists():
-            return True, f"Whisper model path is available: {configured}"
+    @staticmethod
+    def _probe_edge_tts_service(timeout: float) -> tuple[bool | None, str]:
+        """Check the online provider separately from the installed runtime."""
 
-        cache_root = os.environ.get("HF_HUB_CACHE")
-        if cache_root:
-            hub = Path(cache_root)
-        else:
-            hf_home = os.environ.get("HF_HOME")
-            hub = Path(hf_home) / "hub" if hf_home else Path.home() / ".cache" / "huggingface" / "hub"
-        normalized = model_size.strip().casefold().replace("_", "-")
-        repository = hub / f"models--Systran--faster-whisper-{normalized}"
-        snapshots = repository / "snapshots"
-        if snapshots.is_dir():
-            try:
-                if any(path.is_dir() for path in snapshots.iterdir()):
-                    return True, f"Whisper model cache is available: {model_size}"
-            except OSError:
-                return None, f"Whisper model cache could not be inspected: {model_size}"
-        return False, f"Whisper model is not cached locally: {model_size}"
+        try:
+            import asyncio
+            import edge_tts
+
+            async def fetch_voices():
+                return await asyncio.wait_for(
+                    edge_tts.list_voices(),
+                    timeout=max(float(timeout), 0.1),
+                )
+
+            voices = asyncio.run(fetch_voices())
+        except Exception:
+            return False, (
+                "Edge TTS runtime is installed, but its online service is currently unavailable. "
+                "Check the network connection and try again."
+            )
+        if not voices:
+            return False, "Edge TTS returned no available voices. Try again later."
+        return True, "Edge TTS runtime and online service are currently available."
+
+    def _probe_whisper_model(self, model_size: str) -> tuple[bool | None, str]:
+        from modules.voice_models import local_model_path
+
+        path = local_model_path(model_size)
+        if path is not None:
+            return True, f"Whisper model is available locally: {model_size}"
+        return False, f"Whisper model is missing or incomplete: {model_size}"
 
     def _default_hardware_probe(self) -> dict[str, Any]:
         warnings: list[str] = []

@@ -22,11 +22,12 @@ def translate(key):
         "runtime_status_not_enabled": "Not enabled",
         "runtime_status_not_configured": "Not configured",
         "runtime_status_needs_attention": "Needs attention",
+        "runtime_status_needs_configuration": "Needs configuration",
     }.get(key, key)
 
 
-def test_runtime_default_view_is_four_product_domains_only():
-    assert _DOMAIN_ITEMS == ("core", "local_ai", "knowledge", "voice")
+def test_runtime_default_view_is_three_product_domains_with_lightweight_core():
+    assert _DOMAIN_ITEMS == ("local_ai", "knowledge", "voice")
     source = inspect.getsource(DependencyCenter._build)
     assert "runtime_component_details" not in source
     assert "runtime_optional_features" not in source
@@ -37,18 +38,18 @@ def test_compact_domain_status_vocabulary():
     assert runtime_domain_status_text("core", {"status": "Ready"}, translate) == "Ready"
     assert runtime_domain_status_text("knowledge", {"status": "Optional", "data": {}}, translate) == "Not configured"
     assert runtime_domain_status_text("voice", {"status": "Optional", "data": {"enabled": False}}, translate) == "Not enabled"
-    assert runtime_domain_status_text("voice", {"status": "Degraded", "data": {"enabled": True}}, translate) == "Needs attention"
+    assert runtime_domain_status_text("voice", {"status": "Degraded", "data": {"enabled": True}}, translate) == "Needs configuration"
 
 
 def test_details_are_only_opened_by_explicit_diagnostics_action():
     build_source = inspect.getsource(DependencyCenter._build)
     diagnostics_source = inspect.getsource(DependencyCenter.show_diagnostics)
     assert "runtime_diagnostics" in build_source
-    assert "json.dumps" in diagnostics_source
+    assert "show_runtime_details" in diagnostics_source
 
 
 def test_voice_setup_checks_all_required_components():
-    assert set(VOICE_SETUP_KEYS) == {"stt", "whisper_model", "tts", "playback", "ffmpeg", "microphone"}
+    assert set(VOICE_SETUP_KEYS) == {"stt", "whisper_model", "tts", "tts_service", "playback", "ffmpeg", "microphone"}
     assert voice_setup_state({"voice": {"enabled": False, "ready": False}}) == "disabled"
     assert voice_setup_state({"voice": {"enabled": True, "ready": False}}) == "configure"
     assert voice_setup_state({"voice": {"enabled": True, "ready": True}}) == "ready"
@@ -81,80 +82,33 @@ def test_voice_off_hides_device_and_setup_actions():
     assert "if voice_enabled" in source
 
 
-def test_ready_voice_hides_setup_button(monkeypatch):
-    hidden = []
-
-    class Manager:
-        def __init__(self, _settings):
-            pass
-
-        def check_voice_requirements(self):
-            return {"ready": True}
-
-    class ImmediateThread:
-        def __init__(self, *, target, daemon):
-            self.target = target
-
-        def start(self):
-            self.target()
-
-    monkeypatch.setattr("widgets.pages.settings_page.RuntimeDependencyManager", Manager)
-    monkeypatch.setattr("widgets.pages.settings_page.threading.Thread", ImmediateThread)
-    button = SimpleNamespace(
-        winfo_exists=lambda: True,
-        configure=lambda **_values: None,
-        pack_forget=lambda: hidden.append(True),
-    )
-    status = SimpleNamespace(winfo_exists=lambda: True, configure=lambda **_values: None)
+def voice_page(ready):
+    from modules.runtime_state import RuntimeSnapshot
+    changes, hidden, shown = [], [], []
+    snapshot = RuntimeSnapshot(1, json.dumps({"voice": {"enabled": True, "ready": ready}}))
     page = SimpleNamespace(
-        voice_setup_button=button,
-        voice_setup_status=status,
-        settings={},
+        voice_setup_button=SimpleNamespace(configure=lambda **kw: changes.append(kw),
+                                           pack_forget=lambda: hidden.append(True),
+                                           pack=lambda **kw: shown.append(True)),
+        voice_setup_status=SimpleNamespace(configure=lambda **kw: None),
+        settings={"voice.enabled": True},
+        runtime_state=SimpleNamespace(snapshot=snapshot),
         t=lambda key: key,
-        after=lambda _delay, callback: callback(),
     )
+    return page, changes, hidden, shown
 
+
+def test_ready_voice_hides_setup_button():
+    page, changes, hidden, shown = voice_page(True)
     SettingsPage._refresh_voice_setup_state(page)
+    assert hidden == [True] and not shown
 
-    assert hidden == [True]
 
-
-def test_incomplete_voice_enables_one_setup_action(monkeypatch):
-    configured = []
-
-    class Manager:
-        def __init__(self, _settings):
-            pass
-
-        def check_voice_requirements(self):
-            return {"ready": False}
-
-    class ImmediateThread:
-        def __init__(self, *, target, daemon):
-            self.target = target
-
-        def start(self):
-            self.target()
-
-    monkeypatch.setattr("widgets.pages.settings_page.RuntimeDependencyManager", Manager)
-    monkeypatch.setattr("widgets.pages.settings_page.threading.Thread", ImmediateThread)
-    button = SimpleNamespace(
-        winfo_exists=lambda: True,
-        configure=lambda **values: configured.append(values),
-        pack_forget=lambda: None,
-    )
-    status = SimpleNamespace(winfo_exists=lambda: True, configure=lambda **_values: None)
-    page = SimpleNamespace(
-        voice_setup_button=button,
-        voice_setup_status=status,
-        settings={},
-        t=lambda key: key,
-        after=lambda _delay, callback: callback(),
-    )
-
+def test_incomplete_voice_enables_one_setup_action():
+    page, changes, hidden, shown = voice_page(False)
     SettingsPage._refresh_voice_setup_state(page)
-
-    assert configured == [{"state": "normal"}]
+    assert changes == [{"text": "voice_setup_configure", "state": "normal"}]
+    assert shown == [True] and not hidden
 
 
 def test_sidebar_has_one_navigation_source_and_no_settings_heading():
@@ -170,4 +124,6 @@ def test_voice_full_build_policy_is_pinned_and_runtime_install_disabled():
     assert policy["codec_license_review_required"] is True
     assert all(value and value[0].isdigit() for value in policy["components"].values())
     spec = (ROOT / "Project Aurora.spec").read_text(encoding="utf-8")
-    assert "AURORA_VOICE_CODEC_LICENSE_REVIEW" in spec
+    assert "AURORA_VOICE_CODEC_OVERLAY" in spec
+    assert "voice_codec_lock.json" in spec
+    assert "Codec overlay integrity mismatch" in spec

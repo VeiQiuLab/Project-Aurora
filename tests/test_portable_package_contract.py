@@ -60,7 +60,7 @@ class PortablePackageValidatorTests(unittest.TestCase):
     def test_utf8_and_utf16_developer_paths_are_rejected(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
-            developer_path = r"C:\Users\Developer\Project-Aurora"
+            developer_path = r"C:\AuroraTest\Project-Aurora"
             (root / "utf8.bin").write_bytes(b"prefix" + developer_path.encode("utf-8") + b"suffix")
             (root / "utf16.bin").write_bytes(developer_path.encode("utf-16-le"))
 
@@ -93,10 +93,23 @@ class PortableBuildContractTests(unittest.TestCase):
     def test_portable_script_has_privacy_scan_and_hash(self):
         content = (PROJECT_ROOT / "build_portable.ps1").read_text(encoding="utf-8")
 
-        self.assertIn("Aurora-Windows-Test.zip", content)
+        self.assertIn("Aurora-Windows-$buildProfile-Test.zip", content)
+        self.assertIn("[switch]$FullVoice", content)
         self.assertIn("validate_portable_package.py", content)
         self.assertIn("Get-FileHash", content)
         self.assertIn("SHA256", content)
+
+    def test_installer_uses_current_core_output_not_legacy_directory(self):
+        executable_build = (PROJECT_ROOT / "build_exe.ps1").read_text(encoding="utf-8")
+        installer_build = (PROJECT_ROOT / "installer" / "build_installer.ps1").read_text(encoding="utf-8")
+        installer_spec = (PROJECT_ROOT / "installer" / "Aurora.iss").read_text(encoding="utf-8")
+
+        self.assertIn("'Full' } else { 'Core' }", executable_build)
+        self.assertIn('"dist\\Aurora-$buildProfile"', executable_build)
+        self.assertIn('"dist\\Aurora-Core"', installer_build)
+        self.assertIn('Source: "..\\dist\\Aurora-Core\\*"', installer_spec)
+        self.assertNotIn('"dist\\Aurora"', installer_build)
+        self.assertNotIn('Source: "..\\dist\\Aurora\\*"', installer_spec)
 
 
 if __name__ == "__main__":

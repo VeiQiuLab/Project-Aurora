@@ -1,7 +1,7 @@
 param(
     [string]$Python = "",
     [switch]$FullVoice,
-    [switch]$VoiceCodecLicenseReviewed
+    [string]$VoiceCodecOverlay = "build\voice-codec-overlay"
 )
 
 $ErrorActionPreference = "Stop"
@@ -60,8 +60,8 @@ if ($LASTEXITCODE -ne 0 -or -not $releaseVersion) {
 Write-Host "Building Project Aurora $releaseVersion with $Python"
 
 if ($FullVoice) {
-    if (-not $VoiceCodecLicenseReviewed) {
-        Write-Error "Full Voice Build requires an explicit completed codec/FFmpeg license review. Pass -VoiceCodecLicenseReviewed only after approval."
+    if (-not (Test-Path -LiteralPath (Join-Path $VoiceCodecOverlay 'overlay-integrity.json'))) {
+        Write-Error "Prepare the locked LGPL codec overlay before building Full Voice. See docs/VOICE_RUNTIME_DISTRIBUTION.md."
     }
     $voicePolicy = Join-Path $projectRoot "config\voice_runtime_build.json"
     $voiceValidator = Join-Path $projectRoot "scripts\validate_voice_runtime.py"
@@ -70,7 +70,10 @@ if ($FullVoice) {
         Write-Error "The build environment does not match the pinned Aurora Voice Runtime versions."
     }
     $env:AURORA_FULL_VOICE_BUILD = "1"
-    $env:AURORA_VOICE_CODEC_LICENSE_REVIEW = "approved"
+    $env:AURORA_VOICE_CODEC_OVERLAY = (Resolve-Path -LiteralPath $VoiceCodecOverlay).Path
+} else {
+    $env:AURORA_FULL_VOICE_BUILD = $null
+    $env:AURORA_VOICE_CODEC_OVERLAY = $null
 }
 
 & $Python -m PyInstaller --version | Out-Host
@@ -89,13 +92,15 @@ if ($FullVoice) {
 }
 
 & $Python -m PyInstaller --noconfirm --clean "Project Aurora.spec"
+$buildExitCode = $LASTEXITCODE
 $env:AURORA_FULL_VOICE_BUILD = $null
-$env:AURORA_VOICE_CODEC_LICENSE_REVIEW = $null
-if ($LASTEXITCODE -ne 0) {
+$env:AURORA_VOICE_CODEC_OVERLAY = $null
+if ($buildExitCode -ne 0) {
     Write-Error "PyInstaller build failed."
 }
 
-$distRoot = Join-Path $projectRoot "dist\Aurora"
+$buildProfile = if ($FullVoice) { 'Full' } else { 'Core' }
+$distRoot = Join-Path $projectRoot "dist\Aurora-$buildProfile"
 if (-not (Test-Path -LiteralPath (Join-Path $distRoot "Aurora.exe"))) {
     Write-Error "Build output missing: dist\Aurora\Aurora.exe"
 }
@@ -115,7 +120,7 @@ foreach ($required in @(
     }
 }
 
-Write-Host "Build complete: dist\Aurora\Aurora.exe"
+Write-Host "Build complete: $distRoot\Aurora.exe"
 
 if ($FullVoice) {
     $integrityPath = Join-Path $distRoot "voice-runtime-integrity.json"

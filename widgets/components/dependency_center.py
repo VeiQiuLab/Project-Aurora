@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import json
 import threading
 from tkinter import messagebox
 
@@ -13,15 +12,16 @@ from modules.dependency_actions import (
     RECOMMENDED_EMBEDDING_MODEL,
     open_official_ollama_download,
 )
+from modules.runtime_state import shared_runtime_state
 from modules.i18n import t as i18n_t
 from modules.runtime_display import localized_runtime_item
 from modules.runtime_dependencies import (
-    RuntimeDependencyManager,
     persist_manual_model_selection,
 )
 from modules.ui_theme import COLOR_ERROR, COLOR_MUTED, COLOR_SUCCESS, COLOR_WARNING, FONT_NORMAL, FONT_SMALL, SPACING_MEDIUM, SPACING_SMALL
 from widgets.ui_components import PrimaryButton, SecondaryButton, SectionCard
 from widgets.voice_setup_wizard import VoiceSetupWizard
+from widgets.runtime_details import show_runtime_details
 
 
 _STATUS_COLORS = {
@@ -32,7 +32,7 @@ _STATUS_COLORS = {
     "Degraded": COLOR_WARNING,
 }
 
-_DOMAIN_ITEMS = ("core", "local_ai", "knowledge", "voice")
+_DOMAIN_ITEMS = ("local_ai", "knowledge", "voice")
 _VISIBLE_ITEMS = (
     "ollama",
     "local_ai_service",
@@ -55,7 +55,7 @@ def runtime_domain_status_text(key, item, translate):
         return translate("runtime_status_ready")
     if status == "Optional":
         return translate("runtime_status_not_enabled" if key == "voice" or enabled is False else "runtime_status_not_configured")
-    return translate("runtime_status_needs_attention")
+    return translate("runtime_status_needs_configuration" if key == "voice" else "runtime_status_needs_attention")
 
 
 class DependencyCenter(ctk.CTkFrame):
@@ -69,6 +69,7 @@ class DependencyCenter(ctk.CTkFrame):
         service_manager=None,
         open_settings_callback=None,
         runtime_manager=None,
+        runtime_state=None,
         logger=None,
         translate=None,
         **kwargs,
@@ -78,7 +79,8 @@ class DependencyCenter(ctk.CTkFrame):
         self.settings = settings
         self.service_manager = service_manager
         self.open_settings_callback = open_settings_callback
-        self.runtime_manager = runtime_manager or RuntimeDependencyManager(settings)
+        self.runtime_state = runtime_state or shared_runtime_state(settings, parent, runtime_manager)
+        self.runtime_manager = self.runtime_state.manager
         self.logger = logger
         self.t = translate or i18n_t
         self.report = None
@@ -96,14 +98,14 @@ class DependencyCenter(ctk.CTkFrame):
         self._check_running = False
         self._whisper_running = False
         self._build()
-        self.check_again()
+        self._unsubscribe = self.runtime_state.subscribe(self._on_snapshot)
 
     def _build(self):
         summary = SectionCard(self, self.t("runtime_title"))
         summary.pack(fill="x", pady=(0, SPACING_MEDIUM))
         ctk.CTkLabel(
             summary.body,
-            text=self.t("runtime_intro"),
+            text=self.t("runtime_core_running"),
             font=FONT_NORMAL,
             text_color=COLOR_MUTED,
             anchor="w",
@@ -121,6 +123,12 @@ class DependencyCenter(ctk.CTkFrame):
             detail = ctk.CTkLabel(row, text="", font=FONT_SMALL, text_color=COLOR_MUTED, anchor="e", wraplength=380)
             detail.grid(row=0, column=2, sticky="e")
             self.domain_rows[key] = (status, detail)
+            if key == "voice":
+                self.voice_setup_button = SecondaryButton(
+                    row, text=self.t("voice_setup_configure"), command=self.open_voice_setup,
+                )
+                self.voice_setup_button.grid(row=0, column=2, sticky="e")
+                self.voice_setup_button.grid_remove()
 
         self.message = ctk.CTkLabel(
             summary.body,
@@ -140,7 +148,6 @@ class DependencyCenter(ctk.CTkFrame):
         self._more_action_callbacks = {
             self.t("runtime_reevaluate"): lambda: self.check_again(reevaluate=True),
             self.t("runtime_install_download"): self.install_or_download,
-            self.t("runtime_configure"): self.configure,
             self.t("runtime_repair"): self.repair,
             self.t("runtime_diagnostics"): self.show_diagnostics,
         }
@@ -153,20 +160,6 @@ class DependencyCenter(ctk.CTkFrame):
         self.more_actions.set(self.t("runtime_more_actions"))
         self.more_actions.pack(side="left")
         self.cancel_button = SecondaryButton(actions, text=self.t("cancel"), command=self.cancel_download)
-
-        self.voice_setup_frame = SectionCard(self, self.t("runtime_domain_voice"))
-        ctk.CTkLabel(
-            self.voice_setup_frame.body,
-            text=self.t("voice_setup_incomplete"),
-            font=FONT_NORMAL,
-            text_color=COLOR_MUTED,
-            anchor="w",
-        ).pack(fill="x")
-        PrimaryButton(
-            self.voice_setup_frame.body,
-            text=self.t("voice_setup_one_click"),
-            command=self.open_voice_setup,
-        ).pack(anchor="w", pady=(SPACING_MEDIUM, 0))
 
     def _run_more_action(self, label):
         callback = self._more_action_callbacks.get(str(label))
@@ -194,43 +187,26 @@ class DependencyCenter(ctk.CTkFrame):
             return
 
     def check_again(self, reevaluate=False):
-        if self._disposed or self._check_running or self.pull_task is not None:
+        if not self._disposed and self.pull_task is None:
+            self.runtime_state.refresh(reevaluate=reevaluate)
+
+    def _on_snapshot(self, snapshot):
+        if self._disposed:
             return
-        self._check_running = True
-        self.check_button.configure(state="disabled", text=self.t("checking"))
-        self.more_actions.configure(state="disabled")
-        self.message.configure(text=self.t("runtime_checking"), text_color=COLOR_MUTED)
-
-        def worker():
-            try:
-                if reevaluate:
-                    report = self.runtime_manager.check(
-                        timeout=1.0,
-                        reevaluate_models=True,
-                    )
-                else:
-                    report = self.runtime_manager.check(timeout=1.0)
-            except Exception as error:
-                report = None
-                error_text = self.t("runtime_check_failed")
-                if self.logger:
-                    self.logger.error(
-                        f"Dependency Center check failed: {type(error).__name__}: {error}"
-                    )
-
-            def finish():
-                self._check_running = False
-                self.check_button.configure(state="normal", text=self.t("runtime_check_again"))
-                self.more_actions.configure(state="normal")
-                if report is None:
-                    self.message.configure(text=error_text, text_color=COLOR_ERROR)
-                    return
-                self.report = report
-                self._render_report(report)
-
-            self._after(finish)
-
-        threading.Thread(target=worker, daemon=True).start()
+        self._check_running = snapshot.checking
+        self.check_button.configure(state="disabled" if snapshot.checking else "normal",
+                                    text=self.t("checking" if snapshot.checking else "runtime_check_again"))
+        self.more_actions.configure(state="disabled" if snapshot.checking else "normal")
+        self.report = snapshot.report
+        self._render_report(self.report)
+        if snapshot.checking:
+            for status, _detail in self.domain_rows.values():
+                status.configure(text=self.t("runtime_status_checking"), text_color=COLOR_MUTED)
+            self.voice_setup_button.grid_remove()
+        self.message.configure(
+            text=self.t("runtime_check_failed") if snapshot.error else self.t("runtime_native_restart") if snapshot.restart_required else "",
+            text_color=COLOR_MUTED,
+        )
 
     def _render_report(self, report):
         items = report.get("items_by_key", {})
@@ -243,42 +219,26 @@ class DependencyCenter(ctk.CTkFrame):
                 text=runtime_domain_status_text(key, item, self.t),
                 text_color=_STATUS_COLORS.get(status, COLOR_MUTED),
             )
-            detail = display["detail"]
+            detail = ""
             if key == "local_ai":
                 detail = localized_runtime_item(items.get("chat_model", {}), self.t)["detail"]
             elif key == "knowledge":
                 detail = localized_runtime_item(items.get("embedding_model", {}), self.t)["detail"]
             labels[1].configure(text=detail, text_color=COLOR_MUTED)
-        overall = str(report.get("status") or "Degraded")
-        self.message.configure(
-            text=self.t(
-                "runtime_overall_ready"
-                if overall == "Ready"
-                else "runtime_overall_not_ready"
-            ),
-            text_color=_STATUS_COLORS.get(overall, COLOR_MUTED),
-        )
-        voice_enabled = bool(report.get("voice", {}).get("enabled"))
-        voice_ready = bool(report.get("voice", {}).get("ready"))
-        if voice_enabled and not voice_ready:
-            self.voice_setup_frame.pack(fill="x", pady=(0, SPACING_MEDIUM))
+        voice = report.get("voice", {})
+        if voice.get("enabled") and not voice.get("ready"):
+            key = "voice_setup_repair" if self.settings.get("runtime.voice_configured", False) else "voice_setup_configure"
+            self.voice_setup_button.configure(text=self.t(key))
+            self.voice_setup_button.grid()
         else:
-            self.voice_setup_frame.pack_forget()
+            self.voice_setup_button.grid_remove()
 
     def open_voice_setup(self):
-        VoiceSetupWizard(
-            self,
-            settings=self.settings,
-            runtime_manager=self.runtime_manager,
-            logger=self.logger,
-            translate=self.t,
-        )
+        VoiceSetupWizard(self, settings=self.settings, runtime_state=self.runtime_state,
+                         logger=self.logger, translate=self.t)
 
     def configure(self):
-        if callable(self.open_settings_callback):
-            self.open_settings_callback()
-        else:
-            self.message.configure(text=self.t("runtime_open_settings_hint"), text_color=COLOR_MUTED)
+        self.open_voice_setup()
 
     def install_or_download(self):
         if self.report is None:
@@ -385,14 +345,13 @@ class DependencyCenter(ctk.CTkFrame):
 
         def worker():
             result = task.run(confirmed=True, progress=progress, cancel_event=cancel_event)
-            selection_error = ""
-            if result.ok:
-                try:
-                    self._persist_model_selection(kind, model)
-                except Exception as error:
-                    selection_error = str(error).strip().splitlines()[0][:180]
-
             def finish():
+                selection_error = ""
+                if result.ok:
+                    try:
+                        self._persist_model_selection(kind, model)
+                    except Exception:
+                        selection_error = "save_failed"
                 self.cancel_button.pack_forget()
                 self.more_actions.configure(state="normal")
                 self.check_button.configure(state="normal")
@@ -464,15 +423,7 @@ class DependencyCenter(ctk.CTkFrame):
         )
 
     def show_diagnostics(self):
-        window = ctk.CTkToplevel(self)
-        window.title(self.t("runtime_diagnostics"))
-        window.geometry("760x520")
-        window.transient(self.winfo_toplevel())
-        textbox = ctk.CTkTextbox(window, wrap="word")
-        textbox.pack(fill="both", expand=True, padx=SPACING_MEDIUM, pady=SPACING_MEDIUM)
-        payload = self.report or {"status": self.t("runtime_not_checked")}
-        textbox.insert("1.0", json.dumps(payload, ensure_ascii=False, indent=2, default=str))
-        textbox.configure(state="disabled")
+        return show_runtime_details(self, self.runtime_state, self.t)
 
     def _action_result_text(self, result, kind, *, model=""):
         status = str(getattr(result, "status", "error") or "error")
@@ -490,6 +441,7 @@ class DependencyCenter(ctk.CTkFrame):
         if self._disposed:
             return
         self._disposed = True
+        self._unsubscribe()
         if self.cancel_event is not None:
             self.cancel_event.set()
         if self.pull_task is not None:

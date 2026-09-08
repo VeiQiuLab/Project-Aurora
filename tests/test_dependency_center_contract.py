@@ -155,7 +155,7 @@ def test_voice_device_status_hides_dshow_exception_text(monkeypatch):
         fail_enumeration,
     )
     page = SimpleNamespace(
-        settings={"voice": {"recorder": {"ffmpeg_path": "ffmpeg"}}},
+        settings={"voice.enabled": True, "voice.recorder.ffmpeg_path": "ffmpeg"},
         t=lambda key: {
             "voice_device_not_found": "未检测到可用麦克风。请确认 FFmpeg 后重试。"
         }.get(key, key),
@@ -169,36 +169,14 @@ def test_voice_device_status_hides_dshow_exception_text(monkeypatch):
     assert "FFmpeg" in statuses[-1][0]
 
 
-def test_chat_page_prefers_unified_api_model_catalog(monkeypatch):
+def test_chat_page_prefers_shared_snapshot_model_catalog():
+    from modules.runtime_state import RuntimeSnapshot
+    import json
     received = []
-    fallback_calls = []
-
-    class Manager:
-        def __init__(self, _settings):
-            pass
-
-        def check_models(self, timeout=1.0):
-            return {
-                "ollama": {
-                    "models": {
-                        "all": [{"name": "qwen3:4b", "capability": "Chat Supported"}]
-                    }
-                }
-            }
-
-    monkeypatch.setattr("widgets.pages.chat_page.RuntimeDependencyManager", Manager)
-    page = SimpleNamespace(
-        settings={},
-        logger=SimpleNamespace(info=lambda *_args: None, error=lambda *_args: None),
-        model_records_provider=lambda: fallback_calls.append(True),
-        after=lambda _delay, callback: callback(),
-        update_models=lambda records: received.extend(records),
-    )
-
-    ChatPage.load_models(page)
-
+    snapshot = RuntimeSnapshot(1, json.dumps({"ollama": {"models": {"all": [{"name": "qwen3:4b"}]}}}))
+    page = SimpleNamespace(update_models=lambda records: received.extend(records))
+    ChatPage._on_runtime_snapshot(page, snapshot)
     assert [item["name"] for item in received] == ["qwen3:4b"]
-    assert fallback_calls == []
 
 
 def test_chat_page_user_picker_pins_manual_selection():
@@ -214,6 +192,7 @@ def test_chat_page_user_picker_pins_manual_selection():
         t=lambda key: key,
         model_capability_provider=lambda _model: "Chat Supported",
         selected_model={"name": ""},
+        runtime_state=None,
         settings=store,
         set_model_display=lambda *_args: None,
         set_status=lambda *_args: None,

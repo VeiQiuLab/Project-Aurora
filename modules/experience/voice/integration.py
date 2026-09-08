@@ -77,6 +77,14 @@ def create_optional_voice_runtime(
 
     missing = dependency_report.get("missing", [])
     if not dependency_report.get("ready", False) or missing:
+        if missing and all(isinstance(item, Mapping) and item.get("key") == "tts_service" for item in missing):
+            return None, create_diagnostics(
+                stage="voice.startup",
+                success=False,
+                reason="tts_service_unavailable",
+                warnings=["Voice runtimes are installed, but Edge TTS is unavailable. Check the network connection and retry."],
+                metrics={"enabled": True, "runtime_available": False, "tts_runtime_installed": True},
+            )
         missing_names = [
             str(item.get("name", item.get("key", "unknown")))
             for item in missing
