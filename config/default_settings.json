@@ -6,6 +6,14 @@
     "first_run": {
         "completed": false
     },
+    "qq": {
+        "enabled": false,
+        "private_replies": false,
+        "group_mentions_only": true,
+        "ws_endpoint": "ws://127.0.0.1:3001",
+        "http_endpoint": "http://127.0.0.1:3000",
+        "access_token": ""
+    },
     "memory": {
         "max_injection": 5,
         "min_importance": 0,

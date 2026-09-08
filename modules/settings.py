@@ -23,6 +23,14 @@ class Settings:
             "first_run": {
                 "completed": False
             },
+            "qq": {
+                "enabled": False,
+                "private_replies": False,
+                "group_mentions_only": True,
+                "ws_endpoint": "ws://127.0.0.1:3001",
+                "http_endpoint": "http://127.0.0.1:3000",
+                "access_token": ""
+            },
             "memory": {
                 "max_injection": 5,
                 "min_importance": 0,

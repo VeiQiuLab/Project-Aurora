@@ -146,6 +146,7 @@ a = Analysis(
     hiddenimports=[
         "customtkinter",
         *collect_submodules("customtkinter"),
+        *collect_submodules("websocket"),
         *voice_hiddenimports,
         "unicodedata",
     ],

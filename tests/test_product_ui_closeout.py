@@ -115,7 +115,7 @@ def test_sidebar_has_one_navigation_source_and_no_settings_heading():
     source = inspect.getsource(AppShell._build_settings_sidebar)
     assert "return_button" in source
     assert 'text=self.t("settings")' not in source
-    assert SettingsPage.CATEGORIES == ["ai", "runtime", "voice", "appearance", "data", "developer"]
+    assert SettingsPage.CATEGORIES == ["ai", "runtime", "voice", "qq", "appearance", "data", "developer"]
 
 
 def test_voice_full_build_policy_is_pinned_and_runtime_install_disabled():

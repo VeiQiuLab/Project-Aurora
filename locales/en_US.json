@@ -965,5 +965,20 @@
     "voice_tts_network_note": "Edge TTS requires a network connection. Installed components do not guarantee online service availability.",
     "runtime_view_logs": "View logs",
     "runtime_no_logs": "No logs yet",
-    "voice_setup_wait_download": "The model is downloading. You can close this wizard when it finishes."
+    "voice_setup_wait_download": "The model is downloading. You can close this wizard when it finishes.",
+    "settings_category_qq": "QQ",
+    "qq_connector_title": "QQ Connector (experimental)",
+    "qq_connector_hint": "Connect Aurora to a local NapCatQQ OneBot 11 endpoint. Only text messages are supported.",
+    "qq_status_connected": "QQ: Connected",
+    "qq_status_disconnected": "QQ: Disconnected",
+    "qq_status_error": "QQ: Connection failed",
+    "qq_ws_endpoint": "WebSocket / event endpoint",
+    "qq_http_endpoint": "HTTP action endpoint",
+    "qq_access_token": "Access token",
+    "qq_private_replies": "Reply to private messages",
+    "qq_group_mentions_only": "Groups: reply only when Aurora is mentioned",
+    "qq_test_connection": "Test connection",
+    "qq_connect": "Connect / disconnect",
+    "qq_connection_ok": "NapCat connection succeeded.",
+    "qq_connection_failed": "NapCat is not available or rejected the connection."
 }

@@ -965,5 +965,20 @@
     "voice_tts_network_note": "Edge TTS 需要网络连接。组件就绪不代表在线服务始终可用。",
     "runtime_view_logs": "查看日志",
     "runtime_no_logs": "暂无日志",
-    "voice_setup_wait_download": "模型正在下载，完成后即可关闭此向导。"
+    "voice_setup_wait_download": "模型正在下载，完成后即可关闭此向导。",
+    "settings_category_qq": "QQ",
+    "qq_connector_title": "QQ 连接器（实验性）",
+    "qq_connector_hint": "连接本机 NapCatQQ OneBot 11，仅支持文字消息。",
+    "qq_status_connected": "QQ：已连接",
+    "qq_status_disconnected": "QQ：未连接",
+    "qq_status_error": "QQ：连接失败",
+    "qq_ws_endpoint": "WebSocket / 事件地址",
+    "qq_http_endpoint": "HTTP 操作地址",
+    "qq_access_token": "访问令牌",
+    "qq_private_replies": "回复 QQ 私聊消息",
+    "qq_group_mentions_only": "群聊：仅在提及 Aurora 时回复",
+    "qq_test_connection": "测试连接",
+    "qq_connect": "连接 / 断开",
+    "qq_connection_ok": "NapCat 连接成功。",
+    "qq_connection_failed": "NapCat 不可用或拒绝了连接。"
 }

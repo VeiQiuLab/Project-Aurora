@@ -5,3 +5,4 @@ pygame
 edge-tts
 faster-whisper
 sounddevice
+websocket-client

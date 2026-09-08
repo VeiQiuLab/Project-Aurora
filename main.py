@@ -108,8 +108,10 @@ from modules.chat import (
     build_context_debug_report,
     build_final_prompt_preview,
     summarize_context_sections,
-    stream_chat
+    stream_chat,
+    chat_with_messages
 )
+from connectors.qq import QQConnector, QQConfig
 from modules.context_builder import ContextBuilder
 from modules.conversation import ConversationManager
 from modules.rag_integration import run_configured_rag_pipeline
@@ -403,6 +405,7 @@ memory_store = MemoryStore()
 knowledge_store = KnowledgeStore()
 persona_store = PersonaStore()
 service_manager = ServiceManager()
+qq_connector = None
 shutdown_manager = ShutdownManager(logger=logger)
 service_lifecycle = {
     "ollama_started_by_app": False
@@ -1642,6 +1645,11 @@ def cleanup_callbacks():
             pass
 
 
+def cleanup_qq_connector():
+    if qq_connector is not None:
+        qq_connector.disconnect()
+
+
 def cleanup_started_services():
     if service_lifecycle.get("ollama_started_by_app"):
         logger.info("Ollama cleanup callback started")
@@ -1678,6 +1686,7 @@ shutdown_manager.register_cleanup(cleanup_settings, "settings")
 shutdown_manager.register_cleanup(cleanup_started_services, "started_services")
 shutdown_manager.register_cleanup(cleanup_callbacks, "callbacks")
 shutdown_manager.register_cleanup(cleanup_chat_surfaces, "chat_surfaces")
+shutdown_manager.register_cleanup(cleanup_qq_connector, "qq_connector")
 
 
 def shutdown_app(source="unknown"):
@@ -2058,9 +2067,29 @@ def app_shell_conversation_provider():
 
 
 def create_app_shell():
-    global app_shell, active_chat_page
+    global app_shell, active_chat_page, qq_connector
     if app_shell is not None:
         return app_shell
+
+    def generate_qq_reply(_conversation_id, _prompt, session):
+        model = str(settings.get("resolved_chat_model", "") or settings.get("chat_model", "")).strip()
+        if not model:
+            raise ChatError("No chat model is available.")
+        return chat_with_messages(model, session.snapshot())
+
+    if qq_connector is None:
+        qq_connector = QQConnector(
+            QQConfig(
+                ws_endpoint=settings.get("qq.ws_endpoint", "ws://127.0.0.1:3001"),
+                http_endpoint=settings.get("qq.http_endpoint", "http://127.0.0.1:3000"),
+                access_token=settings.get("qq.access_token", ""),
+                private_replies=bool(settings.get("qq.private_replies", False)),
+                group_mentions_only=bool(settings.get("qq.group_mentions_only", True)),
+            ),
+            reply_generator=generate_qq_reply,
+            logger=logger,
+        )
+        logger.info("[QQ] connector_initialized reply_generator=chat_with_messages")
 
     page_builders = {
         "chat": lambda parent: ChatPage(
@@ -2092,7 +2121,8 @@ def create_app_shell():
             refresh_text_callback=refresh_main_texts,
             settings_status_provider=app_shell_settings_status_provider,
             service_manager=service_manager,
-            logger=logger
+            logger=logger,
+            qq_connector=qq_connector
         )
     }
 

@@ -44,11 +44,12 @@ from widgets.runtime_details import show_runtime_details
 class SettingsPage(ctk.CTkFrame):
     """Chat-first Settings hub with grouped product settings."""
 
-    CATEGORIES = ["ai", "runtime", "voice", "appearance", "data", "developer"]
+    CATEGORIES = ["ai", "runtime", "voice", "qq", "appearance", "data", "developer"]
     CATEGORY_KEYS = {
         "ai": "ai",
         "runtime": "runtime_title",
         "voice": "runtime_domain_voice",
+        "qq": "settings_category_qq",
         "appearance": "appearance",
         "data": "settings_category_data",
         "developer": "developer",
@@ -75,6 +76,7 @@ class SettingsPage(ctk.CTkFrame):
         refresh_text_callback=None,
         service_manager=None,
         logger=None,
+        qq_connector=None,
         **kwargs
     ):
         kwargs.setdefault("fg_color", "transparent")
@@ -99,6 +101,7 @@ class SettingsPage(ctk.CTkFrame):
         self.settings_status_provider = settings_status_provider
         self.service_manager = service_manager
         self.logger = logger
+        self.qq_connector = qq_connector
         self.category_buttons = {}
         self.voice_environment_rows = {}
         self.voice_environment_status = None
@@ -172,6 +175,7 @@ class SettingsPage(ctk.CTkFrame):
             "ai": self._build_ai,
             "runtime": self._build_runtime,
             "voice": self._build_voice,
+            "qq": self._build_qq,
             "appearance": self._build_appearance,
             "data": self._build_data,
             "developer": self._build_developer
@@ -370,6 +374,66 @@ class SettingsPage(ctk.CTkFrame):
         )
         center.grid(row=0, column=0, sticky="ew")
         self.active_panel = center
+
+    def _build_qq(self):
+        card = self._card(self.t("qq_connector_title"), self.t("qq_connector_hint"))
+        status = ctk.CTkLabel(card.body, text=self.t("qq_status_disconnected"), anchor="w")
+        status.pack(fill="x", pady=SPACING_SMALL)
+        fields = {}
+        for key, label in (("ws_endpoint", "qq_ws_endpoint"), ("http_endpoint", "qq_http_endpoint"), ("access_token", "qq_access_token")):
+            row = ctk.CTkFrame(card.body, fg_color="transparent")
+            row.pack(fill="x", pady=SPACING_SMALL)
+            ctk.CTkLabel(row, text=self.t(label), width=160, anchor="w").pack(side="left")
+            entry_kwargs = {"show": "*"} if key == "access_token" else {}
+            entry = ctk.CTkEntry(row, **entry_kwargs)
+            entry.pack(side="left", fill="x", expand=True)
+            entry.insert(0, str(self.settings.get(f"qq.{key}", "") or ""))
+            fields[key] = entry
+        private_var = ctk.BooleanVar(value=bool(self.settings.get("qq.private_replies", False)))
+        ctk.CTkSwitch(card.body, text=self.t("qq_private_replies"), variable=private_var).pack(anchor="w", pady=SPACING_SMALL)
+        ctk.CTkLabel(card.body, text=self.t("qq_group_mentions_only"), text_color=COLOR_MUTED, anchor="w").pack(fill="x")
+        result = ctk.CTkLabel(card.body, text="", text_color=COLOR_MUTED, anchor="w", wraplength=720)
+        result.pack(fill="x", pady=SPACING_SMALL)
+
+        def save_config():
+            self.settings.set("qq.ws_endpoint", fields["ws_endpoint"].get().strip() or "ws://127.0.0.1:3001")
+            self.settings.set("qq.http_endpoint", fields["http_endpoint"].get().strip() or "http://127.0.0.1:3000")
+            self.settings.set("qq.access_token", fields["access_token"].get())
+            self.settings.set("qq.private_replies", bool(private_var.get()))
+            self.settings.set("qq.group_mentions_only", True)
+            self.settings.save()
+            if self.qq_connector:
+                from connectors.qq.models import QQConfig
+                self.qq_connector.configure(QQConfig(
+                    ws_endpoint=self.settings.get("qq.ws_endpoint"),
+                    http_endpoint=self.settings.get("qq.http_endpoint"),
+                    access_token=self.settings.get("qq.access_token"),
+                    private_replies=bool(private_var.get()),
+                    group_mentions_only=True,
+                ))
+
+        def test_connection():
+            save_config()
+            ok = bool(self.qq_connector and self.qq_connector.connect(start_events=True))
+            status.configure(text=self.t("qq_status_connected" if ok else "qq_status_error"))
+            result.configure(text=self.t("qq_connection_ok" if ok else "qq_connection_failed"))
+
+        def toggle_connection():
+            save_config()
+            if not self.qq_connector:
+                return
+            if self.qq_connector.status == "connected":
+                self.qq_connector.disconnect()
+                status.configure(text=self.t("qq_status_disconnected"))
+            else:
+                ok = self.qq_connector.connect(start_events=True)
+                status.configure(text=self.t("qq_status_connected" if ok else "qq_status_error"))
+
+        actions = ctk.CTkFrame(card.body, fg_color="transparent")
+        actions.pack(fill="x", pady=SPACING_SMALL)
+        SecondaryButton(actions, text=self.t("qq_test_connection"), command=test_connection).pack(side="left", padx=(0, SPACING_SMALL))
+        PrimaryButton(actions, text=self.t("qq_connect"), command=toggle_connection).pack(side="left")
+        self._action_button(card.body, self.t("runtime_diagnostics"), self._show_runtime_details)
 
     def _build_voice(self):
         card = self._card(self.t("runtime_domain_voice"))

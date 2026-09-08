@@ -54,3 +54,7 @@
 - [VOICE_RUNTIME_DISTRIBUTION.md](VOICE_RUNTIME_DISTRIBUTION.md)
 - [ARCHITECTURE.md](ARCHITECTURE.md)
 - [Runtime 状态收口验收报告](RUNTIME_STATE_CLOSEOUT-20260908.md)
+
+## QQ Connector v0.1
+
+- 2026-09-09：NapCatQQ / OneBot 11 文本 Connector 完成真人 E2E 验收。支持私聊文字、群聊 @ 文字、OneBot 11 WebSocket 接收、HTTP Action 发送、会话隔离、自消息/重复事件保护，以及仅作用于 QQ 渠道的对话风格；图片、语音、文件、白名单 UI 和主动消息仍有意不支持。
