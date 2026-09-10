@@ -23,6 +23,7 @@ from modules.runtime_dependencies import RuntimeDependencyManager
 
 from .fake import FakeSpeechToTextProvider, FakeTextToSpeechProvider
 from .interfaces import SpeechToTextProvider, TextToSpeechProvider
+from .tts_router import TTSRouter
 from .orchestrator import VoiceOrchestrator
 from .session import VoiceSessionManager
 from .providers.edge_tts import EdgeTTSProvider
@@ -287,14 +288,16 @@ def _create_stt(settings: Any) -> SpeechToTextProvider:
 def _create_tts(settings: Any) -> TextToSpeechProvider:
     provider_name = str(_get_setting(settings, "voice.tts.provider", "edge_tts"))
     if provider_name == "edge_tts":
-        return EdgeTTSProvider(
+        provider = EdgeTTSProvider(
             default_voice=str(
                 _get_setting(settings, "voice.tts.voice", "zh-CN-XiaoxiaoNeural")
             )
         )
-    if provider_name == "fake":
-        return FakeTextToSpeechProvider()
-    raise ValueError(f"unsupported Voice TTS provider: {provider_name}")
+    elif provider_name == "fake":
+        provider = FakeTextToSpeechProvider()
+    else:
+        raise ValueError(f"unsupported Voice TTS provider: {provider_name}")
+    return TTSRouter({provider_name: provider}, default_provider=provider_name)
 
 
 def _create_playback(settings: Any) -> AudioPlaybackController:

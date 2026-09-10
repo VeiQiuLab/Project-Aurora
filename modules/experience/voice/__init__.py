@@ -1,8 +1,9 @@
 """Replaceable voice interfaces for Aurora's Experience Layer."""
 
 from .fake import FakeSpeechToTextProvider, FakeTextToSpeechProvider
-from .interfaces import SpeechToTextProvider, TextToSpeechProvider
-from .models import AudioInput, SpeechResult, TranscriptionResult, VoiceOptions
+from .interfaces import SpeechToTextProvider, TTSProvider, TextToSpeechProvider
+from .models import AudioInput, SpeechResult, TTSRequest, TTSResponse, TranscriptionResult, VoiceOptions
+from .tts_router import TTSRouter
 from .session import VoiceSessionManager, VoiceSessionResult
 from .sentence_splitter import SentenceSplitter
 from .tts_queue import TTSQueue
@@ -13,6 +14,10 @@ __all__ = [
     "FakeTextToSpeechProvider",
     "SpeechResult",
     "SpeechToTextProvider",
+    "TTSProvider",
+    "TTSRequest",
+    "TTSResponse",
+    "TTSRouter",
     "TextToSpeechProvider",
     "TranscriptionResult",
     "VoiceOptions",
