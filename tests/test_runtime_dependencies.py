@@ -66,6 +66,7 @@ def _manager(
     microphone=(False, "No microphone"),
     playback=(False, "No output"),
     whisper=(False, "Not cached"),
+    remote_tts=(True, "Test remote service available"),
     hardware=None,
 ):
     return RuntimeDependencyManager(
@@ -81,6 +82,7 @@ def _manager(
         module_finder=_finder(modules),
         module_importer=lambda _name: object(),
         tts_service_probe=lambda _timeout: (True, "Test service available"),
+        remote_tts_service_probe=lambda _url, _timeout: remote_tts,
         ffmpeg_probe=lambda _path: True,
         ollama_api_probe=_api(available, models),
         microphone_probe=lambda: microphone,
@@ -107,6 +109,33 @@ def test_status_vocabulary_is_stable():
         "Optional",
         "Degraded",
     }
+
+
+def test_remote_cosyvoice_readiness_uses_configured_health_probe_not_edge_runtime():
+    settings = {
+        "voice": {
+            "enabled": True,
+            "stt": {"model_size": "small"},
+            "tts": {
+                "provider": "remote_cosyvoice",
+                "remote_cosyvoice": {"url": "http://voice-node.test:8765"},
+            },
+        }
+    }
+
+    report = _manager(
+        settings=settings,
+        ffmpeg="ffmpeg",
+        modules={"faster_whisper", "ctranslate2", "pygame"},
+        microphone=(True, "Test microphone"),
+        playback=(True, "Test output"),
+        whisper=(True, "Test model"),
+    ).check_voice()
+    items = {item["key"]: item for item in report["items"]}
+
+    assert items["tts"]["status"] == RuntimeStatus.READY.value
+    assert items["tts"]["data"]["provider"] == "Remote CosyVoice"
+    assert items["tts_service"]["status"] == RuntimeStatus.READY.value
 
 
 def test_ollama_missing_is_distinct_from_offline():

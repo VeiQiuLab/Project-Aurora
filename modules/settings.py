@@ -96,7 +96,10 @@ class Settings:
                 "tts": {
                     "provider": "edge_tts",
                     "voice": "zh-CN-XiaoxiaoNeural",
-                    "timeout_seconds": 30.0
+                    "timeout_seconds": 30.0,
+                    "remote_cosyvoice": {
+                        "url": ""
+                    }
                 },
                 "playback": {
                     "backend": "pygame",

@@ -10,6 +10,7 @@ from modules.experience.audio.device_discovery import AudioDeviceDiscoveryError
 from modules.experience.voice.integration import create_optional_voice_runtime, create_voice_runtime
 from modules.experience.voice.models import AudioInput, SpeechResult, TranscriptionResult
 from modules.experience.voice.providers.edge_tts import EdgeTTSProvider
+from modules.experience.voice.providers.remote_cosyvoice import RemoteCosyVoiceProvider
 from modules.experience.voice.tts_router import TTSRouter
 from modules.experience.voice.providers.faster_whisper import FasterWhisperProvider
 
@@ -213,6 +214,27 @@ def test_enabled_runtime_uses_real_provider_defaults_without_loading_them():
     assert isinstance(runtime.orchestrator.tts_provider, TTSRouter)
     assert isinstance(runtime.orchestrator.tts_provider.provider_for(), EdgeTTSProvider)
     assert runtime.orchestrator.playback.__class__.__name__ == "RealPlaybackController"
+
+
+def test_enabled_runtime_composes_configured_remote_cosyvoice_provider():
+    configured = voice_settings()
+    configured["voice"]["tts"] = {
+        "provider": "remote_cosyvoice",
+        "timeout_seconds": 12.0,
+        "remote_cosyvoice": {"url": "http://voice-node.test:8765"},
+    }
+
+    runtime = create_voice_runtime(
+        configured,
+        recorder=FakeRecorder(),
+        text_input_handler=lambda _text: "reply",
+    )
+
+    assert runtime is not None
+    provider = runtime.orchestrator.tts_provider.provider_for()
+    assert isinstance(provider, RemoteCosyVoiceProvider)
+    assert provider.base_url == "http://voice-node.test:8765"
+    assert provider.default_timeout_seconds == 12.0
 
 
 def test_frame_pipeline_runtime_uses_session_manager_with_shared_state():

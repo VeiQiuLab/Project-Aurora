@@ -2,5 +2,6 @@
 
 from .edge_tts import EdgeTTSProvider
 from .faster_whisper import FasterWhisperProvider
+from .remote_cosyvoice import RemoteCosyVoiceProvider
 
-__all__ = ["EdgeTTSProvider", "FasterWhisperProvider"]
+__all__ = ["EdgeTTSProvider", "FasterWhisperProvider", "RemoteCosyVoiceProvider"]

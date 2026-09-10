@@ -98,6 +98,7 @@ ModuleFinder = Callable[[str], Any]
 AvailabilityProbe = Callable[[], tuple[bool | None, str]]
 WhisperModelProbe = Callable[[str], tuple[bool | None, str]]
 ServiceProbe = Callable[[float], tuple[bool | None, str]]
+RemoteServiceProbe = Callable[[str, float], tuple[bool | None, str]]
 HardwareProbe = Callable[[], dict[str, Any]]
 
 
@@ -123,6 +124,7 @@ class RuntimeDependencyManager:
         playback_device_probe: AvailabilityProbe | None = None,
         whisper_model_probe: WhisperModelProbe | None = None,
         tts_service_probe: ServiceProbe | None = None,
+        remote_tts_service_probe: RemoteServiceProbe | None = None,
         ffmpeg_probe: Callable[[str], bool] | None = None,
         hardware_probe: HardwareProbe | None = None,
         disk_path: str | os.PathLike[str] | None = None,
@@ -138,6 +140,9 @@ class RuntimeDependencyManager:
         self._playback_device_probe = playback_device_probe or self._probe_playback_device
         self._whisper_model_probe = whisper_model_probe or self._probe_whisper_model
         self._tts_service_probe = tts_service_probe or self._probe_edge_tts_service
+        self._remote_tts_service_probe = (
+            remote_tts_service_probe or self._probe_remote_cosyvoice_service
+        )
         self._ffmpeg_probe = ffmpeg_probe or self._probe_ffmpeg_executable
         self._hardware_probe = hardware_probe
         self._disk_path = Path(disk_path) if disk_path is not None else PROGRAM_ROOT
@@ -908,29 +913,50 @@ class RuntimeDependencyManager:
                     "Microphone access could not be checked. Verify Windows microphone permission and try again."
                 )
 
-        edge_tts = self._runtime_available("edge_tts", enabled=voice_enabled)
-        tts_detail = (
-            "Edge-TTS runtime is installed."
-            if edge_tts
-            else "edge-tts is not installed."
-        )
+        tts_provider = str(
+            _get_setting(self.settings, "voice.tts.provider", "edge_tts") or "edge_tts"
+        ).strip()
+        remote_url = str(
+            _get_setting(self.settings, "voice.tts.remote_cosyvoice.url", "") or ""
+        ).strip()
+        if tts_provider == "remote_cosyvoice":
+            tts_runtime = True
+            tts_provider_label = "Remote CosyVoice"
+            tts_detail = "Remote CosyVoice uses Aurora's built-in HTTP client."
+        else:
+            tts_runtime = self._runtime_available("edge_tts", enabled=voice_enabled)
+            tts_provider_label = "Edge TTS"
+            tts_detail = (
+                "Edge-TTS runtime is installed."
+                if tts_runtime
+                else "edge-tts is not installed."
+            )
         if not voice_enabled:
             tts_service_available = None
             tts_service_detail = (
-                "Voice is turned off. The Edge TTS service will be checked after Voice is enabled."
+                "Voice is turned off. The TTS service will be checked after Voice is enabled."
             )
-        elif not edge_tts:
+        elif not tts_runtime:
             tts_service_available = False
             tts_service_detail = "The Edge TTS service cannot be checked until its runtime is available."
+        elif tts_provider == "remote_cosyvoice" and not remote_url:
+            tts_service_available = False
+            tts_service_detail = "Remote CosyVoice Voice Node URL is not configured."
         else:
             try:
-                tts_service_available, tts_service_detail = self._tts_service_probe(
-                    max(float(timeout), 0.1)
-                )
+                if tts_provider == "remote_cosyvoice":
+                    tts_service_available, tts_service_detail = self._remote_tts_service_probe(
+                        remote_url,
+                        max(float(timeout), 0.1),
+                    )
+                else:
+                    tts_service_available, tts_service_detail = self._tts_service_probe(
+                        max(float(timeout), 0.1)
+                    )
             except Exception:
                 tts_service_available = None
                 tts_service_detail = (
-                    "The Edge TTS service could not be checked. Verify the network connection and try again."
+                    "The TTS service could not be checked. Verify the network connection and try again."
                 )
 
         pygame_available = self._runtime_available("pygame", enabled=voice_enabled)
@@ -956,7 +982,7 @@ class RuntimeDependencyManager:
             "microphone": microphone_available,
             "stt": stt_ready,
             "whisper_model": whisper_available,
-            "tts": edge_tts,
+            "tts": tts_runtime,
             "tts_service": tts_service_available,
             "playback": output_available if pygame_available else False,
         }
@@ -1012,7 +1038,7 @@ class RuntimeDependencyManager:
                         {"model_size": model_size}
                         if key == "whisper_model"
                         else {
-                            "provider": "Edge TTS",
+                            "provider": tts_provider_label,
                             "kind": "service" if key == "tts_service" else "runtime",
                             "network_required": key == "tts_service",
                         }
@@ -1279,6 +1305,19 @@ class RuntimeDependencyManager:
         if not voices:
             return False, "Edge TTS returned no available voices. Try again later."
         return True, "Edge TTS runtime and online service are currently available."
+
+    @staticmethod
+    def _probe_remote_cosyvoice_service(url: str, timeout: float) -> tuple[bool | None, str]:
+        """Check the configured Voice Node without making a synthesis request."""
+
+        try:
+            from modules.experience.voice.providers.remote_cosyvoice import (
+                RemoteCosyVoiceProvider,
+            )
+
+            return RemoteCosyVoiceProvider(url).health(timeout_seconds=timeout)
+        except Exception:
+            return False, "Remote CosyVoice Voice Node is unavailable."
 
     def _probe_whisper_model(self, model_size: str) -> tuple[bool | None, str]:
         from modules.voice_models import local_model_path

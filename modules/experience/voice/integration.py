@@ -28,6 +28,7 @@ from .orchestrator import VoiceOrchestrator
 from .session import VoiceSessionManager
 from .providers.edge_tts import EdgeTTSProvider
 from .providers.faster_whisper import FasterWhisperProvider
+from .providers.remote_cosyvoice import RemoteCosyVoiceProvider
 from .runtime import RuntimeService, StateCallback
 
 
@@ -83,7 +84,7 @@ def create_optional_voice_runtime(
                 stage="voice.startup",
                 success=False,
                 reason="tts_service_unavailable",
-                warnings=["Voice runtimes are installed, but Edge TTS is unavailable. Check the network connection and retry."],
+                warnings=["Voice runtimes are installed, but the configured TTS service is unavailable. Check its connection and retry."],
                 metrics={"enabled": True, "runtime_available": False, "tts_runtime_installed": True},
             )
         missing_names = [
@@ -295,6 +296,13 @@ def _create_tts(settings: Any) -> TextToSpeechProvider:
         )
     elif provider_name == "fake":
         provider = FakeTextToSpeechProvider()
+    elif provider_name == "remote_cosyvoice":
+        provider = RemoteCosyVoiceProvider(
+            str(_get_setting(settings, "voice.tts.remote_cosyvoice.url", "")),
+            default_timeout_seconds=float(
+                _get_setting(settings, "voice.tts.timeout_seconds", 30.0)
+            ),
+        )
     else:
         raise ValueError(f"unsupported Voice TTS provider: {provider_name}")
     return TTSRouter({provider_name: provider}, default_provider=provider_name)

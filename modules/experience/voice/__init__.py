@@ -7,6 +7,7 @@ from .tts_router import TTSRouter
 from .session import VoiceSessionManager, VoiceSessionResult
 from .sentence_splitter import SentenceSplitter
 from .tts_queue import TTSQueue
+from .providers.remote_cosyvoice import RemoteCosyVoiceProvider
 
 __all__ = [
     "AudioInput",
@@ -18,6 +19,7 @@ __all__ = [
     "TTSRequest",
     "TTSResponse",
     "TTSRouter",
+    "RemoteCosyVoiceProvider",
     "TextToSpeechProvider",
     "TranscriptionResult",
     "VoiceOptions",
