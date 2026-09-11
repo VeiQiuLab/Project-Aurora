@@ -93,3 +93,50 @@ output. The report includes provider metadata, first PCM, playback start, first
 audio submission, upstream END and playback completion timing; PCM byte counts,
 audio and wall duration, buffer peak/low watermark, underruns, producer/output
 errors, and Voice Node health before and after playback.
+
+## VoiceOrchestrator integration
+
+Streaming orchestration is opt-in. It is selected only when
+`voice.tts.streaming_enabled` is true, the provider selected by `TTSRouter`
+implements `StreamingTTSProvider`, and a streaming playback controller is
+available. Otherwise the existing `synthesize()` and file-backed playback path
+is unchanged. The default remains false, including for Edge TTS.
+
+```json
+{
+  "voice": {
+    "tts": {
+      "streaming_enabled": true
+    },
+    "playback": {
+      "streaming": {
+        "prebuffer_ms": 250.0,
+        "max_buffer_ms": 2000.0,
+        "device": ""
+      }
+    }
+  }
+}
+```
+
+The application composition boundary creates and reuses one
+`StreamingPlaybackController`. `VoiceOrchestrator` owns only the current
+`StreamingPlaybackSession`, clears that reference on every terminal path, and
+cancels it through the existing runtime cancellation API. Streaming playback
+always waits for upstream completion and audio drain before the voice run returns
+to idle. Existing LLM sentence splitting and `TTSQueue` continue to use complete
+TTS results; token-to-speech streaming is outside this phase.
+
+Run the integration smoke through the real runtime, router, provider, and
+orchestrator boundaries:
+
+```powershell
+python scripts/smoke_voice_orchestrator_stream_playback.py `
+  --url $VoiceNodeUrl `
+  --text "这是通过 VoiceOrchestrator 执行的流式语音测试。" `
+  --repeat 2
+```
+
+The smoke uses deterministic fake recorder/STT inputs so it does not require the
+GUI or microphone. Audio synthesis, transport, buffering, playback, cancellation,
+and orchestration are real. Pressing Ctrl+C calls the runtime cancellation API.

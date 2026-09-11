@@ -15,6 +15,7 @@ from modules.experience.audio.device_discovery import (
 from modules.experience.audio.playback import AudioPlaybackController
 from modules.experience.audio.recorder import AudioRecorder
 from modules.experience.audio.real_playback import RealPlaybackController
+from modules.experience.audio.streaming_playback import StreamingPlaybackController
 from modules.experience.audio.ffmpeg_source import FFmpegAudioFrameSource
 from modules.experience.audio.frame_pipeline import AudioFrameBuffer
 from modules.experience.audio.vad import RMSVADAdapter
@@ -162,6 +163,7 @@ def create_voice_runtime(
     stt_provider: SpeechToTextProvider | None = None,
     tts_provider: TextToSpeechProvider | None = None,
     playback: AudioPlaybackController | None = None,
+    streaming_playback: StreamingPlaybackController | None = None,
     use_frame_pipeline: bool = False,
     input_device_name: str | None = None,
 ) -> RuntimeService | None:
@@ -193,6 +195,12 @@ def create_voice_runtime(
     tts_timeout_seconds = float(
         _get_setting(settings, "voice.tts.timeout_seconds", 30.0)
     )
+    streaming_enabled = bool(
+        _get_setting(settings, "voice.tts.streaming_enabled", False)
+    )
+    streaming_audio = streaming_playback
+    if streaming_enabled and streaming_audio is None:
+        streaming_audio = _create_streaming_playback(settings)
     def build_orchestrator(
         current_recorder: AudioRecorder,
         *,
@@ -210,6 +218,8 @@ def create_voice_runtime(
             tts_timeout_seconds=tts_timeout_seconds,
             wait_for_playback_completion=wait_for_playback_completion,
             playback_timeout_seconds=playback_timeout_seconds,
+            streaming_enabled=streaming_enabled,
+            streaming_playback=streaming_audio,
         )
 
     orchestrator = build_orchestrator(recorder)
@@ -313,6 +323,21 @@ def _create_playback(settings: Any) -> AudioPlaybackController:
     if backend == "pygame":
         return RealPlaybackController()
     raise ValueError(f"unsupported Voice playback backend: {backend}")
+
+
+def _create_streaming_playback(settings: Any) -> StreamingPlaybackController:
+    device = _get_setting(settings, "voice.playback.streaming.device", None)
+    if isinstance(device, str) and not device.strip():
+        device = None
+    return StreamingPlaybackController(
+        prebuffer_ms=float(
+            _get_setting(settings, "voice.playback.streaming.prebuffer_ms", 250.0)
+        ),
+        max_buffer_ms=float(
+            _get_setting(settings, "voice.playback.streaming.max_buffer_ms", 2000.0)
+        ),
+        device=device,
+    )
 
 
 def _get_setting(settings: Any, key: str, default: Any) -> Any:

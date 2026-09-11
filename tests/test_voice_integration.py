@@ -237,6 +237,47 @@ def test_enabled_runtime_composes_configured_remote_cosyvoice_provider():
     assert provider.default_timeout_seconds == 12.0
 
 
+def test_enabled_runtime_composes_streaming_playback_from_config():
+    configured = voice_settings()
+    configured["voice"]["tts"] = {
+        "provider": "remote_cosyvoice",
+        "timeout_seconds": 12.0,
+        "streaming_enabled": True,
+        "remote_cosyvoice": {"url": "http://voice-node.test:8765"},
+    }
+    configured["voice"]["playback"]["streaming"] = {
+        "prebuffer_ms": 300.0,
+        "max_buffer_ms": 1800.0,
+        "device": "test-output",
+    }
+
+    runtime = create_voice_runtime(
+        configured,
+        recorder=FakeRecorder(),
+        text_input_handler=lambda _text: "reply",
+    )
+
+    assert runtime is not None
+    orchestrator = runtime.orchestrator
+    assert orchestrator.streaming_enabled is True
+    assert orchestrator.streaming_playback is not None
+    assert orchestrator.streaming_playback.prebuffer_ms == 300.0
+    assert orchestrator.streaming_playback.max_buffer_ms == 1800.0
+    assert orchestrator.streaming_playback.device == "test-output"
+
+
+def test_streaming_is_disabled_by_default_without_controller_initialization():
+    runtime = create_voice_runtime(
+        voice_settings(),
+        recorder=FakeRecorder(),
+        text_input_handler=lambda _text: "reply",
+    )
+
+    assert runtime is not None
+    assert runtime.orchestrator.streaming_enabled is False
+    assert runtime.orchestrator.streaming_playback is None
+
+
 def test_frame_pipeline_runtime_uses_session_manager_with_shared_state():
     state_store = CompanionStateStore()
     runtime = create_voice_runtime(

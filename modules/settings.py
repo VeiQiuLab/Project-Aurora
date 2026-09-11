@@ -97,6 +97,7 @@ class Settings:
                     "provider": "edge_tts",
                     "voice": "zh-CN-XiaoxiaoNeural",
                     "timeout_seconds": 30.0,
+                    "streaming_enabled": False,
                     "remote_cosyvoice": {
                         "url": ""
                     }
@@ -105,7 +106,12 @@ class Settings:
                     "backend": "pygame",
                     "enabled": True,
                     "wait_for_completion": True,
-                    "timeout_seconds": 120.0
+                    "timeout_seconds": 120.0,
+                    "streaming": {
+                        "prebuffer_ms": 250.0,
+                        "max_buffer_ms": 2000.0,
+                        "device": ""
+                    }
                 }
             },
             "knowledge": {
