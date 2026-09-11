@@ -1,7 +1,7 @@
 import io
 import json
 import socket
-from threading import Event
+from threading import Event, Thread
 from urllib.error import HTTPError, URLError
 
 import pytest
@@ -11,6 +11,7 @@ from modules.experience.voice.models import VoiceOptions
 from modules.experience.voice.providers.remote_cosyvoice import (
     RemoteCosyVoiceProvider,
     StreamingSynthesisError,
+    _RemotePcmIterator,
 )
 from wav_helpers import make_wav
 
@@ -219,6 +220,51 @@ def test_stream_close_and_cancel_close_network_response():
 
     assert response.closed is True
     assert result.diagnostics["reason"] == "cancelled"
+
+
+def test_stream_close_shuts_down_socket_before_response_close():
+    client, peer = socket.socketpair()
+
+    class SocketResponse:
+        def __init__(self):
+            self.fp = client
+            self.closed = False
+
+        def close(self):
+            self.closed = True
+
+    response = SocketResponse()
+    diagnostics = {"success": True, "reason": "stream_open"}
+    stream = _RemotePcmIterator(response, None, diagnostics)
+    stream.close()
+
+    peer.settimeout(1)
+    assert peer.recv(1) == b""
+    assert response.closed is True
+    assert diagnostics["reason"] == "cancelled"
+    client.close()
+    peer.close()
+
+
+def test_stream_close_is_thread_safe_and_closes_response_once():
+    class CountingResponse:
+        def __init__(self):
+            self.close_calls = 0
+
+        def close(self):
+            self.close_calls += 1
+
+    response = CountingResponse()
+    stream = _RemotePcmIterator(
+        response, None, {"success": True, "reason": "stream_open"}
+    )
+    threads = [Thread(target=stream.close) for _ in range(4)]
+    for thread in threads:
+        thread.start()
+    for thread in threads:
+        thread.join(1)
+
+    assert response.close_calls == 1
 
 
 def test_stream_rejects_pre_cancelled_request_without_network():

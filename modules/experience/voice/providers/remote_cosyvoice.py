@@ -9,7 +9,7 @@ import socket
 import tempfile
 from collections import deque
 from pathlib import Path
-from threading import Event
+from threading import Event, Lock
 from typing import Any, Callable
 from urllib.error import HTTPError, URLError
 from urllib.parse import urlsplit
@@ -40,6 +40,7 @@ class _RemotePcmIterator:
         self.pending: deque[StreamFrame] = deque()
         self.closed = False
         self.completed = False
+        self._close_lock = Lock()
 
     def read_metadata(self) -> dict[str, object]:
         frame = self._next_frame()
@@ -87,9 +88,11 @@ class _RemotePcmIterator:
             self._fail("invalid_stream", str(error))
 
     def close(self, *, mark_cancelled: bool = True) -> None:
-        if self.closed:
-            return
-        self.closed = True
+        with self._close_lock:
+            if self.closed:
+                return
+            self.closed = True
+        _shutdown_response_socket(self.response)
         try:
             self.response.close()
         finally:
@@ -115,6 +118,32 @@ class _RemotePcmIterator:
             warnings.append(message)
         self.close(mark_cancelled=False)
         raise StreamingSynthesisError(message)
+
+
+def _shutdown_response_socket(response: Any) -> None:
+    """Interrupt a concurrent buffered HTTP read before response.close()."""
+
+    pending = [response]
+    visited: set[int] = set()
+    while pending:
+        current = pending.pop()
+        identity = id(current)
+        if identity in visited:
+            continue
+        visited.add(identity)
+        if isinstance(current, socket.socket):
+            try:
+                current.shutdown(socket.SHUT_RDWR)
+            except OSError:
+                pass
+            return
+        for name in ("fp", "raw", "_sock"):
+            try:
+                child = getattr(current, name, None)
+            except Exception:
+                child = None
+            if child is not None:
+                pending.append(child)
 
 
 class RemoteCosyVoiceProvider(TTSProvider, StreamingTTSProvider):

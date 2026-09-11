@@ -7,6 +7,15 @@ from .playback import (
     PlaybackEventType,
 )
 from .real_playback import RealPlaybackController
+from .streaming_playback import (
+    RawPcmOutput,
+    RawPcmOutputFactory,
+    SoundDeviceOutputFactory,
+    StreamingPlaybackController,
+    StreamingPlaybackError,
+    StreamingPlaybackReport,
+    StreamingPlaybackSession,
+)
 from .vad import (
     AudioFrameSource,
     FakeVAD,
@@ -40,6 +49,13 @@ __all__ = [
     "PlaybackEvent",
     "PlaybackEventType",
     "RealPlaybackController",
+    "RawPcmOutput",
+    "RawPcmOutputFactory",
+    "SoundDeviceOutputFactory",
+    "StreamingPlaybackController",
+    "StreamingPlaybackError",
+    "StreamingPlaybackReport",
+    "StreamingPlaybackSession",
     "AudioFrameSource",
     "FakeVAD",
     "RMSVADAdapter",
