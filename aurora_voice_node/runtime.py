@@ -171,12 +171,14 @@ class CosyVoiceRuntime:
                 self._last_error = self._exit_message("cosyvoice-cli exited unexpectedly")
             available = process is not None and exit_code is None and self._state == "ready"
             return {
+                "backend": "cli",
                 "available": available,
                 "state": self._state,
                 "process_running": process is not None and exit_code is None,
                 "pid": process.pid if process is not None and exit_code is None else None,
                 "speed": self._current_speed,
                 "restart_count": max(self._process_start_count - 1, 0),
+                "streaming": False,
                 "last_error": self._last_error,
                 "startup_output_tail": self._startup_output_tail,
             }

@@ -1,33 +1,45 @@
 # Aurora Voice Node
 
-This is the minimal, non-streaming HTTP bridge for a separately provisioned
-`cosyvoice-cli` runtime. It uses only Python's standard library. Model, prompt,
-backend, listen address, and all paths are supplied at launch; none are embedded
-in Aurora.
+The Voice Node is Aurora's optional LAN boundary for a separately provisioned
+CosyVoice runtime. Its recommended backend owns one persistent
+`cosyvoice-server` process bound only to `127.0.0.1`; only the Python Voice Node
+is exposed to the LAN. The legacy `cosyvoice-cli --interactive` backend remains
+available through an explicit runtime selection, and one node process creates
+only the selected backend.
 
-Example (PowerShell placeholders):
+Server-backend launch example (PowerShell placeholders):
 
 ```powershell
-$Cli = '<path-to-cosyvoice-cli>'
-$Model = '<path-to-cosyvoice3-model.gguf>'
-$Prompt = '<path-to-prompt_speech.gguf>'
-python -m aurora_voice_node --host 0.0.0.0 --port 8765 `
-  --cli $Cli --model $Model --prompt-speech $Prompt --backend cuda0
+python -m aurora_voice_node --runtime-backend server `
+  --host 0.0.0.0 --port $VoiceNodePort `
+  --server $CosyVoiceServer --model $CosyVoiceModel `
+  --prompt-speech $CosyVoicePrompt --backend cuda0 `
+  --backend-path $CosyVoiceBin
 ```
 
-For extra CLI tuning, repeat `--runtime-arg`. An extra option beginning with a
-dash must use the equals form, such as
-`--runtime-arg=--llm-kv-cache-type --runtime-arg=f32`.
+`--internal-port 0` is the default and selects an available loopback port. The
+internal endpoint is not returned by `/health`. The health response reports the
+runtime backend, readiness, child PID, restart count, and streaming capability.
 
-The node starts `cosyvoice-cli --interactive` before accepting normal work.
-`GET /health` remains available if initialization fails so the reason is
-diagnosable. Requests are serialized through the single REPL. The model and
-prompt stay loaded while speed is unchanged. Because the current REPL has no
-speed command, changing speed performs one controlled process restart. A crash
-or generation timeout marks the runtime unavailable; the next request attempts
-a clean restart.
+`POST /tts` remains the phase-two blocking API and returns a complete PCM16 WAV.
+`POST /tts/stream` returns HTTP/1.1 chunked data with content type
+`application/vnd.aurora.pcm-stream; version=1`. Each application frame is one
+type byte, a four-byte unsigned big-endian payload length, and the payload. `M`
+metadata is first, `A` contains aligned s16le PCM, `E` is the only normal end,
+and `X` reports an error after the response starts. EOF without `E` is failure.
 
-The default bind address is loopback. Binding to a LAN interface is an explicit
-deployment choice. This phase does not include authentication or TLS, so expose
-the port only on a trusted network or place it behind an existing secured
-reverse proxy.
+The server backend uses only Python's standard library. Closing the downstream
+client response closes the loopback response so cosyvoice-server can cancel the
+active generation and release the single runtime lease.
+
+Legacy CLI launch remains compatible:
+
+```powershell
+python -m aurora_voice_node --runtime-backend cli `
+  --host 0.0.0.0 --port $VoiceNodePort `
+  --cli $CosyVoiceCli --model $CosyVoiceModel `
+  --prompt-speech $CosyVoicePrompt --backend cuda0
+```
+
+The CLI backend advertises `streaming: false` and returns HTTP 501 for
+`POST /tts/stream`; it never runs alongside the server backend in one node.

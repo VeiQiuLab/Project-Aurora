@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 from threading import Event
-from typing import Literal, Mapping
+from typing import Callable, Iterator, Literal, Mapping
 
 
 AudioInputKind = Literal["microphone", "file", "bytes"]
@@ -64,6 +64,28 @@ class SpeechResult:
     mime_type: str = "audio/wav"
     duration_ms: int = 0
     diagnostics: Mapping[str, object] = field(default_factory=dict)
+
+
+@dataclass
+class StreamingSpeechResult:
+    """Incremental PCM returned by a streaming-capable TTS provider."""
+
+    metadata: Mapping[str, object]
+    chunks: Iterator[bytes]
+    diagnostics: dict[str, object] = field(default_factory=dict)
+    _close: Callable[[], None] = field(default=lambda: None, repr=False, compare=False)
+
+    def close(self) -> None:
+        self._close()
+
+    cancel = close
+
+    def __enter__(self) -> "StreamingSpeechResult":
+        return self
+
+    def __exit__(self, *_args: object) -> bool:
+        self.close()
+        return False
 
 
 # Canonical response name for the provider layer; SpeechResult remains the

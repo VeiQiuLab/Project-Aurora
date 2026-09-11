@@ -8,6 +8,7 @@ from threading import Event
 from .models import (
     AudioInput,
     SpeechResult,
+    StreamingSpeechResult,
     TTSRequest,
     TTSResponse,
     TranscriptionResult,
@@ -54,6 +55,21 @@ class TTSProvider(ABC):
             timeout_seconds=request.timeout_seconds,
             cancel_event=request.cancel_event,
         )
+
+
+class StreamingTTSProvider(ABC):
+    """Optional synchronous PCM streaming capability independent of playback."""
+
+    @abstractmethod
+    def synthesize_stream(
+        self,
+        text: str,
+        options: VoiceOptions | None = None,
+        *,
+        timeout_seconds: float | None = None,
+        cancel_event: Event | None = None,
+    ) -> StreamingSpeechResult:
+        """Return metadata plus a blocking iterator of aligned PCM chunks."""
 
 
 # Keep the established public name source-compatible while TTSProvider is the

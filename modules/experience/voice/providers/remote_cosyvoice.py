@@ -2,10 +2,12 @@
 
 from __future__ import annotations
 
+import http.client
 import json
 import os
 import socket
 import tempfile
+from collections import deque
 from pathlib import Path
 from threading import Event
 from typing import Any, Callable
@@ -15,16 +17,108 @@ from urllib.request import Request, urlopen
 
 from modules.diagnostics import create_diagnostics
 
-from ..interfaces import TTSProvider
-from ..models import SpeechResult, VoiceOptions
+from aurora_voice_node.stream_protocol import CONTENT_TYPE, StreamFrame, StreamFrameDecoder, StreamProtocolError
+
+from ..interfaces import StreamingTTSProvider, TTSProvider
+from ..models import SpeechResult, StreamingSpeechResult, VoiceOptions
 from ..wav_utils import inspect_wav
 
 
 HttpOpen = Callable[..., Any]
 
 
-class RemoteCosyVoiceProvider(TTSProvider):
-    """Synthesize WAV audio through the Voice Node's blocking HTTP API."""
+class StreamingSynthesisError(RuntimeError):
+    """A Voice Node stream failed after its response had started."""
+
+
+class _RemotePcmIterator:
+    def __init__(self, response: Any, cancel_event: Event | None, diagnostics: dict[str, object]) -> None:
+        self.response = response
+        self.cancel_event = cancel_event
+        self.diagnostics = diagnostics
+        self.decoder = StreamFrameDecoder()
+        self.pending: deque[StreamFrame] = deque()
+        self.closed = False
+        self.completed = False
+
+    def read_metadata(self) -> dict[str, object]:
+        frame = self._next_frame()
+        if frame.frame_type != "M" or frame.data is None:
+            self.close()
+            raise StreamProtocolError("metadata must be the first frame")
+        return frame.data
+
+    def __iter__(self) -> "_RemotePcmIterator":
+        return self
+
+    def __next__(self) -> bytes:
+        if self.completed or self.closed:
+            raise StopIteration
+        if self.cancel_event is not None and self.cancel_event.is_set():
+            self._fail("cancelled", "speech streaming was cancelled")
+        try:
+            while True:
+                frame = self._next_frame()
+                if frame.frame_type == "A":
+                    return frame.payload
+                if frame.frame_type == "E":
+                    self.completed = True
+                    metrics = self.diagnostics.setdefault("metrics", {})
+                    if isinstance(metrics, dict) and frame.data is not None:
+                        metrics.update(frame.data)
+                    self.diagnostics["success"] = True
+                    self.diagnostics["reason"] = "stream_completed"
+                    self.close(mark_cancelled=False)
+                    raise StopIteration
+                if frame.frame_type == "X":
+                    detail = frame.data or {}
+                    self._fail(str(detail.get("code", "stream_error")), str(detail.get("message", "stream failed")))
+        except StopIteration:
+            raise
+        except StreamingSynthesisError:
+            raise
+        except (
+            StreamProtocolError,
+            http.client.IncompleteRead,
+            http.client.RemoteDisconnected,
+            OSError,
+            ValueError,
+        ) as error:
+            self._fail("invalid_stream", str(error))
+
+    def close(self, *, mark_cancelled: bool = True) -> None:
+        if self.closed:
+            return
+        self.closed = True
+        try:
+            self.response.close()
+        finally:
+            if mark_cancelled and not self.completed and self.diagnostics.get("success") is True:
+                self.diagnostics["success"] = False
+                self.diagnostics["reason"] = "cancelled"
+
+    def _next_frame(self) -> StreamFrame:
+        while not self.pending:
+            reader = getattr(self.response, "read1", None)
+            data = reader(8192) if callable(reader) else self.response.read(8192)
+            if not data:
+                self.decoder.finish()
+                raise StreamProtocolError("stream ended without a pending terminal frame")
+            self.pending.extend(self.decoder.feed(data))
+        return self.pending.popleft()
+
+    def _fail(self, code: str, message: str) -> None:
+        self.diagnostics["success"] = False
+        self.diagnostics["reason"] = code
+        warnings = self.diagnostics.setdefault("warnings", [])
+        if isinstance(warnings, list):
+            warnings.append(message)
+        self.close(mark_cancelled=False)
+        raise StreamingSynthesisError(message)
+
+
+class RemoteCosyVoiceProvider(TTSProvider, StreamingTTSProvider):
+    """Synthesize WAV or framed PCM through the optional Voice Node."""
 
     def __init__(
         self,
@@ -138,6 +232,76 @@ class RemoteCosyVoiceProvider(TTSProvider):
             ),
         )
 
+    def synthesize_stream(
+        self,
+        text: str,
+        options: VoiceOptions | None = None,
+        *,
+        timeout_seconds: float | None = None,
+        cancel_event: Event | None = None,
+    ) -> StreamingSpeechResult:
+        validation = self._stream_parameters(text, options, timeout_seconds, cancel_event)
+        if isinstance(validation, StreamingSpeechResult):
+            return validation
+        speed, timeout = validation
+        request = Request(
+            f"{self.base_url}/tts/stream",
+            data=json.dumps({"text": text, "speed": speed}, ensure_ascii=False).encode("utf-8"),
+            headers={"Accept": CONTENT_TYPE, "Content-Type": "application/json; charset=utf-8"},
+            method="POST",
+        )
+        try:
+            response = self._http_open(request, timeout=timeout)
+            status = int(getattr(response, "status", 200))
+            if status != 200:
+                response.close()
+                return self._stream_failure(
+                    "server_error", f"Voice Node returned HTTP {status}", metrics={"status": status}
+                )
+            content_type = str(response.headers.get("Content-Type", "")).lower()
+            if "application/vnd.aurora.pcm-stream" not in content_type or "version=1" not in content_type:
+                response.close()
+                return self._stream_failure("invalid_response", "Voice Node returned an unsupported stream type")
+            diagnostics = create_diagnostics(
+                stage="experience.voice.tts.remote_cosyvoice.stream",
+                success=True,
+                reason="stream_open",
+                metrics={"provider": "remote_cosyvoice", "speed": speed},
+            )
+            stream = _RemotePcmIterator(response, cancel_event, diagnostics)
+            try:
+                metadata = stream.read_metadata()
+            except Exception:
+                stream.close(mark_cancelled=False)
+                raise
+        except HTTPError as error:
+            return self._stream_failure(
+                "server_error", self._http_error_message(error), metrics={"status": int(error.code)}
+            )
+        except (TimeoutError, socket.timeout) as error:
+            return self._stream_failure("timeout", "Voice Node request timed out", warning=type(error).__name__)
+        except URLError as error:
+            reason = "timeout" if isinstance(error.reason, (TimeoutError, socket.timeout)) else "connection_failed"
+            return self._stream_failure(reason, "Voice Node is unavailable", warning=type(error.reason).__name__)
+        except (
+            OSError,
+            ValueError,
+            StreamProtocolError,
+            http.client.IncompleteRead,
+            http.client.RemoteDisconnected,
+        ) as error:
+            return self._stream_failure("invalid_stream", str(error), warning=type(error).__name__)
+        metrics = diagnostics.get("metrics")
+        if isinstance(metrics, dict):
+            metrics.update(
+                {
+                    "sample_rate": metadata["sample_rate"],
+                    "channels": metadata["channels"],
+                    "bits_per_sample": metadata["bits_per_sample"],
+                }
+            )
+        return StreamingSpeechResult(metadata=metadata, chunks=stream, diagnostics=diagnostics, _close=stream.close)
+
     def health(self, *, timeout_seconds: float = 2.0) -> tuple[bool, str]:
         """Probe node and runtime readiness without synthesizing audio."""
 
@@ -169,6 +333,30 @@ class RemoteCosyVoiceProvider(TTSProvider):
             Path(name).unlink(missing_ok=True)
             raise
         return Path(name)
+
+    def _stream_parameters(
+        self,
+        text: str,
+        options: VoiceOptions | None,
+        timeout_seconds: float | None,
+        cancel_event: Event | None,
+    ) -> tuple[float, float] | StreamingSpeechResult:
+        if not isinstance(text, str):
+            return self._stream_failure("invalid_text", "text must be a string")
+        if not text.strip():
+            return self._stream_failure("empty_text", "text must not be empty")
+        if cancel_event is not None and cancel_event.is_set():
+            return self._stream_failure("cancelled", "speech streaming was cancelled")
+        try:
+            speed = float((options or VoiceOptions()).rate)
+            timeout = self.default_timeout_seconds if timeout_seconds is None else float(timeout_seconds)
+        except (AttributeError, TypeError, ValueError):
+            return self._stream_failure("invalid_options", "voice rate and timeout must be numbers")
+        if not 0 < speed <= 4.0:
+            return self._stream_failure("invalid_options", "voice rate must be greater than zero and at most 4.0")
+        if timeout <= 0:
+            return self._stream_failure("invalid_options", "timeout must be greater than zero")
+        return speed, timeout
 
     @staticmethod
     def _normalize_base_url(value: str) -> str:
@@ -208,4 +396,25 @@ class RemoteCosyVoiceProvider(TTSProvider):
                 metrics=metrics or {},
                 trace={"message": message},
             )
+        )
+
+    @staticmethod
+    def _stream_failure(
+        reason: str,
+        message: str,
+        *,
+        warning: str | None = None,
+        metrics: dict[str, object] | None = None,
+    ) -> StreamingSpeechResult:
+        return StreamingSpeechResult(
+            metadata={},
+            chunks=iter(()),
+            diagnostics=create_diagnostics(
+                stage="experience.voice.tts.remote_cosyvoice.stream",
+                success=False,
+                reason=reason,
+                warnings=[warning or message],
+                metrics=metrics or {},
+                trace={"message": message},
+            ),
         )

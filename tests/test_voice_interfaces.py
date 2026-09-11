@@ -8,6 +8,8 @@ from modules.experience.voice import (
     FakeTextToSpeechProvider,
     SpeechResult,
     SpeechToTextProvider,
+    StreamingSpeechResult,
+    StreamingTTSProvider,
     TextToSpeechProvider,
     TranscriptionResult,
     VoiceOptions,
@@ -58,3 +60,17 @@ def test_fake_providers_can_expose_deterministic_failures():
         stt.transcribe(AudioInput(kind="bytes", data=b"input"))
     with pytest.raises(RuntimeError, match="tts unavailable"):
         tts.synthesize("hello")
+
+
+def test_streaming_contract_is_independent_from_blocking_tts_and_playback():
+    class Provider(StreamingTTSProvider):
+        def synthesize_stream(self, text, options=None, **_kwargs):
+            return StreamingSpeechResult(
+                metadata={"sample_format": "s16le", "sample_rate": 24000},
+                chunks=iter((b"\0\0",)),
+            )
+
+    result = Provider().synthesize_stream("hello")
+
+    assert list(result.chunks) == [b"\0\0"]
+    assert result.metadata["sample_rate"] == 24000
