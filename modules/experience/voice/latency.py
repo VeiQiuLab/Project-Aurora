@@ -16,7 +16,12 @@ class VoiceTurnTrace:
     _lock: RLock = field(default_factory=RLock, init=False, repr=False)
 
     def mark(self, name: str, *, first: bool = False) -> int:
-        now = monotonic()
+        return self.mark_at(name, monotonic(), first=first)
+
+    def mark_at(self, name: str, timestamp: float, *, first: bool = False) -> int:
+        """Store an externally observed monotonic timestamp."""
+
+        now = float(timestamp)
         with self._lock:
             if first and name in self._marks:
                 timestamp = self._marks[name]
@@ -24,6 +29,18 @@ class VoiceTurnTrace:
                 self._marks[name] = now
                 timestamp = now
         return int((timestamp - self.started_at) * 1000)
+
+    def timestamp(self, name: str) -> float | None:
+        with self._lock:
+            return self._marks.get(name)
+
+    def snapshot(self) -> dict[str, float]:
+        with self._lock:
+            marks = dict(self._marks)
+        return {
+            "turn_start_monotonic": self.started_at,
+            **{f"{name}_monotonic": value for name, value in marks.items()},
+        }
 
     def elapsed_ms(self, name: str) -> int | None:
         with self._lock:

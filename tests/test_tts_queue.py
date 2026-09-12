@@ -183,6 +183,36 @@ def test_cancel_during_synthesize_discards_late_result_and_pending_segments():
     assert "segment_cancelled" in events(queue)
 
 
+def test_cancel_during_synthesize_closes_a_late_stream_result():
+    started = Event()
+    release = Event()
+    discarded = []
+
+    def synthesize(item, _cancel_event):
+        started.set()
+        release.wait(1.0)
+        return f"stream:{item.text}"
+
+    queue = TTSQueue(
+        synthesize,
+        on_speech=lambda _item, _speech: pytest.fail("stale stream was played"),
+        discard_speech=lambda item, speech: discarded.append((item, speech)),
+        session_id="session",
+        generation_id="generation",
+    )
+    queue.start()
+    queue.put(segment(0))
+    assert started.wait(1.0)
+
+    queue.cancel(wait=False)
+    release.set()
+
+    assert queue.flush(1.0)
+    assert queue.cancel()
+    assert discarded == [(segment(0), "stream:segment-0")]
+    assert "segment_cleanup_failed" not in events(queue)
+
+
 def test_cancel_during_playback_callback_does_not_mark_segment_completed():
     playback_started = Event()
     release = Event()

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from queue import Empty, Queue
 from threading import Event, Lock, Thread
+from time import monotonic
 from typing import Callable, Generic, Mapping, TypeVar
 
 from modules.logger import logger
@@ -17,6 +18,7 @@ SynthesizeCallback = Callable[[SpeechSegment, Event], Speech]
 SpeechCallback = Callable[[SpeechSegment, Speech], None]
 GenerationActive = Callable[[str, str], bool]
 GenerationFailed = Callable[[SpeechSegment, Exception], None]
+DiscardSpeech = Callable[[SpeechSegment, Speech], None]
 
 
 class TTSQueue(Generic[Speech]):
@@ -35,6 +37,7 @@ class TTSQueue(Generic[Speech]):
         generation_id: str = "",
         generation_active: GenerationActive | None = None,
         on_generation_failed: GenerationFailed | None = None,
+        discard_speech: DiscardSpeech[Speech] | None = None,
     ):
         if not callable(synthesize):
             raise TypeError("synthesize must be callable")
@@ -44,9 +47,12 @@ class TTSQueue(Generic[Speech]):
             raise TypeError("generation_active must be callable or None")
         if on_generation_failed is not None and not callable(on_generation_failed):
             raise TypeError("on_generation_failed must be callable or None")
+        if discard_speech is not None and not callable(discard_speech):
+            raise TypeError("discard_speech must be callable or None")
         self._synthesize = synthesize
         self._on_speech = on_speech
         self._on_generation_failed = on_generation_failed
+        self._discard_speech = discard_speech
         self.cancel_event = cancel_event or Event()
         self.latency_trace = latency_trace
         self.session_id = str(session_id)
@@ -233,6 +239,7 @@ class TTSQueue(Generic[Speech]):
                 self._record("segment_tts_started", segment)
                 speech = self._synthesize(segment, self.cancel_event)
                 if not self._is_segment_active(segment):
+                    self._discard_synthesized(segment, speech)
                     self._record_cancel_or_stale(segment, checkpoint="after_tts")
                     continue
                 self._record("segment_tts_completed", segment)
@@ -256,6 +263,18 @@ class TTSQueue(Generic[Speech]):
                         if self._pending == 0:
                             self._idle.set()
                 self._items.task_done()
+
+    def _discard_synthesized(self, segment: SpeechSegment, speech: Speech) -> None:
+        if self._discard_speech is None:
+            return
+        try:
+            self._discard_speech(segment, speech)
+        except Exception as error:
+            self._record(
+                "segment_cleanup_failed",
+                segment,
+                error=type(error).__name__,
+            )
 
     def _fail_generation(self, segment: SpeechSegment, error: Exception) -> None:
         with self._lock:
@@ -326,6 +345,7 @@ class TTSQueue(Generic[Speech]):
     def _record(self, event: str, segment: SpeechSegment, **fields: object) -> None:
         entry: dict[str, object] = {
             "event": event,
+            "monotonic": monotonic(),
             "session_id": segment.session_id,
             "generation_id": segment.generation_id,
             "segment_index": segment.segment_index,

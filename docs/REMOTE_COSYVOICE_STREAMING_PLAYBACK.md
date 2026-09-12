@@ -124,8 +124,11 @@ The application composition boundary creates and reuses one
 `StreamingPlaybackSession`, clears that reference on every terminal path, and
 cancels it through the existing runtime cancellation API. Streaming playback
 always waits for upstream completion and audio drain before the voice run returns
-to idle. Existing LLM sentence splitting and `TTSQueue` continue to use complete
-TTS results; token-to-speech streaming is outside this phase.
+to idle. The incremental LLM path sends each generation-owned `SpeechSegment`
+through the same capability check. Its single `TTSQueue` worker waits for one
+segment's streaming playback to finish before starting the next, preserving FIFO
+ordering without TTS prefetch or cross-segment audio overlap. Edge TTS and other
+non-streaming providers remain on the complete-WAV path.
 
 Run the integration smoke through the real runtime, router, provider, and
 orchestrator boundaries:
@@ -140,3 +143,17 @@ python scripts/smoke_voice_orchestrator_stream_playback.py `
 The smoke uses deterministic fake recorder/STT inputs so it does not require the
 GUI or microphone. Audio synthesis, transport, buffering, playback, cancellation,
 and orchestration are real. Pressing Ctrl+C calls the runtime cancellation API.
+
+To exercise the complete Stage B path with real Ollama incremental output, the
+Voice Node, and sound-device playback, pass the current node URL explicitly:
+
+```powershell
+python scripts/smoke_voice_stage_b.py `
+  --url $VoiceNodeUrl `
+  --model qwen3.5:9b
+```
+
+The report records per-segment lifecycle and PCM metrics and fails unless the
+first audio submission precedes LLM completion. Add
+`--cancel-after-first-audio` to cancel N after audio begins and run an immediate
+N+1 recovery request. The script does not discover or persist a Voice Node URL.

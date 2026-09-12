@@ -429,13 +429,13 @@ def test_runtime_shutdown_during_streaming_leaves_no_current_session():
     assert runtime.session_running is False
 
 
-def test_llm_sentence_queue_keeps_existing_complete_tts_path():
+def test_llm_sentence_queue_uses_streaming_capability_when_enabled():
     provider = FakeStreamingProvider()
 
     def stream_handler(_text, *, on_chunk, cancel_event):
         assert cancel_event.is_set() is False
-        on_chunk("仍然使用现有完整 TTS。")
-        return "仍然使用现有完整 TTS。"
+        on_chunk("现在使用分句 streaming TTS。")
+        return "现在使用分句 streaming TTS。"
 
     orchestrator = build_orchestrator(
         provider, controller=FakeStreamingController(), streaming_enabled=True
@@ -445,9 +445,10 @@ def test_llm_sentence_queue_keeps_existing_complete_tts_path():
     result = orchestrator.run()
 
     assert result.success is True
-    assert len(provider.synthesize_calls) == 1
-    assert provider.stream_calls == []
-    assert result.diagnostics["metrics"]["streaming_selected"] is False
+    assert provider.synthesize_calls == []
+    assert len(provider.stream_calls) == 1
+    assert result.diagnostics["metrics"]["streaming_selected"] is True
+    assert result.diagnostics["metrics"]["streaming_status"] == "completed"
 
 
 def test_runtime_can_start_new_streaming_request_after_cancel():

@@ -105,6 +105,9 @@ class VoiceOrchestrator:
         self._interrupt_lock = RLock()
         self._latency_trace: VoiceTurnTrace | None = None
         self._current_streaming_session: StreamingPlaybackSession | None = None
+        self._streaming_playback_context: (
+            tuple[SpeechSegment, StreamingPlaybackSession] | None
+        ) = None
         self.playback.subscribe(self._handle_playback_event)
 
     def set_latency_trace(self, trace: VoiceTurnTrace) -> None:
@@ -187,6 +190,9 @@ class VoiceOrchestrator:
         streaming_status = "not_selected"
         streaming_report: StreamingPlaybackReport | None = None
         streaming_provider_diagnostics: Mapping[str, object] | None = None
+        streaming_segment_states: dict[int, dict[str, object]] = {}
+        completed_segment_count = 0
+        queue_streaming_provider: StreamingTTSProvider | None = None
         selected_tts_provider = self.tts_provider
         tts_provider_name = self._tts_provider_name(selected_tts_provider)
         try:
@@ -244,15 +250,203 @@ class VoiceOrchestrator:
 
             if self.stream_text_input_handler is not None:
                 tts_started_at = monotonic()
+                queue_streaming_provider = self._streaming_provider(
+                    selected_tts_provider
+                )
+                if queue_streaming_provider is not None:
+                    streaming_selected = True
+                    streaming_status = "queued"
 
-                def synthesize_sentence(segment, cancel_event):
-                    return self.tts_provider.synthesize(
-                        segment.text,
-                        timeout_seconds=self.tts_timeout_seconds,
-                        cancel_event=cancel_event,
+                def update_streaming_segment(
+                    segment: SpeechSegment,
+                    **fields: object,
+                ) -> None:
+                    if queue_streaming_provider is None:
+                        return
+                    with self._lock:
+                        state = streaming_segment_states.setdefault(
+                            segment.segment_index,
+                            {
+                                "session_id": segment.session_id,
+                                "generation_id": segment.generation_id,
+                                "segment_index": segment.segment_index,
+                                "provider": tts_provider_name,
+                                "streaming_selected": True,
+                                "segment_emit_monotonic": None,
+                                "tts_request_start": None,
+                                "first_pcm_received": None,
+                                "first_audio_submission": None,
+                                "upstream_end": None,
+                                "playback_end": None,
+                                "audio_duration_ms": None,
+                                "received_pcm_bytes": None,
+                                "played_pcm_bytes": None,
+                                "underrun_count": None,
+                                "buffer_peak_bytes": None,
+                                "cancel_latency_ms": None,
+                                "status": "pending",
+                                "error": "",
+                            },
+                        )
+                        state.update(fields)
+
+                def finish_streaming_segment(
+                    segment: SpeechSegment,
+                    *,
+                    status: str,
+                    report: StreamingPlaybackReport | None = None,
+                    error: str = "",
+                ) -> None:
+                    source: Mapping[str, object] = {}
+                    if report is not None:
+                        metrics = report.diagnostics.get("metrics", {})
+                        if isinstance(metrics, Mapping):
+                            source = metrics
+                    update_streaming_segment(
+                        segment,
+                        first_pcm_received=source.get("first_pcm_received_monotonic"),
+                        first_audio_submission=source.get(
+                            "first_audio_submission_monotonic"
+                        ),
+                        upstream_end=source.get("upstream_end_monotonic"),
+                        playback_end=source.get("playback_end_monotonic"),
+                        audio_duration_ms=source.get("audio_duration_ms"),
+                        received_pcm_bytes=source.get("received_pcm_bytes"),
+                        played_pcm_bytes=source.get("played_pcm_bytes"),
+                        underrun_count=source.get("underrun_count"),
+                        buffer_peak_bytes=source.get("buffer_peak_bytes"),
+                        cancel_latency_ms=source.get("cancel_latency_ms"),
+                        status=status,
+                        error=error,
                     )
 
+                def synthesize_sentence(segment, cancel_event):
+                    if queue_streaming_provider is None:
+                        return selected_tts_provider.synthesize(
+                            segment.text,
+                            timeout_seconds=self.tts_timeout_seconds,
+                            cancel_event=cancel_event,
+                        )
+                    request_start = monotonic()
+                    update_streaming_segment(
+                        segment,
+                        tts_request_start=request_start,
+                        status="creating",
+                        error="",
+                    )
+                    try:
+                        stream = queue_streaming_provider.synthesize_stream(
+                            segment.text,
+                            timeout_seconds=self.tts_timeout_seconds,
+                            cancel_event=cancel_event,
+                        )
+                    except Exception as error:
+                        finish_streaming_segment(
+                            segment,
+                            status=(
+                                "cancelled"
+                                if cancel_event.is_set()
+                                or not self._owns_generation(
+                                    segment.session_id, segment.generation_id
+                                )
+                                else "failed"
+                            ),
+                            error=str(error) or type(error).__name__,
+                        )
+                        raise _StreamingStageError("tts", str(error)) from error
+                    update_streaming_segment(
+                        segment,
+                        provider_metadata_monotonic=monotonic(),
+                        status="stream_open",
+                    )
+                    return stream
+
+                def discard_sentence_speech(segment, speech_result):
+                    if isinstance(speech_result, StreamingSpeechResult):
+                        speech_result.cancel()
+                        finish_streaming_segment(
+                            segment,
+                            status=(
+                                "cancelled"
+                                if run_cancel_event.is_set()
+                                else "stale"
+                            ),
+                        )
+
                 def play_sentence(segment, speech_result):
+                    nonlocal completed_segment_count
+                    nonlocal streaming_provider_diagnostics
+                    nonlocal streaming_report
+                    nonlocal streaming_status
+                    if queue_streaming_provider is not None:
+                        if not isinstance(speech_result, StreamingSpeechResult):
+                            raise TypeError(
+                                "streaming provider must return StreamingSpeechResult"
+                            )
+                        with self._lock:
+                            state = streaming_segment_states.get(
+                                segment.segment_index, {}
+                            )
+                            request_start = float(
+                                state.get("tts_request_start", monotonic())
+                            )
+                            metadata_received = float(
+                                state.get("provider_metadata_monotonic", monotonic())
+                            )
+                        try:
+                            (
+                                report,
+                                _segment_tts_latency_ms,
+                                provider_diagnostics,
+                            ) = self._play_streaming_result(
+                                segment,
+                                speech_result,
+                                request_start_monotonic=request_start,
+                                provider_metadata_monotonic=metadata_received,
+                                cancel_event=run_cancel_event,
+                                latency_trace=run_latency_trace,
+                            )
+                        except BaseException as error:
+                            finish_streaming_segment(
+                                segment,
+                                status=(
+                                    "cancelled"
+                                    if run_cancel_event.is_set()
+                                    or not self._owns_generation(
+                                        segment.session_id, segment.generation_id
+                                    )
+                                    else "failed"
+                                ),
+                                error=str(error) or type(error).__name__,
+                            )
+                            raise
+                        streaming_report = report
+                        streaming_provider_diagnostics = provider_diagnostics
+                        streaming_status = report.status
+                        self._apply_streaming_playback_latency(report)
+                        finish_streaming_segment(
+                            segment,
+                            status=report.status,
+                            report=report,
+                            error=self._streaming_report_error(report),
+                        )
+                        if report.status == "cancelled":
+                            if run_cancel_event.is_set() or not self._owns_generation(
+                                segment.session_id, segment.generation_id
+                            ):
+                                raise _VoiceCancelled()
+                            raise _StreamingStageError(
+                                "playback", "streaming playback was cancelled"
+                            )
+                        if not report.success:
+                            raise self._streaming_failure(report)
+                        if not self._owns_generation(
+                            segment.session_id, segment.generation_id
+                        ):
+                            raise _VoiceCancelled()
+                        completed_segment_count += 1
+                        return
+
                     if not self._owns_generation(
                         segment.session_id, segment.generation_id
                     ):
@@ -269,6 +463,7 @@ class VoiceOrchestrator:
                     )
                     if self._owns_generation(segment.session_id, segment.generation_id):
                         speech_results.append(speech_result)
+                        completed_segment_count += 1
 
                 tts_queue = TTSQueue(
                     synthesize_sentence,
@@ -279,6 +474,11 @@ class VoiceOrchestrator:
                     generation_id=run_generation_id,
                     generation_active=self._owns_generation,
                     on_generation_failed=self._invalidate_failed_generation,
+                    discard_speech=(
+                        discard_sentence_speech
+                        if queue_streaming_provider is not None
+                        else None
+                    ),
                 )
                 with self._lock:
                     if not self._owns_generation(run_session_id, run_generation_id):
@@ -302,7 +502,17 @@ class VoiceOrchestrator:
                         segment_index=next_segment_index,
                         text=sentence,
                     )
-                    run_latency_trace.mark("first_sentence_emit", first=True)
+                    emitted_at = monotonic()
+                    run_latency_trace.mark_at(
+                        "first_sentence_emit", emitted_at, first=True
+                    )
+                    run_latency_trace.mark_at("final_segment_emit", emitted_at)
+                    update_streaming_segment(
+                        segment,
+                        segment_emit_monotonic=emitted_at,
+                        status="emitted",
+                        error="",
+                    )
                     logger.info(
                         f"[VOICE_SPLITTER] emit: segment_index={segment.segment_index} "
                         f"text_length={len(segment.text)} "
@@ -345,11 +555,15 @@ class VoiceOrchestrator:
                 emit_sentences(emitted)
 
             if self.stream_text_input_handler is not None:
-                response_text = self.stream_text_input_handler(
-                    transcription.text,
-                    on_chunk=handle_chunk,
-                    cancel_event=run_cancel_event,
-                )
+                run_latency_trace.mark("llm_start")
+                try:
+                    response_text = self.stream_text_input_handler(
+                        transcription.text,
+                        on_chunk=handle_chunk,
+                        cancel_event=run_cancel_event,
+                    )
+                finally:
+                    run_latency_trace.mark("llm_complete")
                 with self._lock:
                     if (
                         self._active_splitter is splitter
@@ -363,12 +577,19 @@ class VoiceOrchestrator:
                     raise TimeoutError("TTS queue did not drain in time")
                 if tts_queue.last_error is not None:
                     raise tts_queue.last_error
-                if not speech_results:
+                if completed_segment_count == 0:
                     raise RuntimeError("TTS queue produced no speech")
-                speech = speech_results[-1]
+                if speech_results:
+                    speech = speech_results[-1]
+                if queue_streaming_provider is None:
+                    run_latency_trace.mark("final_playback_end")
                 tts_latency_ms = int((monotonic() - tts_started_at) * 1000)
             else:
-                response_text = self.text_input_handler(transcription.text)
+                run_latency_trace.mark("llm_start")
+                try:
+                    response_text = self.text_input_handler(transcription.text)
+                finally:
+                    run_latency_trace.mark("llm_complete")
             if not isinstance(response_text, str):
                 raise TypeError("text_input_handler must return a string")
             self._raise_if_cancelled(run_cancel_event)
@@ -381,6 +602,12 @@ class VoiceOrchestrator:
                     generation_id=run_generation_id,
                 )
                 tts_started_at = monotonic()
+                direct_segment = SpeechSegment(
+                    session_id=run_session_id,
+                    generation_id=run_generation_id,
+                    segment_index=0,
+                    text=response_text,
+                )
                 streaming_provider = self._streaming_provider(selected_tts_provider)
                 if streaming_provider is not None:
                     streaming_selected = True
@@ -392,8 +619,10 @@ class VoiceOrchestrator:
                     ) = self._play_streaming_speech(
                         response_text,
                         streaming_provider,
+                        segment=direct_segment,
                         request_start_monotonic=tts_started_at,
                         cancel_event=run_cancel_event,
+                        latency_trace=run_latency_trace,
                     )
                     streaming_report = streaming_result
                     streaming_status = streaming_report.status
@@ -415,12 +644,6 @@ class VoiceOrchestrator:
                         raise RuntimeError(
                             f"tts: {speech.diagnostics.get('reason', 'speech synthesis failed')}"
                         )
-                    direct_segment = SpeechSegment(
-                        session_id=run_session_id,
-                        generation_id=run_generation_id,
-                        segment_index=0,
-                        text=response_text,
-                    )
                     self._play_owned_speech(
                         direct_segment,
                         speech,
@@ -453,9 +676,17 @@ class VoiceOrchestrator:
                         status=streaming_status,
                         report=streaming_report,
                     ),
+                    **self._turn_latency_metrics(run_latency_trace),
                 },
                 trace=self._voice_trace(
-                    streaming_report, streaming_provider_diagnostics, tts_queue
+                    streaming_report,
+                    streaming_provider_diagnostics,
+                    tts_queue,
+                    turn_trace=run_latency_trace,
+                    streaming_segments=self._streaming_segment_snapshot(
+                        streaming_segment_states,
+                        tts_queue=tts_queue,
+                    ),
                 ),
             )
             with self._interrupt_lock:
@@ -489,14 +720,24 @@ class VoiceOrchestrator:
                     stage="experience.voice.orchestration",
                     success=False,
                     reason="cancelled",
-                    metrics=self._streaming_metrics(
-                        selected=streaming_selected,
-                        provider=tts_provider_name,
-                        status=streaming_status,
-                        report=streaming_report,
-                    ),
+                    metrics={
+                        **self._streaming_metrics(
+                            selected=streaming_selected,
+                            provider=tts_provider_name,
+                            status=streaming_status,
+                            report=streaming_report,
+                        ),
+                        **self._turn_latency_metrics(run_latency_trace),
+                    },
                     trace=self._voice_trace(
-                        streaming_report, streaming_provider_diagnostics, tts_queue
+                        streaming_report,
+                        streaming_provider_diagnostics,
+                        tts_queue,
+                        turn_trace=run_latency_trace,
+                        streaming_segments=self._streaming_segment_snapshot(
+                            streaming_segment_states,
+                            tts_queue=tts_queue,
+                        ),
                     ),
                 ),
             )
@@ -521,18 +762,28 @@ class VoiceOrchestrator:
                         stage="experience.voice.orchestration",
                         success=False,
                         reason="cancelled",
-                        metrics=self._streaming_metrics(
-                            selected=streaming_selected,
-                            provider=tts_provider_name,
-                            status=streaming_status,
-                            report=streaming_report,
-                        ),
+                        metrics={
+                            **self._streaming_metrics(
+                                selected=streaming_selected,
+                                provider=tts_provider_name,
+                                status=streaming_status,
+                                report=streaming_report,
+                            ),
+                            **self._turn_latency_metrics(run_latency_trace),
+                        },
                         trace=self._voice_trace(
-                            streaming_report, streaming_provider_diagnostics, tts_queue
+                            streaming_report,
+                            streaming_provider_diagnostics,
+                            tts_queue,
+                            turn_trace=run_latency_trace,
+                            streaming_segments=self._streaming_segment_snapshot(
+                                streaming_segment_states,
+                                tts_queue=tts_queue,
+                            ),
                         ),
                     ),
                 )
-            if streaming_selected and streaming_report is None:
+            if streaming_selected:
                 streaming_status = "failed"
             with self._interrupt_lock:
                 if self._is_current_generation(run_session_id, run_generation_id):
@@ -555,14 +806,24 @@ class VoiceOrchestrator:
                     success=False,
                     reason=str(error),
                     warnings=[type(error).__name__],
-                    metrics=self._streaming_metrics(
-                        selected=streaming_selected,
-                        provider=tts_provider_name,
-                        status=streaming_status,
-                        report=streaming_report,
-                    ),
+                    metrics={
+                        **self._streaming_metrics(
+                            selected=streaming_selected,
+                            provider=tts_provider_name,
+                            status=streaming_status,
+                            report=streaming_report,
+                        ),
+                        **self._turn_latency_metrics(run_latency_trace),
+                    },
                     trace=self._voice_trace(
-                        streaming_report, streaming_provider_diagnostics, tts_queue
+                        streaming_report,
+                        streaming_provider_diagnostics,
+                        tts_queue,
+                        turn_trace=run_latency_trace,
+                        streaming_segments=self._streaming_segment_snapshot(
+                            streaming_segment_states,
+                            tts_queue=tts_queue,
+                        ),
                     ),
                 ),
             )
@@ -862,18 +1123,25 @@ class VoiceOrchestrator:
                     return
                 self._runtime_cancelled_generations.add(key)
                 is_current = self._is_current_generation(session_id, generation_id)
-                streaming_session = self._current_streaming_session if is_current else None
+                streaming_context = self._streaming_playback_context
+                streaming_session = (
+                    streaming_context[1]
+                    if streaming_context is not None
+                    and streaming_context[0].session_id == session_id
+                    and streaming_context[0].generation_id == generation_id
+                    else None
+                )
+            if streaming_session is not None:
+                try:
+                    streaming_session.cancel()
+                except Exception:
+                    pass
             if not is_current:
                 return
             try:
                 self.recorder.cancel()
             except Exception:
                 pass
-            if streaming_session is not None:
-                try:
-                    streaming_session.cancel()
-                except Exception:
-                    pass
             try:
                 self.playback.stop()
             except Exception:
@@ -897,54 +1165,88 @@ class VoiceOrchestrator:
         text: str,
         provider: StreamingTTSProvider,
         *,
+        segment: SpeechSegment,
         request_start_monotonic: float,
         cancel_event: Event,
+        latency_trace: VoiceTurnTrace,
     ) -> tuple[StreamingPlaybackReport, int, Mapping[str, object]]:
-        speech: StreamingSpeechResult | None = None
+        try:
+            speech = provider.synthesize_stream(
+                text,
+                timeout_seconds=self.tts_timeout_seconds,
+                cancel_event=cancel_event,
+            )
+        except Exception as error:
+            raise _StreamingStageError("tts", str(error)) from error
+        metadata_received = monotonic()
+        return self._play_streaming_result(
+            segment,
+            speech,
+            request_start_monotonic=request_start_monotonic,
+            provider_metadata_monotonic=metadata_received,
+            cancel_event=cancel_event,
+            latency_trace=latency_trace,
+        )
+
+    def _play_streaming_result(
+        self,
+        segment: SpeechSegment,
+        speech: StreamingSpeechResult,
+        *,
+        request_start_monotonic: float,
+        provider_metadata_monotonic: float,
+        cancel_event: Event,
+        latency_trace: VoiceTurnTrace,
+    ) -> tuple[StreamingPlaybackReport, int, Mapping[str, object]]:
         session: StreamingPlaybackSession | None = None
         try:
-            try:
-                speech = provider.synthesize_stream(
-                    text,
-                    timeout_seconds=self.tts_timeout_seconds,
-                    cancel_event=cancel_event,
-                )
-            except Exception as error:
-                raise _StreamingStageError("tts", str(error)) from error
-            metadata_received = monotonic()
-            tts_latency_ms = int((metadata_received - request_start_monotonic) * 1000)
+            tts_latency_ms = int(
+                (provider_metadata_monotonic - request_start_monotonic) * 1000
+            )
             self._raise_if_cancelled(cancel_event)
             if speech.diagnostics.get("success") is not True or not speech.metadata:
-                raise RuntimeError(
-                    f"tts: {speech.diagnostics.get('reason', 'stream creation failed')}"
+                raise _StreamingStageError(
+                    "tts",
+                    str(speech.diagnostics.get("reason", "stream creation failed")),
                 )
             assert self.streaming_playback is not None
             try:
-                session = self.streaming_playback.play(
-                    speech,
-                    request_start_monotonic=request_start_monotonic,
-                    provider_metadata_monotonic=metadata_received,
-                )
+                with self._interrupt_lock:
+                    if not self._owns_generation(
+                        segment.session_id, segment.generation_id
+                    ):
+                        raise _VoiceCancelled()
+                    session = self.streaming_playback.play(
+                        speech,
+                        request_start_monotonic=request_start_monotonic,
+                        provider_metadata_monotonic=provider_metadata_monotonic,
+                    )
+                    with self._lock:
+                        self._current_streaming_session = session
+                        self._streaming_playback_context = (segment, session)
+                    cancelled = cancel_event.is_set()
+            except _VoiceCancelled:
+                raise
             except Exception as error:
                 raise _StreamingStageError("playback", str(error)) from error
-            with self._lock:
-                self._current_streaming_session = session
-                cancelled = cancel_event.is_set()
             if cancelled:
                 session.cancel()
             try:
                 report = session.wait(self.playback_timeout_seconds)
             except Exception as error:
                 raise _StreamingStageError("playback", str(error)) from error
+            self._apply_streaming_turn_markers(report, latency_trace)
             return report, tts_latency_ms, dict(speech.diagnostics)
         except BaseException:
             if session is not None:
                 session.cancel()
-            elif speech is not None:
+            else:
                 speech.cancel()
             raise
         finally:
             with self._lock:
+                if self._streaming_playback_context == (segment, session):
+                    self._streaming_playback_context = None
                 if self._current_streaming_session is session:
                     self._current_streaming_session = None
 
@@ -958,6 +1260,97 @@ class VoiceOrchestrator:
         ended = metrics.get("playback_end_monotonic")
         if isinstance(started, (int, float)) and isinstance(ended, (int, float)):
             self._playback_latency_ms = max(int((float(ended) - float(started)) * 1000), 0)
+
+    @staticmethod
+    def _apply_streaming_turn_markers(
+        report: StreamingPlaybackReport,
+        trace: VoiceTurnTrace,
+    ) -> None:
+        metrics = report.diagnostics.get("metrics", {})
+        if not isinstance(metrics, Mapping):
+            return
+        for source, target, first in (
+            ("first_pcm_received_monotonic", "first_pcm_received", True),
+            (
+                "first_audio_submission_monotonic",
+                "first_audio_submission",
+                True,
+            ),
+            ("upstream_end_monotonic", "upstream_end", False),
+            ("playback_end_monotonic", "final_playback_end", False),
+        ):
+            value = metrics.get(source)
+            if isinstance(value, (int, float)) and float(value) >= trace.started_at:
+                trace.mark_at(target, float(value), first=first)
+
+    @staticmethod
+    def _streaming_report_error(report: StreamingPlaybackReport) -> str:
+        if report.success:
+            return ""
+        metrics = report.diagnostics.get("metrics", {})
+        if isinstance(metrics, Mapping):
+            for key in (
+                "playback_error",
+                "provider_error",
+                "producer_error",
+                "provider_close_error",
+            ):
+                value = metrics.get(key)
+                if value:
+                    return str(value)
+        return str(report.diagnostics.get("reason", report.status))
+
+    @staticmethod
+    def _turn_latency_metrics(trace: VoiceTurnTrace) -> dict[str, object]:
+        first_audio = trace.timestamp("first_audio_submission")
+        llm_start = trace.timestamp("llm_start")
+        llm_complete = trace.timestamp("llm_complete")
+
+        def duration(start: float | None, end: float | None) -> float | None:
+            if start is None or end is None:
+                return None
+            return round((end - start) * 1000.0, 3)
+
+        lead = duration(first_audio, llm_complete)
+        return {
+            "llm_request_to_first_audio_submission_ms": duration(
+                llm_start, first_audio
+            ),
+            "voice_turn_to_first_audio_submission_ms": duration(
+                trace.started_at, first_audio
+            ),
+            "first_audio_before_llm_complete": (
+                first_audio < llm_complete
+                if first_audio is not None and llm_complete is not None
+                else None
+            ),
+            "first_audio_lead_before_llm_complete_ms": lead,
+        }
+
+    def _streaming_segment_snapshot(
+        self,
+        states: Mapping[int, Mapping[str, object]],
+        *,
+        tts_queue: TTSQueue | None = None,
+    ) -> list[dict[str, object]]:
+        with self._lock:
+            snapshot = {index: dict(state) for index, state in states.items()}
+        if tts_queue is not None:
+            terminal_events = {
+                "segment_completed": "completed",
+                "segment_failed": "failed",
+                "segment_cancelled": "cancelled",
+                "stale_dropped": "stale",
+            }
+            for entry in tts_queue.diagnostics:
+                status = terminal_events.get(str(entry.get("event", "")))
+                index = entry.get("segment_index")
+                if status is None or not isinstance(index, int) or index not in snapshot:
+                    continue
+                current = snapshot[index].get("status")
+                if current not in {"completed", "failed", "cancelled", "stale"}:
+                    snapshot[index]["status"] = status
+        return [snapshot[index] for index in sorted(snapshot)]
 
     @staticmethod
     def _tts_provider_name(provider: TextToSpeechProvider) -> str:
@@ -1032,6 +1425,9 @@ class VoiceOrchestrator:
         report: StreamingPlaybackReport | None,
         provider_diagnostics: Mapping[str, object] | None,
         tts_queue: TTSQueue | None,
+        *,
+        turn_trace: VoiceTurnTrace | None = None,
+        streaming_segments: list[dict[str, object]] | None = None,
     ) -> dict[str, object]:
         trace: dict[str, object] = {}
         if report is not None:
@@ -1040,6 +1436,10 @@ class VoiceOrchestrator:
             trace["streaming_provider"] = dict(provider_diagnostics)
         if tts_queue is not None:
             trace["speech_segments"] = [dict(item) for item in tts_queue.diagnostics]
+        if turn_trace is not None:
+            trace["turn_timing"] = turn_trace.snapshot()
+        if streaming_segments:
+            trace["streaming_segments"] = [dict(item) for item in streaming_segments]
         return trace
 
     @staticmethod
