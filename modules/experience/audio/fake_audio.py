@@ -79,6 +79,7 @@ class FakePlayback(AudioPlaybackController):
         self.played: list[SpeechResult] = []
         self.stop_calls = 0
         self._playing = False
+        self._current_speech: SpeechResult | None = None
         self._subscribers: list[PlaybackCallback] = []
         self._lock = RLock()
 
@@ -96,6 +97,7 @@ class FakePlayback(AudioPlaybackController):
             else:
                 self.played.append(speech)
                 self._playing = True
+                self._current_speech = speech
                 event = PlaybackEvent(
                     event_type=PlaybackEventType.STARTED,
                     speech=speech,
@@ -112,14 +114,20 @@ class FakePlayback(AudioPlaybackController):
             if self.stop_error is not None:
                 event = PlaybackEvent(
                     event_type=PlaybackEventType.FAILED,
+                    speech=self._current_speech,
                     error=str(self.stop_error),
                 )
             else:
                 was_playing = self._playing
+                speech = self._current_speech
                 self._playing = False
+                self._current_speech = None
                 self.stop_calls += 1
                 if was_playing:
-                    event = PlaybackEvent(event_type=PlaybackEventType.STOPPED)
+                    event = PlaybackEvent(
+                        event_type=PlaybackEventType.STOPPED,
+                        speech=speech,
+                    )
         if event is not None:
             self._emit(event)
         if self.stop_error is not None:
@@ -135,8 +143,15 @@ class FakePlayback(AudioPlaybackController):
         with self._lock:
             if not self._playing:
                 return
+            speech = self._current_speech
             self._playing = False
-        self._emit(PlaybackEvent(event_type=PlaybackEventType.COMPLETED))
+            self._current_speech = None
+        self._emit(
+            PlaybackEvent(
+                event_type=PlaybackEventType.COMPLETED,
+                speech=speech,
+            )
+        )
 
     def subscribe(self, callback: PlaybackCallback) -> PlaybackCallback:
         if not callable(callback):

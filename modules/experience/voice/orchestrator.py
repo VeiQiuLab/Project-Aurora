@@ -24,7 +24,7 @@ from modules.experience.audio.streaming_playback import (
 from modules.experience.state import CompanionState, CompanionStateStore
 
 from .interfaces import SpeechToTextProvider, StreamingTTSProvider, TextToSpeechProvider
-from .models import SpeechResult, StreamingSpeechResult, TranscriptionResult
+from .models import SpeechResult, SpeechSegment, StreamingSpeechResult, TranscriptionResult
 from .sentence_splitter import SentenceSplitter
 from .tts_router import TTSRouter
 from .tts_queue import TTSQueue
@@ -92,10 +92,13 @@ class VoiceOrchestrator:
         self._playback_started_at: float | None = None
         self._playback_latency_ms = 0
         self._lock = RLock()
-        self._runtime_cancelled = False
+        self._runtime_cancelled_generations: set[tuple[str, str]] = set()
         self._tts_queue_active = False
         self._tts_queue: TTSQueue | None = None
-        self.session_id = ""
+        self._active_splitter: SentenceSplitter | None = None
+        self._legacy_playback_context: tuple[SpeechSegment, SpeechResult] | None = None
+        self._playback_owners: dict[int, SpeechSegment] = {}
+        self.session_id = uuid4().hex
         self.generation_id = uuid4().hex
         self._generation_active = Event()
         self._generation_active.set()
@@ -112,8 +115,18 @@ class VoiceOrchestrator:
         self._latency_trace = trace
 
     def set_generation_context(self, session_id: str, generation_id: str) -> None:
-        self.session_id = str(session_id)
-        self.generation_id = str(generation_id)
+        session = str(session_id)
+        generation = str(generation_id)
+        if not session or not generation:
+            raise ValueError("session_id and generation_id must not be empty")
+        with self._interrupt_lock:
+            with self._lock:
+                self.session_id = session
+                self.generation_id = generation
+                if not self._external_cancel_event:
+                    self._cancel_requested = Event()
+                self._generation_active.set()
+                self._latency_trace = None
         self._voice_log("generation_created")
 
     def _voice_log(self, event: str, **fields: object) -> None:
@@ -126,25 +139,43 @@ class VoiceOrchestrator:
             f"state={self.state_store.current_state.value} {details}".rstrip()
         )
 
-    def is_generation_active(self, generation_id: str | None = None) -> bool:
+    def is_generation_active(
+        self,
+        generation_id: str | None = None,
+        *,
+        session_id: str | None = None,
+    ) -> bool:
         return self._generation_active.is_set() and not self._cancel_requested.is_set() and (
             generation_id is None or generation_id == self.generation_id
+        ) and (
+            session_id is None or session_id == self.session_id
         )
+
+    def _owns_generation(self, session_id: str, generation_id: str) -> bool:
+        return self.is_generation_active(generation_id, session_id=session_id)
+
+    def _is_current_generation(self, session_id: str, generation_id: str) -> bool:
+        return session_id == self.session_id and generation_id == self.generation_id
 
     def run(self) -> VoiceOrchestrationResult:
         """Run one complete voice interaction using the injected boundaries."""
 
-        with self._lock:
-            if self._latency_trace is None:
-                self._latency_trace = VoiceTurnTrace()
-            if not self._external_cancel_event:
-                self._cancel_requested.clear()
-            self._runtime_cancelled = False
-            self._playback_finished.clear()
-            self._playback_error = ""
-            self._playback_started_at = None
-            self._playback_latency_ms = 0
-        if not self.is_generation_active():
+        with self._interrupt_lock:
+            with self._lock:
+                if self._latency_trace is None:
+                    self._latency_trace = VoiceTurnTrace()
+                self._playback_finished.clear()
+                self._playback_error = ""
+                self._playback_started_at = None
+                self._playback_latency_ms = 0
+                run_session_id = self.session_id
+                run_generation_id = self.generation_id
+                run_cancel_event = self._cancel_requested
+                run_latency_trace = self._latency_trace
+            generation_active = self._owns_generation(
+                run_session_id, run_generation_id
+            )
+        if not generation_active:
             return VoiceOrchestrationResult(success=False, cancelled=True, stage="cancelled")
         pipeline_started_at = monotonic()
         transcription = None
@@ -161,110 +192,173 @@ class VoiceOrchestrator:
         try:
             selected_tts_provider = self._selected_tts_provider()
             tts_provider_name = self._tts_provider_name(selected_tts_provider)
-            self._transition(CompanionState.LISTENING, "recording_started")
+            self._transition(
+                CompanionState.LISTENING,
+                "recording_started",
+                session_id=run_session_id,
+                generation_id=run_generation_id,
+            )
             self.recorder.start()
             audio_input = self.recorder.stop()
-            self._raise_if_cancelled()
+            self._raise_if_cancelled(run_cancel_event)
 
-            self._transition(CompanionState.TRANSCRIBING, "transcription_started")
+            self._transition(
+                CompanionState.TRANSCRIBING,
+                "transcription_started",
+                session_id=run_session_id,
+                generation_id=run_generation_id,
+            )
             stt_started_at = monotonic()
-            self._latency_trace.mark("whisper_start")
+            run_latency_trace.mark("whisper_start")
             logger.info(
-                f"[VOICE_STT] whisper_start elapsed_ms={self._latency_trace.now_elapsed_ms()}"
+                f"[VOICE_STT] whisper_start elapsed_ms={run_latency_trace.now_elapsed_ms()}"
             )
             transcription = self.stt_provider.transcribe(
                 audio_input,
-                cancel_event=self._cancel_requested,
+                cancel_event=run_cancel_event,
             )
             stt_latency_ms = int((monotonic() - stt_started_at) * 1000)
-            whisper_elapsed = self._latency_trace.mark("whisper_end")
+            whisper_elapsed = run_latency_trace.mark("whisper_end")
             logger.info(
                 f"[VOICE_STT] whisper_end elapsed_ms={whisper_elapsed} "
                 f"duration_ms={stt_latency_ms} transcription_text={transcription.text!r}"
             )
-            self._raise_if_cancelled()
+            self._raise_if_cancelled(run_cancel_event)
             if not transcription.diagnostics.get("success", True):
                 raise RuntimeError(
                     f"stt: {transcription.diagnostics.get('reason', 'transcription failed')}"
                 )
 
-            self._transition(CompanionState.THINKING, "text_input_started")
+            self._transition(
+                CompanionState.THINKING,
+                "text_input_started",
+                session_id=run_session_id,
+                generation_id=run_generation_id,
+            )
             splitter = SentenceSplitter()
             sentence_count = 0
+            next_segment_index = 0
+            with self._lock:
+                if self._owns_generation(run_session_id, run_generation_id):
+                    self._active_splitter = splitter
 
             if self.stream_text_input_handler is not None:
                 tts_started_at = monotonic()
 
-                def synthesize_sentence(text, cancel_event):
+                def synthesize_sentence(segment, cancel_event):
                     return self.tts_provider.synthesize(
-                        text,
+                        segment.text,
                         timeout_seconds=self.tts_timeout_seconds,
                         cancel_event=cancel_event,
                     )
 
-                def play_sentence(_text, speech_result):
+                def play_sentence(segment, speech_result):
+                    if not self._owns_generation(
+                        segment.session_id, segment.generation_id
+                    ):
+                        return
                     if not speech_result.diagnostics.get("success", True):
                         raise RuntimeError(
                             f"tts: {speech_result.diagnostics.get('reason', 'speech synthesis failed')}"
                         )
-                    speech_results.append(speech_result)
-                    self._play_speech_and_wait(_text, speech_result)
+                    self._play_speech_and_wait(
+                        segment,
+                        speech_result,
+                        cancel_event=run_cancel_event,
+                        latency_trace=run_latency_trace,
+                    )
+                    if self._owns_generation(segment.session_id, segment.generation_id):
+                        speech_results.append(speech_result)
 
                 tts_queue = TTSQueue(
                     synthesize_sentence,
                     on_speech=play_sentence,
-                    cancel_event=self._cancel_requested,
-                    latency_trace=self._latency_trace,
-                    session_id=self.session_id,
-                    generation_id=self.generation_id,
-                    generation_active=self.is_generation_active,
+                    cancel_event=run_cancel_event,
+                    latency_trace=run_latency_trace,
+                    session_id=run_session_id,
+                    generation_id=run_generation_id,
+                    generation_active=self._owns_generation,
+                    on_generation_failed=self._invalidate_failed_generation,
                 )
-                self._tts_queue_active = True
-                self._tts_queue = tts_queue
+                with self._lock:
+                    if not self._owns_generation(run_session_id, run_generation_id):
+                        tts_queue.cancel(wait=False)
+                        raise _VoiceCancelled()
+                    self._tts_queue_active = True
+                    self._tts_queue = tts_queue
                 tts_queue.start()
 
             def emit_sentences(sentences):
-                nonlocal sentence_count
+                nonlocal sentence_count, next_segment_index
                 for sentence in sentences:
-                    if not self.is_generation_active():
+                    if not sentence.strip():
+                        continue
+                    if not self._owns_generation(run_session_id, run_generation_id):
                         self._voice_log("discard_stale_sentence")
                         return
-                    sentence_count += 1
-                    self._latency_trace.mark("first_sentence_emit", first=True)
-                    logger.info(
-                        f"[VOICE_SPLITTER] emit: sentence={sentence!r} "
-                        f"elapsed_ms={self._latency_trace.now_elapsed_ms()}"
+                    segment = SpeechSegment(
+                        session_id=run_session_id,
+                        generation_id=run_generation_id,
+                        segment_index=next_segment_index,
+                        text=sentence,
                     )
-                    if tts_queue is not None and sentence_count == 1:
-                        self._transition(CompanionState.SPEAKING, "speech_synthesis_started")
+                    run_latency_trace.mark("first_sentence_emit", first=True)
+                    logger.info(
+                        f"[VOICE_SPLITTER] emit: segment_index={segment.segment_index} "
+                        f"text_length={len(segment.text)} "
+                        f"elapsed_ms={run_latency_trace.now_elapsed_ms()}"
+                    )
                     if tts_queue is not None:
-                        tts_queue.put(
-                            sentence,
-                            session_id=self.session_id,
-                            generation_id=self.generation_id,
+                        tts_queue.note_emitted(segment)
+                    if tts_queue is not None and sentence_count == 0:
+                        self._transition(
+                            CompanionState.SPEAKING,
+                            "speech_synthesis_started",
+                            session_id=run_session_id,
+                            generation_id=run_generation_id,
                         )
+                    if tts_queue is not None and not tts_queue.put(segment):
+                        return
+                    next_segment_index += 1
+                    sentence_count += 1
                     if self.sentence_callback is not None:
                         self.sentence_callback(sentence)
 
             def handle_chunk(chunk):
-                if not self.is_generation_active():
+                if not self._owns_generation(run_session_id, run_generation_id):
                     self._voice_log("discard_stale_chunk", length=len(chunk))
                     return
                 chunk_length = len(chunk)
-                self._latency_trace.mark("first_llm_chunk", first=True)
+                run_latency_trace.mark("first_llm_chunk", first=True)
                 logger.info(
                     f"[VOICE_SPLITTER] feed: chunk_length={chunk_length} "
-                    f"elapsed_ms={self._latency_trace.now_elapsed_ms()}"
+                    f"elapsed_ms={run_latency_trace.now_elapsed_ms()}"
                 )
-                emit_sentences(splitter.feed(chunk))
+                with self._lock:
+                    if (
+                        self._active_splitter is not splitter
+                        or not self._owns_generation(run_session_id, run_generation_id)
+                    ):
+                        emitted = []
+                    else:
+                        emitted = splitter.feed(chunk)
+                emit_sentences(emitted)
 
             if self.stream_text_input_handler is not None:
                 response_text = self.stream_text_input_handler(
                     transcription.text,
                     on_chunk=handle_chunk,
-                    cancel_event=self._cancel_requested,
+                    cancel_event=run_cancel_event,
                 )
-                emit_sentences(splitter.flush())
+                with self._lock:
+                    if (
+                        self._active_splitter is splitter
+                        and self._owns_generation(run_session_id, run_generation_id)
+                    ):
+                        final_segments = splitter.flush()
+                    else:
+                        final_segments = []
+                emit_sentences(final_segments)
                 if not tts_queue.flush(self.playback_timeout_seconds):
                     raise TimeoutError("TTS queue did not drain in time")
                 if tts_queue.last_error is not None:
@@ -277,10 +371,15 @@ class VoiceOrchestrator:
                 response_text = self.text_input_handler(transcription.text)
             if not isinstance(response_text, str):
                 raise TypeError("text_input_handler must return a string")
-            self._raise_if_cancelled()
+            self._raise_if_cancelled(run_cancel_event)
 
             if tts_queue is None:
-                self._transition(CompanionState.SPEAKING, "speech_synthesis_started")
+                self._transition(
+                    CompanionState.SPEAKING,
+                    "speech_synthesis_started",
+                    session_id=run_session_id,
+                    generation_id=run_generation_id,
+                )
                 tts_started_at = monotonic()
                 streaming_provider = self._streaming_provider(selected_tts_provider)
                 if streaming_provider is not None:
@@ -294,6 +393,7 @@ class VoiceOrchestrator:
                         response_text,
                         streaming_provider,
                         request_start_monotonic=tts_started_at,
+                        cancel_event=run_cancel_event,
                     )
                     streaming_report = streaming_result
                     streaming_status = streaming_report.status
@@ -302,23 +402,33 @@ class VoiceOrchestrator:
                         raise _VoiceCancelled()
                     if not streaming_report.success:
                         raise self._streaming_failure(streaming_report)
-                    self._raise_if_cancelled()
+                    self._raise_if_cancelled(run_cancel_event)
                 else:
                     speech = self.tts_provider.synthesize(
                         response_text,
                         timeout_seconds=self.tts_timeout_seconds,
-                        cancel_event=self._cancel_requested,
+                        cancel_event=run_cancel_event,
                     )
                     tts_latency_ms = int((monotonic() - tts_started_at) * 1000)
-                    self._raise_if_cancelled()
+                    self._raise_if_cancelled(run_cancel_event)
                     if not speech.diagnostics.get("success", True):
                         raise RuntimeError(
                             f"tts: {speech.diagnostics.get('reason', 'speech synthesis failed')}"
                         )
-                    self.playback.play(speech)
-                    if self.wait_for_playback_completion:
-                        self._wait_for_playback()
-                        self._raise_if_cancelled()
+                    direct_segment = SpeechSegment(
+                        session_id=run_session_id,
+                        generation_id=run_generation_id,
+                        segment_index=0,
+                        text=response_text,
+                    )
+                    self._play_owned_speech(
+                        direct_segment,
+                        speech,
+                        wait=self.wait_for_playback_completion,
+                        cancel_event=run_cancel_event,
+                        latency_trace=run_latency_trace,
+                    )
+                    self._raise_if_cancelled(run_cancel_event)
 
             diagnostics = create_diagnostics(
                 stage="experience.voice.orchestration",
@@ -344,11 +454,15 @@ class VoiceOrchestrator:
                         report=streaming_report,
                     ),
                 },
-                trace=self._streaming_trace(
-                    streaming_report, streaming_provider_diagnostics
+                trace=self._voice_trace(
+                    streaming_report, streaming_provider_diagnostics, tts_queue
                 ),
             )
-            self.state_store.force_idle(reason="voice_run_finished", source="voice_orchestrator")
+            with self._interrupt_lock:
+                if self._is_current_generation(run_session_id, run_generation_id):
+                    self.state_store.force_idle(
+                        reason="voice_run_finished", source="voice_orchestrator"
+                    )
             return VoiceOrchestrationResult(
                 success=True,
                 stage="completed",
@@ -360,9 +474,12 @@ class VoiceOrchestrator:
         except _VoiceCancelled:
             if streaming_selected:
                 streaming_status = "cancelled"
-            self._safe_cancel_runtime()
-            if self.is_generation_active():
-                self.state_store.force_idle(reason="voice_run_cancelled", source="voice_orchestrator")
+            self._safe_cancel_runtime(run_session_id, run_generation_id)
+            with self._interrupt_lock:
+                if self._is_current_generation(run_session_id, run_generation_id):
+                    self.state_store.force_idle(
+                        reason="voice_run_cancelled", source="voice_orchestrator"
+                    )
             return VoiceOrchestrationResult(
                 success=False,
                 cancelled=True,
@@ -378,18 +495,23 @@ class VoiceOrchestrator:
                         status=streaming_status,
                         report=streaming_report,
                     ),
-                    trace=self._streaming_trace(
-                        streaming_report, streaming_provider_diagnostics
+                    trace=self._voice_trace(
+                        streaming_report, streaming_provider_diagnostics, tts_queue
                     ),
                 ),
             )
         except Exception as error:
-            self._safe_cancel_runtime()
-            if self._cancel_requested.is_set():
+            self._safe_cancel_runtime(run_session_id, run_generation_id)
+            if run_cancel_event.is_set() or not self._is_current_generation(
+                run_session_id, run_generation_id
+            ):
                 if streaming_selected:
                     streaming_status = "cancelled"
-                if self.is_generation_active():
-                    self.state_store.force_idle(reason="voice_run_cancelled", source="voice_orchestrator")
+                with self._interrupt_lock:
+                    if self._is_current_generation(run_session_id, run_generation_id):
+                        self.state_store.force_idle(
+                            reason="voice_run_cancelled", source="voice_orchestrator"
+                        )
                 return VoiceOrchestrationResult(
                     success=False,
                     cancelled=True,
@@ -405,19 +527,23 @@ class VoiceOrchestrator:
                             status=streaming_status,
                             report=streaming_report,
                         ),
-                        trace=self._streaming_trace(
-                            streaming_report, streaming_provider_diagnostics
+                        trace=self._voice_trace(
+                            streaming_report, streaming_provider_diagnostics, tts_queue
                         ),
                     ),
                 )
             if streaming_selected and streaming_report is None:
                 streaming_status = "failed"
-            self.state_store.transition(
-                CompanionState.ERROR,
-                reason="voice_run_failed",
-                source="voice_orchestrator",
-            )
-            self.state_store.force_idle(reason="voice_run_failed", source="voice_orchestrator")
+            with self._interrupt_lock:
+                if self._is_current_generation(run_session_id, run_generation_id):
+                    self.state_store.transition(
+                        CompanionState.ERROR,
+                        reason="voice_run_failed",
+                        source="voice_orchestrator",
+                    )
+                    self.state_store.force_idle(
+                        reason="voice_run_failed", source="voice_orchestrator"
+                    )
             return VoiceOrchestrationResult(
                 success=False,
                 stage=self._stage_for_error(error),
@@ -435,22 +561,27 @@ class VoiceOrchestrator:
                         status=streaming_status,
                         report=streaming_report,
                     ),
-                    trace=self._streaming_trace(
-                        streaming_report, streaming_provider_diagnostics
+                    trace=self._voice_trace(
+                        streaming_report, streaming_provider_diagnostics, tts_queue
                     ),
                 ),
             )
         finally:
             if "splitter" in locals():
-                splitter.clear()
+                with self._lock:
+                    splitter.clear()
+                    if self._active_splitter is splitter:
+                        self._active_splitter = None
             if tts_queue is not None:
-                if self._cancel_requested.is_set():
+                if run_cancel_event.is_set():
                     tts_queue.cancel()
                 else:
                     tts_queue.close()
-                self._tts_queue_active = False
-                self._tts_queue = None
-            self._log_latency_summary()
+                with self._lock:
+                    if self._tts_queue is tts_queue:
+                        self._tts_queue_active = False
+                        self._tts_queue = None
+            self._log_latency_summary(run_latency_trace)
 
     def cancel(self) -> None:
         """Request cancellation and stop active runtime boundaries safely."""
@@ -458,76 +589,224 @@ class VoiceOrchestrator:
         with self._interrupt_lock:
             if not self._generation_active.is_set():
                 return
+            session_id = self.session_id
+            generation_id = self.generation_id
+            cancel_event = self._cancel_requested
             self._generation_active.clear()
-            self._cancel_requested.set()
-        self._voice_log("interrupt")
-        queue = self._tts_queue
-        if queue is not None:
-            queue.clear_current_generation()
-            queue.cancel(wait=False)
-        self._safe_cancel_runtime()
-        self.state_store.force_idle(reason="voice_cancel_requested", source="voice_orchestrator")
+            cancel_event.set()
+            with self._lock:
+                splitter = self._active_splitter
+                queue = self._tts_queue
+                if splitter is not None:
+                    splitter.clear()
+            self._voice_log("interrupt")
+            if queue is not None:
+                queue.clear_current_generation()
+                queue.cancel(wait=False)
+            self._safe_cancel_runtime(session_id, generation_id)
+            if self._is_current_generation(session_id, generation_id):
+                self.state_store.force_idle(
+                    reason="voice_cancel_requested", source="voice_orchestrator"
+                )
 
-    def _transition(self, state: CompanionState, reason: str) -> None:
-        if not self.is_generation_active():
-            self._voice_log("discard_stale_state", requested=state.value, reason=reason)
-            return
-        logger.info(
-            f"VoiceOrchestrator state transition requested "
-            f"{self.state_store.current_state.value}->{state.value} reason={reason}"
+    def _invalidate_failed_generation(
+        self, segment: SpeechSegment, error: Exception
+    ) -> None:
+        """Fail one generation without turning the provider error into cancellation."""
+
+        with self._interrupt_lock:
+            if not self._owns_generation(segment.session_id, segment.generation_id):
+                return
+            self._generation_active.clear()
+            with self._lock:
+                splitter = self._active_splitter
+                if splitter is not None:
+                    splitter.clear()
+        self._voice_log(
+            "generation_failed",
+            segment_index=segment.segment_index,
+            error=type(error).__name__,
         )
-        result = self.state_store.transition(state, reason=reason, source="voice_orchestrator")
-        if not result.success:
-            logger.warning(f"VoiceOrchestrator state transition failed: {result.diagnostics}")
-            raise RuntimeError(f"invalid voice state transition: {result.diagnostics}")
-        logger.info(f"VoiceOrchestrator state transition completed state={state.value}")
-        self._voice_log("state_change", reason=reason)
+        self._safe_cancel_runtime(segment.session_id, segment.generation_id)
+
+    def _transition(
+        self,
+        state: CompanionState,
+        reason: str,
+        *,
+        session_id: str | None = None,
+        generation_id: str | None = None,
+    ) -> None:
+        with self._interrupt_lock:
+            active = (
+                self.is_generation_active()
+                if session_id is None or generation_id is None
+                else self._owns_generation(session_id, generation_id)
+            )
+            if not active:
+                self._voice_log("discard_stale_state", requested=state.value, reason=reason)
+                return
+            logger.info(
+                f"VoiceOrchestrator state transition requested "
+                f"{self.state_store.current_state.value}->{state.value} reason={reason}"
+            )
+            result = self.state_store.transition(
+                state, reason=reason, source="voice_orchestrator"
+            )
+            if not result.success:
+                logger.warning(
+                    f"VoiceOrchestrator state transition failed: {result.diagnostics}"
+                )
+                raise RuntimeError(
+                    f"invalid voice state transition: {result.diagnostics}"
+                )
+            logger.info(
+                f"VoiceOrchestrator state transition completed state={state.value}"
+            )
+            self._voice_log("state_change", reason=reason)
 
     def _handle_playback_event(self, event: PlaybackEvent) -> None:
-        if not self.is_generation_active():
-            self._voice_log("discard_stale_playback", event=event.event_type.value)
-            return
-        if event.event_type is PlaybackEventType.STARTED:
-            self._playback_started_at = monotonic()
-            return
-        if event.event_type is PlaybackEventType.FAILED:
-            self._playback_error = event.error or "audio playback failed"
-            self._playback_finished.set()
-            if not self._tts_queue_active:
-                self.state_store.transition(
-                    CompanionState.ERROR,
-                    reason="playback_failed",
-                    source="voice_orchestrator",
+        terminal = event.event_type in (
+            PlaybackEventType.COMPLETED,
+            PlaybackEventType.STOPPED,
+            PlaybackEventType.FAILED,
+        )
+        with self._interrupt_lock:
+            with self._lock:
+                context = self._legacy_playback_context
+                owner = (
+                    self._playback_owners.get(id(event.speech))
+                    if event.speech is not None
+                    else context[0] if context is not None else None
                 )
-                self.state_store.force_idle(reason="playback_failed", source="voice_orchestrator")
-            return
-        if event.event_type in (PlaybackEventType.COMPLETED, PlaybackEventType.STOPPED):
-            if self._playback_started_at is not None:
-                self._playback_latency_ms = int((monotonic() - self._playback_started_at) * 1000)
-            self._playback_finished.set()
-            if not self._tts_queue_active:
-                self.state_store.force_idle(
-                    reason=event.event_type.value,
-                    source="voice_orchestrator",
+                expected_speech = context[1] if context is not None else None
+                if terminal and event.speech is not None:
+                    self._playback_owners.pop(id(event.speech), None)
+            if owner is None or (
+                event.speech is not None
+                and expected_speech is not None
+                and event.speech is not expected_speech
+            ):
+                self._voice_log(
+                    "discard_unowned_playback", playback_event=event.event_type.value
                 )
+                return
+            if not self._owns_generation(owner.session_id, owner.generation_id):
+                with self._lock:
+                    if (
+                        terminal
+                        and event.speech is not None
+                        and self._legacy_playback_context is not None
+                        and self._legacy_playback_context[1] is event.speech
+                    ):
+                        self._legacy_playback_context = None
+                self._voice_log(
+                    "discard_stale_playback", playback_event=event.event_type.value
+                )
+                return
+            if event.event_type is PlaybackEventType.STARTED:
+                self._playback_started_at = monotonic()
+                return
+            if event.event_type is PlaybackEventType.FAILED:
+                self._playback_error = event.error or "audio playback failed"
+                self._playback_finished.set()
+                if not self._tts_queue_active:
+                    self.state_store.transition(
+                        CompanionState.ERROR,
+                        reason="playback_failed",
+                        source="voice_orchestrator",
+                    )
+                    self.state_store.force_idle(
+                        reason="playback_failed", source="voice_orchestrator"
+                    )
+                with self._lock:
+                    if (
+                        self._legacy_playback_context is not None
+                        and self._legacy_playback_context[0] == owner
+                    ):
+                        self._legacy_playback_context = None
+                return
+            if event.event_type in (
+                PlaybackEventType.COMPLETED,
+                PlaybackEventType.STOPPED,
+            ):
+                if self._playback_started_at is not None:
+                    self._playback_latency_ms = int(
+                        (monotonic() - self._playback_started_at) * 1000
+                    )
+                self._playback_finished.set()
+                if not self._tts_queue_active:
+                    self.state_store.force_idle(
+                        reason=event.event_type.value,
+                        source="voice_orchestrator",
+                    )
 
-    def _play_speech_and_wait(self, sentence: str, speech: SpeechResult) -> None:
+                with self._lock:
+                    if (
+                        self._legacy_playback_context is not None
+                        and self._legacy_playback_context[0] == owner
+                    ):
+                        self._legacy_playback_context = None
+
+    def _play_speech_and_wait(
+        self,
+        segment: SpeechSegment,
+        speech: SpeechResult,
+        *,
+        cancel_event: Event,
+        latency_trace: VoiceTurnTrace,
+    ) -> None:
         """Play one queue item and wait so PlaybackController remains FIFO."""
 
-        self._playback_finished.clear()
-        self._playback_error = ""
-        self._latency_trace.mark("first_audio_play", first=True)
-        logger.info(
-            f"[VOICE_PLAYBACK] play_start: sentence={sentence!r} "
-            f"elapsed_ms={self._latency_trace.now_elapsed_ms()}"
+        self._play_owned_speech(
+            segment,
+            speech,
+            wait=True,
+            cancel_event=cancel_event,
+            latency_trace=latency_trace,
         )
-        self.playback.play(speech)
-        self._wait_for_playback()
 
-    def _log_latency_summary(self) -> None:
-        trace = self._latency_trace
-        if trace is None:
-            return
+    def _play_owned_speech(
+        self,
+        segment: SpeechSegment,
+        speech: SpeechResult,
+        *,
+        wait: bool,
+        cancel_event: Event,
+        latency_trace: VoiceTurnTrace,
+    ) -> None:
+        with self._interrupt_lock:
+            if not self._owns_generation(segment.session_id, segment.generation_id):
+                return
+            self._playback_finished.clear()
+            self._playback_error = ""
+            with self._lock:
+                self._legacy_playback_context = (segment, speech)
+                self._playback_owners[id(speech)] = segment
+            latency_trace.mark("first_audio_play", first=True)
+            logger.info(
+                f"[VOICE_PLAYBACK] play_start: segment_index={segment.segment_index} "
+                f"text_length={len(segment.text)} "
+                f"elapsed_ms={latency_trace.now_elapsed_ms()}"
+            )
+        try:
+            with self._interrupt_lock:
+                if not self._owns_generation(
+                    segment.session_id, segment.generation_id
+                ):
+                    return
+                self.playback.play(speech)
+            if wait:
+                self._wait_for_playback(segment, speech, cancel_event)
+        finally:
+            if wait:
+                with self._lock:
+                    if self._legacy_playback_context == (segment, speech):
+                        self._legacy_playback_context = None
+                    self._playback_owners.pop(id(speech), None)
+
+    @staticmethod
+    def _log_latency_summary(trace: VoiceTurnTrace) -> None:
 
         def value(item: int | None) -> str:
             return "n/a" if item is None else str(item)
@@ -542,45 +821,63 @@ class VoiceOrchestrator:
             f"first_audio_play: {value(trace.elapsed_ms('first_audio_play'))} ms"
         )
 
-    def _wait_for_playback(self) -> None:
+    def _wait_for_playback(
+        self,
+        segment: SpeechSegment,
+        speech: SpeechResult,
+        cancel_event: Event,
+    ) -> None:
         deadline = monotonic() + self.playback_timeout_seconds
         while not self._playback_finished.is_set():
             remaining = deadline - monotonic()
             if remaining <= 0:
                 raise TimeoutError("audio playback did not complete in time")
-            if self._cancel_requested.wait(min(remaining, 0.1)):
-                try:
-                    self.playback.stop()
-                except Exception:
-                    pass
+            if cancel_event.wait(min(remaining, 0.1)):
+                with self._interrupt_lock:
+                    with self._lock:
+                        owns_playback = self._legacy_playback_context == (
+                            segment,
+                            speech,
+                        )
+                    if owns_playback:
+                        try:
+                            self.playback.stop()
+                        except Exception:
+                            pass
                 return
             self._playback_finished.wait(min(remaining, 0.1))
         if self._playback_error:
             raise RuntimeError(self._playback_error)
 
-    def _raise_if_cancelled(self) -> None:
-        if self._cancel_requested.is_set():
+    @staticmethod
+    def _raise_if_cancelled(cancel_event: Event) -> None:
+        if cancel_event.is_set():
             raise _VoiceCancelled()
 
-    def _safe_cancel_runtime(self) -> None:
-        with self._lock:
-            if self._runtime_cancelled:
+    def _safe_cancel_runtime(self, session_id: str, generation_id: str) -> None:
+        key = (session_id, generation_id)
+        with self._interrupt_lock:
+            with self._lock:
+                if key in self._runtime_cancelled_generations:
+                    return
+                self._runtime_cancelled_generations.add(key)
+                is_current = self._is_current_generation(session_id, generation_id)
+                streaming_session = self._current_streaming_session if is_current else None
+            if not is_current:
                 return
-            self._runtime_cancelled = True
-            streaming_session = self._current_streaming_session
-        try:
-            self.recorder.cancel()
-        except Exception:
-            pass
-        if streaming_session is not None:
             try:
-                streaming_session.cancel()
+                self.recorder.cancel()
             except Exception:
                 pass
-        try:
-            self.playback.stop()
-        except Exception:
-            pass
+            if streaming_session is not None:
+                try:
+                    streaming_session.cancel()
+                except Exception:
+                    pass
+            try:
+                self.playback.stop()
+            except Exception:
+                pass
 
     def _selected_tts_provider(self) -> TextToSpeechProvider:
         if isinstance(self.tts_provider, TTSRouter):
@@ -601,6 +898,7 @@ class VoiceOrchestrator:
         provider: StreamingTTSProvider,
         *,
         request_start_monotonic: float,
+        cancel_event: Event,
     ) -> tuple[StreamingPlaybackReport, int, Mapping[str, object]]:
         speech: StreamingSpeechResult | None = None
         session: StreamingPlaybackSession | None = None
@@ -609,13 +907,13 @@ class VoiceOrchestrator:
                 speech = provider.synthesize_stream(
                     text,
                     timeout_seconds=self.tts_timeout_seconds,
-                    cancel_event=self._cancel_requested,
+                    cancel_event=cancel_event,
                 )
             except Exception as error:
                 raise _StreamingStageError("tts", str(error)) from error
             metadata_received = monotonic()
             tts_latency_ms = int((metadata_received - request_start_monotonic) * 1000)
-            self._raise_if_cancelled()
+            self._raise_if_cancelled(cancel_event)
             if speech.diagnostics.get("success") is not True or not speech.metadata:
                 raise RuntimeError(
                     f"tts: {speech.diagnostics.get('reason', 'stream creation failed')}"
@@ -631,7 +929,7 @@ class VoiceOrchestrator:
                 raise _StreamingStageError("playback", str(error)) from error
             with self._lock:
                 self._current_streaming_session = session
-                cancelled = self._cancel_requested.is_set()
+                cancelled = cancel_event.is_set()
             if cancelled:
                 session.cancel()
             try:
@@ -730,15 +1028,18 @@ class VoiceOrchestrator:
         return default if value is None else value
 
     @staticmethod
-    def _streaming_trace(
+    def _voice_trace(
         report: StreamingPlaybackReport | None,
         provider_diagnostics: Mapping[str, object] | None,
+        tts_queue: TTSQueue | None,
     ) -> dict[str, object]:
         trace: dict[str, object] = {}
         if report is not None:
             trace["streaming_playback"] = dict(report.diagnostics)
         if provider_diagnostics is not None:
             trace["streaming_provider"] = dict(provider_diagnostics)
+        if tts_queue is not None:
+            trace["speech_segments"] = [dict(item) for item in tts_queue.diagnostics]
         return trace
 
     @staticmethod

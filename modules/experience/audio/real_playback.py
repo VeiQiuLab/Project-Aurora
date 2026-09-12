@@ -29,6 +29,7 @@ class RealPlaybackController(AudioPlaybackController):
         self._lock = RLock()
         self._playing = False
         self._playback_token = 0
+        self._current_speech: SpeechResult | None = None
 
     @property
     def dependency_error(self) -> Exception | None:
@@ -57,13 +58,14 @@ class RealPlaybackController(AudioPlaybackController):
         try:
             with self._lock:
                 if self._playing:
+                    previous_speech = self._current_speech
                     mixer.music.stop()
                     self._unload_music(mixer)
                     self._playing = False
                     self._playback_token += 1
                     stopped_event = PlaybackEvent(
                         event_type=PlaybackEventType.STOPPED,
-                        speech=speech,
+                        speech=previous_speech,
                         diagnostics=self._diagnostics("replaced"),
                     )
                 else:
@@ -71,6 +73,7 @@ class RealPlaybackController(AudioPlaybackController):
                 mixer.music.load(str(audio_path))
                 mixer.music.play()
                 self._playing = True
+                self._current_speech = speech
                 self._playback_token += 1
                 token = self._playback_token
             if stopped_event is not None:
@@ -86,6 +89,7 @@ class RealPlaybackController(AudioPlaybackController):
         except Exception as error:
             with self._lock:
                 self._playing = False
+                self._current_speech = None
                 self._playback_token += 1
             self._emit_failure(str(error), speech, warning=type(error).__name__)
 
@@ -94,17 +98,22 @@ class RealPlaybackController(AudioPlaybackController):
             if not self._playing:
                 return
             mixer = self._mixer
+            speech = self._current_speech
             self._playing = False
+            self._current_speech = None
             self._playback_token += 1
         try:
             mixer.music.stop()
             self._unload_music(mixer)
         except Exception as error:
-            self._emit_failure(str(error), warning=type(error).__name__)
+            self._emit_failure(
+                str(error), speech, warning=type(error).__name__
+            )
             return
         self._emit(
             PlaybackEvent(
                 event_type=PlaybackEventType.STOPPED,
+                speech=speech,
                 diagnostics=self._diagnostics("stopped"),
             )
         )
@@ -179,6 +188,7 @@ class RealPlaybackController(AudioPlaybackController):
                 with self._lock:
                     if token == self._playback_token:
                         self._playing = False
+                        self._current_speech = None
                         self._playback_token += 1
                 self._emit_failure(str(error), speech, warning=type(error).__name__)
                 return
@@ -187,6 +197,7 @@ class RealPlaybackController(AudioPlaybackController):
                     if token != self._playback_token or not self._playing:
                         return
                     self._playing = False
+                    self._current_speech = None
                 self._unload_music(mixer)
                 self._emit(
                     PlaybackEvent(

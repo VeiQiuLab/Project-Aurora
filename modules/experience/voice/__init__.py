@@ -4,6 +4,7 @@ from .fake import FakeSpeechToTextProvider, FakeTextToSpeechProvider
 from .interfaces import SpeechToTextProvider, StreamingTTSProvider, TTSProvider, TextToSpeechProvider
 from .models import (
     AudioInput,
+    SpeechSegment,
     SpeechResult,
     StreamingSpeechResult,
     TTSRequest,
@@ -21,6 +22,7 @@ __all__ = [
     "AudioInput",
     "FakeSpeechToTextProvider",
     "FakeTextToSpeechProvider",
+    "SpeechSegment",
     "SpeechResult",
     "SpeechToTextProvider",
     "StreamingSpeechResult",

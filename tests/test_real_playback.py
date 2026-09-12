@@ -56,7 +56,8 @@ def test_mp3_file_playback_emits_started_and_completed(tmp_path):
             completed.set()
 
     controller.subscribe(on_event)
-    controller.play(SpeechResult(audio_path=str(audio_path), mime_type="audio/mpeg"))
+    speech = SpeechResult(audio_path=str(audio_path), mime_type="audio/mpeg")
+    controller.play(speech)
 
     assert completed.wait(1) is True
     assert music.loaded == [str(audio_path)]
@@ -64,6 +65,7 @@ def test_mp3_file_playback_emits_started_and_completed(tmp_path):
         PlaybackEventType.STARTED,
         PlaybackEventType.COMPLETED,
     ]
+    assert all(event.speech is speech for event in events)
     assert controller.is_playing() is False
 
 
@@ -87,7 +89,8 @@ def test_audio_load_failure_emits_failed_event(tmp_path):
     events = []
     controller.subscribe(events.append)
 
-    controller.play(SpeechResult(audio_path=str(audio_path)))
+    speech = SpeechResult(audio_path=str(audio_path))
+    controller.play(speech)
 
     assert events[0].event_type is PlaybackEventType.FAILED
     assert events[0].error == "load failed"
@@ -102,13 +105,15 @@ def test_stop_emits_stopped_event(tmp_path):
     events = []
     controller.subscribe(events.append)
 
-    controller.play(SpeechResult(audio_path=str(audio_path)))
+    speech = SpeechResult(audio_path=str(audio_path))
+    controller.play(speech)
     controller.stop()
 
     assert [event.event_type for event in events] == [
         PlaybackEventType.STARTED,
         PlaybackEventType.STOPPED,
     ]
+    assert all(event.speech is speech for event in events)
     assert music.stop_calls == 1
     assert controller.is_playing() is False
 
