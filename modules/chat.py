@@ -4,6 +4,7 @@ import socket
 import threading
 import urllib.error
 import urllib.request
+from time import monotonic
 
 from modules.settings import settings
 
@@ -19,6 +20,166 @@ class ChatError(Exception):
         self.category = category
         self.stage = stage
         self.detail = detail or message
+
+
+class StreamingRequestHandle:
+    """Own and cancel one synchronous Ollama streaming response."""
+
+    def __init__(self, stop_event, diagnostics=None, *, clock=monotonic):
+        self.stop_event = stop_event
+        self._clock = clock
+        self._lock = threading.Lock()
+        self._response = None
+        self._finished = False
+        self._diagnostics = diagnostics if diagnostics is not None else {}
+        self._diagnostics.update({
+            "cancel_requested_monotonic": None,
+            "transport_abort_monotonic": None,
+            "stream_exit_monotonic": None,
+            "cancel_transport_latency_ms": None,
+            "active_response": False,
+            "status": "pending",
+        })
+
+    @property
+    def diagnostics(self):
+        return self._diagnostics
+
+    @property
+    def cancelled(self):
+        with self._lock:
+            requested = self._diagnostics["cancel_requested_monotonic"] is not None
+        return requested or self.stop_event.is_set()
+
+    @property
+    def active_response(self):
+        with self._lock:
+            return self._response
+
+    def register_response(self, response):
+        """Register *response*, or abort it immediately after an earlier cancel."""
+
+        with self._lock:
+            if self._finished:
+                self._response = response
+                self._diagnostics["active_response"] = True
+                should_abort = True
+            elif self._response is not None:
+                raise RuntimeError("Streaming request already has an active response")
+            else:
+                self._response = response
+                self._diagnostics["active_response"] = True
+                should_abort = (
+                    self._diagnostics["cancel_requested_monotonic"] is not None
+                    or self.stop_event.is_set()
+                )
+        if should_abort:
+            self._abort_registered_response(response)
+            return False
+        return True
+
+    def cancel(self):
+        """Set the high-level cancellation truth and abort this request's response."""
+
+        now = self._clock()
+        with self._lock:
+            if self._finished:
+                return False
+            first_request = self._diagnostics["cancel_requested_monotonic"] is None
+            if first_request:
+                self._diagnostics["cancel_requested_monotonic"] = now
+                self._diagnostics["status"] = "cancelled"
+            self.stop_event.set()
+            response = self._response
+        if response is not None:
+            self._abort_registered_response(response)
+        return first_request
+
+    def close(self):
+        """Close the currently owned response without marking cancellation."""
+
+        with self._lock:
+            response = self._response
+        if response is None:
+            return False
+        return self.close_response(response)
+
+    def close_response(self, response):
+        """Close *response* only if it is still owned by this handle."""
+
+        with self._lock:
+            if self._response is not response:
+                return False
+            self._response = None
+            self._diagnostics["active_response"] = False
+        _close_http_response(response, abort=False)
+        return True
+
+    def finish(self, status):
+        now = self._clock()
+        with self._lock:
+            if self._finished:
+                return
+            self._finished = True
+            self._response = None
+            self._diagnostics["active_response"] = False
+            self._diagnostics["stream_exit_monotonic"] = now
+            cancel_requested = self._diagnostics["cancel_requested_monotonic"]
+            if cancel_requested is not None:
+                status = "cancelled"
+                self._diagnostics["cancel_transport_latency_ms"] = max(
+                    0.0,
+                    (now - cancel_requested) * 1000.0,
+                )
+            self._diagnostics["status"] = status
+
+    def _abort_registered_response(self, response):
+        now = self._clock()
+        with self._lock:
+            if self._response is not response:
+                return False
+            self._response = None
+            self._diagnostics["active_response"] = False
+            if self._diagnostics["transport_abort_monotonic"] is None:
+                self._diagnostics["transport_abort_monotonic"] = now
+        _close_http_response(response, abort=True)
+        return True
+
+
+def _close_http_response(response, *, abort):
+    """Close one urllib response, shutting down only its socket when aborting."""
+
+    if response is None:
+        return
+    if abort:
+        fp = getattr(response, "fp", None)
+        raw = getattr(fp, "raw", None)
+        candidates = (
+            getattr(raw, "_sock", None),
+            getattr(fp, "_sock", None),
+            getattr(response, "_sock", None),
+        )
+        for candidate in candidates:
+            if candidate is None or not callable(getattr(candidate, "shutdown", None)):
+                continue
+            try:
+                candidate.shutdown(socket.SHUT_RDWR)
+            except OSError:
+                pass
+            break
+    try:
+        response.close()
+    except OSError:
+        pass
+
+
+def _watch_stream_cancellation(handle, finished_event):
+    """Bridge a plain threading.Event to the request-local transport handle."""
+
+    while not finished_event.wait(0.02):
+        if handle.stop_event.is_set():
+            handle.cancel()
+            return
 
 
 def estimate_tokens(text):
@@ -307,7 +468,16 @@ class ChatSession:
             self.messages = valid
 
 
-def stream_chat(model, prompt, session, on_chunk, stop_event):
+def stream_chat(
+    model,
+    prompt,
+    session,
+    on_chunk,
+    stop_event,
+    *,
+    request_handle=None,
+    diagnostics=None,
+):
     """Stream one Ollama response while preserving the session context."""
 
     try:
@@ -332,6 +502,14 @@ def stream_chat(model, prompt, session, on_chunk, stop_event):
             stage="ollama_connection"
         )
 
+    handle = request_handle or StreamingRequestHandle(stop_event, diagnostics)
+    if handle.stop_event is not stop_event:
+        raise ValueError("request_handle must own the supplied stop_event")
+    if stop_event.is_set():
+        handle.cancel()
+        handle.finish("cancelled")
+        return "stopped"
+
     session.add_user(prompt)
     payload = {
         "model": model,
@@ -345,51 +523,110 @@ def stream_chat(model, prompt, session, on_chunk, stop_event):
         method="POST"
     )
     assistant_parts = []
+    response = None
+    stream_finished = threading.Event()
+    cancel_watcher = threading.Thread(
+        target=_watch_stream_cancellation,
+        args=(handle, stream_finished),
+        name="ollama-stream-cancel",
+        daemon=True,
+    )
+    cancel_watcher.start()
+    status = "completed"
 
     try:
-        with urllib.request.urlopen(request, timeout=120) as response:
+        response = urllib.request.urlopen(request, timeout=120)
+        if handle.register_response(response):
             for raw_line in response:
-                if stop_event.is_set():
+                if handle.cancelled:
+                    status = "cancelled"
                     break
                 if not raw_line.strip():
                     continue
 
                 data = json.loads(raw_line.decode("utf-8"))
+                if handle.cancelled:
+                    status = "cancelled"
+                    break
                 if data.get("error"):
                     raise ChatError(str(data["error"]))
 
                 message = data.get("message", {})
                 chunk = message.get("content", "")
                 if chunk:
+                    if handle.cancelled:
+                        status = "cancelled"
+                        break
                     assistant_parts.append(chunk)
                     on_chunk(chunk)
 
                 if data.get("done"):
                     break
+        else:
+            status = "cancelled"
+    except ChatError:
+        if handle.cancelled:
+            status = "cancelled"
+        else:
+            status = "failed"
+            session.remove_last_user()
+            raise
     except urllib.error.HTTPError as error:
-        session.remove_last_user()
-        if error.code == 404:
-            raise ChatError("Model not found.", category="model_unavailable", stage="model_check") from error
-        raise ChatError("Ollama request failed.", category="chat_generation_failed", stage="ollama_request") from error
+        if handle.cancelled:
+            status = "cancelled"
+            _close_http_response(error, abort=True)
+        else:
+            status = "failed"
+            session.remove_last_user()
+            _close_http_response(error, abort=False)
+            if error.code == 404:
+                raise ChatError("Model not found.", category="model_unavailable", stage="model_check") from error
+            raise ChatError("Ollama request failed.", category="chat_generation_failed", stage="ollama_request") from error
     except (socket.timeout, TimeoutError) as error:
-        session.remove_last_user()
-        raise ChatError("Ollama request timed out.", category="timeout", stage="ollama_request") from error
+        if handle.cancelled:
+            status = "cancelled"
+        else:
+            status = "failed"
+            session.remove_last_user()
+            raise ChatError("Ollama request timed out.", category="timeout", stage="ollama_request") from error
     except urllib.error.URLError as error:
-        session.remove_last_user()
-        if isinstance(error.reason, ConnectionRefusedError):
-            raise ChatError("Ollama is not connected.", category="ollama_unavailable", stage="ollama_connection") from error
-        raise ChatError("Unable to connect to Ollama.", category="ollama_unavailable", stage="ollama_connection") from error
+        if handle.cancelled:
+            status = "cancelled"
+        else:
+            status = "failed"
+            session.remove_last_user()
+            if isinstance(error.reason, ConnectionRefusedError):
+                raise ChatError("Ollama is not connected.", category="ollama_unavailable", stage="ollama_connection") from error
+            raise ChatError("Unable to connect to Ollama.", category="ollama_unavailable", stage="ollama_connection") from error
     except (OSError, ValueError, json.JSONDecodeError) as error:
-        session.remove_last_user()
-        raise ChatError("Invalid Ollama response.", category="invalid_response", stage="ollama_response") from error
+        if handle.cancelled:
+            status = "cancelled"
+        else:
+            status = "failed"
+            session.remove_last_user()
+            raise ChatError("Invalid Ollama response.", category="invalid_response", stage="ollama_response") from error
+    except Exception:
+        if handle.cancelled:
+            status = "cancelled"
+        else:
+            status = "failed"
+            session.remove_last_user()
+            raise
+    finally:
+        if stop_event.is_set():
+            handle.cancel()
+        stream_finished.set()
+        if response is not None:
+            handle.close_response(response)
+        cancel_watcher.join(timeout=0.25)
+        handle.finish("cancelled" if handle.cancelled else status)
 
     assistant_response = "".join(assistant_parts)
-    if assistant_response:
+    if assistant_response and not handle.cancelled:
         session.add_assistant(assistant_response)
-        if not stop_event.is_set():
-            try:
-                from modules.memory import MemoryStore
-                MemoryStore().queue_candidates(session.snapshot(), source="chat")
-            except Exception:
-                pass
-    return "stopped" if stop_event.is_set() else "completed"
+        try:
+            from modules.memory import MemoryStore
+            MemoryStore().queue_candidates(session.snapshot(), source="chat")
+        except Exception:
+            pass
+    return "stopped" if handle.cancelled else "completed"
