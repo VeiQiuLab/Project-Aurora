@@ -1,0 +1,249 @@
+[
+  {
+    "protocol": "aurora-ipc",
+    "version": 1,
+    "type": "bootstrap.ready",
+    "port": 49152,
+    "pid": 4242,
+    "supported_versions": [1],
+    "sidecar_instance_id": "sidecar-demo-001"
+  },
+  {
+    "protocol": "aurora-ipc",
+    "version": 1,
+    "type": "hello",
+    "request_id": "req-hello-001",
+    "payload": {
+      "client": "aurora-desktop",
+      "supported_versions": [1]
+    }
+  },
+  {
+    "protocol": "aurora-ipc",
+    "version": 1,
+    "type": "hello_ack",
+    "request_id": "req-hello-001",
+    "payload": {
+      "selected_version": 1,
+      "sidecar_instance_id": "sidecar-demo-001",
+      "state": "READY",
+      "capabilities": {
+        "chat_streaming": true,
+        "chat_cancel": true,
+        "memory": true,
+        "knowledge": true,
+        "rag": true,
+        "voice": {
+          "ipc": false,
+          "edge_tts": true,
+          "cosyvoice_remote": true,
+          "cosyvoice_local": false,
+          "streaming_pcm": false
+        }
+      },
+      "limits": {
+        "json_frame_max_bytes": 1048576,
+        "chat_input_max_bytes": 262144,
+        "event_max_bytes": 262144,
+        "binary_frame_max_bytes": 262144
+      }
+    }
+  },
+  {
+    "protocol": "aurora-ipc",
+    "version": 1,
+    "type": "health.request",
+    "request_id": "req-health-001",
+    "payload": {}
+  },
+  {
+    "protocol": "aurora-ipc",
+    "version": 1,
+    "type": "health.response",
+    "request_id": "req-health-001",
+    "payload": {
+      "state": "READY",
+      "sidecar_instance_id": "sidecar-demo-001",
+      "capabilities": {
+        "chat_streaming": true,
+        "chat_cancel": true,
+        "memory": true,
+        "knowledge": true,
+        "rag": true,
+        "voice": {
+          "ipc": false,
+          "edge_tts": true,
+          "cosyvoice_remote": true,
+          "cosyvoice_local": false,
+          "streaming_pcm": false
+        }
+      },
+      "limits": {
+        "json_frame_max_bytes": 1048576,
+        "chat_input_max_bytes": 262144,
+        "event_max_bytes": 262144,
+        "binary_frame_max_bytes": 262144
+      }
+    }
+  },
+  {
+    "protocol": "aurora-ipc",
+    "version": 1,
+    "type": "chat.request",
+    "request_id": "req-chat-001",
+    "session_id": "runtime-session-001",
+    "generation_id": "generation-001",
+    "payload": {
+      "conversation_id": "conversation-demo-001",
+      "input": "Give a short synthetic greeting."
+    }
+  },
+  {
+    "protocol": "aurora-ipc",
+    "version": 1,
+    "type": "chat.accepted",
+    "request_id": "req-chat-001",
+    "session_id": "runtime-session-001",
+    "generation_id": "generation-001",
+    "payload": {"status": "accepted"}
+  },
+  {
+    "protocol": "aurora-ipc",
+    "version": 1,
+    "type": "chat.delta",
+    "request_id": "req-chat-001",
+    "session_id": "runtime-session-001",
+    "generation_id": "generation-001",
+    "seq": 0,
+    "payload": {"delta": "Hello"}
+  },
+  {
+    "protocol": "aurora-ipc",
+    "version": 1,
+    "type": "chat.delta",
+    "request_id": "req-chat-001",
+    "session_id": "runtime-session-001",
+    "generation_id": "generation-001",
+    "seq": 1,
+    "payload": {"delta": " from"}
+  },
+  {
+    "protocol": "aurora-ipc",
+    "version": 1,
+    "type": "chat.delta",
+    "request_id": "req-chat-001",
+    "session_id": "runtime-session-001",
+    "generation_id": "generation-001",
+    "seq": 2,
+    "payload": {"delta": " Aurora."}
+  },
+  {
+    "protocol": "aurora-ipc",
+    "version": 1,
+    "type": "chat.completed",
+    "request_id": "req-chat-001",
+    "session_id": "runtime-session-001",
+    "generation_id": "generation-001",
+    "payload": {
+      "terminal_state": "completed",
+      "output_chars": 18,
+      "duration_ms": 321.5
+    }
+  },
+  {
+    "protocol": "aurora-ipc",
+    "version": 1,
+    "type": "chat.request",
+    "request_id": "req-chat-002",
+    "session_id": "runtime-session-001",
+    "generation_id": "generation-002",
+    "payload": {
+      "conversation_id": null,
+      "input": "Produce synthetic content for cancellation."
+    }
+  },
+  {
+    "protocol": "aurora-ipc",
+    "version": 1,
+    "type": "chat.accepted",
+    "request_id": "req-chat-002",
+    "session_id": "runtime-session-001",
+    "generation_id": "generation-002",
+    "payload": {"status": "accepted"}
+  },
+  {
+    "protocol": "aurora-ipc",
+    "version": 1,
+    "type": "chat.cancel.request",
+    "request_id": "req-cancel-002",
+    "session_id": "runtime-session-001",
+    "generation_id": "generation-002",
+    "payload": {"target_request_id": "req-chat-002"}
+  },
+  {
+    "protocol": "aurora-ipc",
+    "version": 1,
+    "type": "chat.cancel.ack",
+    "request_id": "req-cancel-002",
+    "session_id": "runtime-session-001",
+    "generation_id": "generation-002",
+    "payload": {
+      "target_request_id": "req-chat-002",
+      "outcome": "cancel_requested"
+    }
+  },
+  {
+    "protocol": "aurora-ipc",
+    "version": 1,
+    "type": "chat.completed",
+    "request_id": "req-chat-002",
+    "session_id": "runtime-session-001",
+    "generation_id": "generation-002",
+    "payload": {"terminal_state": "cancelled"}
+  },
+  {
+    "protocol": "aurora-ipc",
+    "version": 1,
+    "type": "error",
+    "request_id": "req-chat-003",
+    "session_id": "runtime-session-001",
+    "generation_id": "generation-003",
+    "payload": {
+      "code": "MODEL_UNAVAILABLE",
+      "message": "The selected model is unavailable.",
+      "retryable": true
+    }
+  },
+  {
+    "protocol": "aurora-ipc",
+    "version": 1,
+    "type": "chat.completed",
+    "request_id": "req-chat-003",
+    "session_id": "runtime-session-001",
+    "generation_id": "generation-003",
+    "payload": {
+      "terminal_state": "failed",
+      "error": {
+        "code": "MODEL_UNAVAILABLE",
+        "message": "The selected model is unavailable.",
+        "retryable": true
+      }
+    }
+  },
+  {
+    "protocol": "aurora-ipc",
+    "version": 1,
+    "type": "chat.completed",
+    "request_id": "req-chat-004",
+    "session_id": "runtime-session-001",
+    "generation_id": "generation-004",
+    "payload": {
+      "terminal_state": "backend_lost",
+      "error": {
+        "code": "BACKEND_LOST",
+        "message": "Backend disconnected.",
+        "retryable": true
+      }
+    }
+  }
+]

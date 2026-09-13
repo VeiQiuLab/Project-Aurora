@@ -1,0 +1,496 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://project-aurora.invalid/schemas/ipc-v1.schema.json",
+  "title": "Project Aurora IPC v1",
+  "description": "Bootstrap object and authenticated WebSocket JSON envelopes for Aurora IPC v1.",
+  "oneOf": [
+    {"$ref": "#/$defs/bootstrapReady"},
+    {"$ref": "#/$defs/hello"},
+    {"$ref": "#/$defs/helloAck"},
+    {"$ref": "#/$defs/healthRequest"},
+    {"$ref": "#/$defs/healthResponse"},
+    {"$ref": "#/$defs/shutdownRequest"},
+    {"$ref": "#/$defs/shutdownAck"},
+    {"$ref": "#/$defs/chatRequest"},
+    {"$ref": "#/$defs/chatAccepted"},
+    {"$ref": "#/$defs/chatDelta"},
+    {"$ref": "#/$defs/chatCompleted"},
+    {"$ref": "#/$defs/chatCancelRequest"},
+    {"$ref": "#/$defs/chatCancelAck"},
+    {"$ref": "#/$defs/stateChanged"},
+    {"$ref": "#/$defs/backendWarning"},
+    {"$ref": "#/$defs/error"}
+  ],
+  "$defs": {
+    "opaqueId": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 128
+    },
+    "baseEnvelope": {
+      "type": "object",
+      "required": ["protocol", "version", "type", "payload"],
+      "properties": {
+        "protocol": {"const": "aurora-ipc"},
+        "version": {"const": 1},
+        "type": {"type": "string"},
+        "request_id": {"$ref": "#/$defs/opaqueId"},
+        "session_id": {"$ref": "#/$defs/opaqueId"},
+        "generation_id": {"$ref": "#/$defs/opaqueId"},
+        "seq": {"type": "integer", "minimum": 0},
+        "payload": {"type": "object"}
+      },
+      "additionalProperties": false
+    },
+    "noRequestContext": {
+      "not": {
+        "anyOf": [
+          {"required": ["session_id"]},
+          {"required": ["generation_id"]},
+          {"required": ["seq"]}
+        ]
+      }
+    },
+    "noSequence": {
+      "not": {"required": ["seq"]}
+    },
+    "noIdentifiers": {
+      "not": {
+        "anyOf": [
+          {"required": ["request_id"]},
+          {"required": ["session_id"]},
+          {"required": ["generation_id"]},
+          {"required": ["seq"]}
+        ]
+      }
+    },
+    "sidecarState": {
+      "enum": [
+        "STOPPED",
+        "STARTING",
+        "HANDSHAKING",
+        "READY",
+        "DEGRADED",
+        "DISCONNECTED",
+        "RESTARTING",
+        "STOPPING"
+      ]
+    },
+    "terminalState": {
+      "enum": ["completed", "cancelled", "failed", "backend_lost", "rejected"]
+    },
+    "errorCode": {
+      "enum": [
+        "PROTOCOL_ERROR",
+        "PROTOCOL_VERSION_MISMATCH",
+        "AUTHENTICATION_FAILED",
+        "INVALID_REQUEST",
+        "PAYLOAD_TOO_LARGE",
+        "BACKEND_NOT_READY",
+        "BACKEND_LOST",
+        "PROVIDER_UNAVAILABLE",
+        "MODEL_UNAVAILABLE",
+        "REQUEST_TIMEOUT",
+        "REQUEST_CANCELLED",
+        "INTERNAL_ERROR"
+      ]
+    },
+    "errorDetail": {
+      "type": "object",
+      "required": ["code", "message", "retryable"],
+      "properties": {
+        "code": {"$ref": "#/$defs/errorCode"},
+        "message": {"type": "string", "minLength": 1, "maxLength": 512},
+        "retryable": {"type": "boolean"}
+      },
+      "additionalProperties": false
+    },
+    "voiceCapabilities": {
+      "type": "object",
+      "required": [
+        "ipc",
+        "edge_tts",
+        "cosyvoice_remote",
+        "cosyvoice_local",
+        "streaming_pcm"
+      ],
+      "properties": {
+        "ipc": {"const": false},
+        "edge_tts": {"type": "boolean"},
+        "cosyvoice_remote": {"type": "boolean"},
+        "cosyvoice_local": {"const": false},
+        "streaming_pcm": {"const": false}
+      },
+      "additionalProperties": true
+    },
+    "capabilities": {
+      "type": "object",
+      "required": ["chat_streaming", "chat_cancel", "memory", "knowledge", "rag", "voice"],
+      "properties": {
+        "chat_streaming": {"type": "boolean"},
+        "chat_cancel": {"type": "boolean"},
+        "memory": {"type": "boolean"},
+        "knowledge": {"type": "boolean"},
+        "rag": {"type": "boolean"},
+        "voice": {"$ref": "#/$defs/voiceCapabilities"}
+      },
+      "additionalProperties": true
+    },
+    "limits": {
+      "type": "object",
+      "required": [
+        "json_frame_max_bytes",
+        "chat_input_max_bytes",
+        "event_max_bytes",
+        "binary_frame_max_bytes"
+      ],
+      "properties": {
+        "json_frame_max_bytes": {"type": "integer", "minimum": 1},
+        "chat_input_max_bytes": {"type": "integer", "minimum": 1},
+        "event_max_bytes": {"type": "integer", "minimum": 1},
+        "binary_frame_max_bytes": {"type": "integer", "minimum": 1}
+      },
+      "additionalProperties": false
+    },
+    "bootstrapReady": {
+      "type": "object",
+      "required": [
+        "protocol",
+        "version",
+        "type",
+        "port",
+        "pid",
+        "supported_versions",
+        "sidecar_instance_id"
+      ],
+      "properties": {
+        "protocol": {"const": "aurora-ipc"},
+        "version": {"const": 1},
+        "type": {"const": "bootstrap.ready"},
+        "port": {"type": "integer", "minimum": 1, "maximum": 65535},
+        "pid": {"type": "integer", "minimum": 1},
+        "supported_versions": {
+          "type": "array",
+          "minItems": 1,
+          "uniqueItems": true,
+          "items": {"type": "integer", "minimum": 1}
+        },
+        "sidecar_instance_id": {"$ref": "#/$defs/opaqueId"}
+      },
+      "additionalProperties": false
+    },
+    "hello": {
+      "allOf": [
+        {"$ref": "#/$defs/baseEnvelope"},
+        {"$ref": "#/$defs/noRequestContext"},
+        {
+          "required": ["request_id"],
+          "properties": {
+            "type": {"const": "hello"},
+            "payload": {
+              "type": "object",
+              "required": ["client", "supported_versions"],
+              "properties": {
+                "client": {"const": "aurora-desktop"},
+                "supported_versions": {
+                  "type": "array",
+                  "minItems": 1,
+                  "uniqueItems": true,
+                  "items": {"type": "integer", "minimum": 1}
+                }
+              },
+              "additionalProperties": false
+            }
+          }
+        }
+      ]
+    },
+    "helloAck": {
+      "allOf": [
+        {"$ref": "#/$defs/baseEnvelope"},
+        {"$ref": "#/$defs/noRequestContext"},
+        {
+          "required": ["request_id"],
+          "properties": {
+            "type": {"const": "hello_ack"},
+            "payload": {
+              "type": "object",
+              "required": [
+                "selected_version",
+                "sidecar_instance_id",
+                "state",
+                "capabilities",
+                "limits"
+              ],
+              "properties": {
+                "selected_version": {"const": 1},
+                "sidecar_instance_id": {"$ref": "#/$defs/opaqueId"},
+                "state": {"enum": ["READY", "DEGRADED"]},
+                "capabilities": {"$ref": "#/$defs/capabilities"},
+                "limits": {"$ref": "#/$defs/limits"}
+              },
+              "additionalProperties": false
+            }
+          }
+        }
+      ]
+    },
+    "healthRequest": {
+      "allOf": [
+        {"$ref": "#/$defs/baseEnvelope"},
+        {"$ref": "#/$defs/noRequestContext"},
+        {
+          "required": ["request_id"],
+          "properties": {
+            "type": {"const": "health.request"},
+            "payload": {"type": "object", "maxProperties": 0}
+          }
+        }
+      ]
+    },
+    "healthResponse": {
+      "allOf": [
+        {"$ref": "#/$defs/baseEnvelope"},
+        {"$ref": "#/$defs/noRequestContext"},
+        {
+          "required": ["request_id"],
+          "properties": {
+            "type": {"const": "health.response"},
+            "payload": {
+              "type": "object",
+              "required": ["state", "sidecar_instance_id", "capabilities", "limits"],
+              "properties": {
+                "state": {"$ref": "#/$defs/sidecarState"},
+                "sidecar_instance_id": {"$ref": "#/$defs/opaqueId"},
+                "capabilities": {"$ref": "#/$defs/capabilities"},
+                "limits": {"$ref": "#/$defs/limits"}
+              },
+              "additionalProperties": false
+            }
+          }
+        }
+      ]
+    },
+    "shutdownRequest": {
+      "allOf": [
+        {"$ref": "#/$defs/baseEnvelope"},
+        {"$ref": "#/$defs/noRequestContext"},
+        {
+          "required": ["request_id"],
+          "properties": {
+            "type": {"const": "shutdown.request"},
+            "payload": {"type": "object", "maxProperties": 0}
+          }
+        }
+      ]
+    },
+    "shutdownAck": {
+      "allOf": [
+        {"$ref": "#/$defs/baseEnvelope"},
+        {"$ref": "#/$defs/noRequestContext"},
+        {
+          "required": ["request_id"],
+          "properties": {
+            "type": {"const": "shutdown.ack"},
+            "payload": {
+              "type": "object",
+              "required": ["accepted"],
+              "properties": {"accepted": {"const": true}},
+              "additionalProperties": false
+            }
+          }
+        }
+      ]
+    },
+    "chatRequest": {
+      "allOf": [
+        {"$ref": "#/$defs/baseEnvelope"},
+        {"$ref": "#/$defs/noSequence"},
+        {
+          "required": ["request_id", "session_id", "generation_id"],
+          "properties": {
+            "type": {"const": "chat.request"},
+            "payload": {
+              "type": "object",
+              "required": ["conversation_id", "input"],
+              "properties": {
+                "conversation_id": {
+                  "oneOf": [
+                    {"$ref": "#/$defs/opaqueId"},
+                    {"type": "null"}
+                  ]
+                },
+                "input": {"type": "string", "minLength": 1}
+              },
+              "additionalProperties": false
+            }
+          }
+        }
+      ]
+    },
+    "chatAccepted": {
+      "allOf": [
+        {"$ref": "#/$defs/baseEnvelope"},
+        {"$ref": "#/$defs/noSequence"},
+        {
+          "required": ["request_id", "session_id", "generation_id"],
+          "properties": {
+            "type": {"const": "chat.accepted"},
+            "payload": {
+              "type": "object",
+              "required": ["status"],
+              "properties": {"status": {"const": "accepted"}},
+              "additionalProperties": false
+            }
+          }
+        }
+      ]
+    },
+    "chatDelta": {
+      "allOf": [
+        {"$ref": "#/$defs/baseEnvelope"},
+        {
+          "required": ["request_id", "session_id", "generation_id", "seq"],
+          "properties": {
+            "type": {"const": "chat.delta"},
+            "payload": {
+              "type": "object",
+              "required": ["delta"],
+              "properties": {"delta": {"type": "string", "minLength": 1}},
+              "additionalProperties": false
+            }
+          }
+        }
+      ]
+    },
+    "chatCompleted": {
+      "allOf": [
+        {"$ref": "#/$defs/baseEnvelope"},
+        {"$ref": "#/$defs/noSequence"},
+        {
+          "required": ["request_id", "session_id", "generation_id"],
+          "properties": {
+            "type": {"const": "chat.completed"},
+            "payload": {
+              "type": "object",
+              "required": ["terminal_state"],
+              "properties": {
+                "terminal_state": {"$ref": "#/$defs/terminalState"},
+                "output_chars": {"type": "integer", "minimum": 0},
+                "duration_ms": {"type": "number", "minimum": 0},
+                "error": {"$ref": "#/$defs/errorDetail"}
+              },
+              "additionalProperties": false,
+              "allOf": [
+                {
+                  "if": {
+                    "properties": {
+                      "terminal_state": {"enum": ["failed", "backend_lost", "rejected"]}
+                    }
+                  },
+                  "then": {"required": ["error"]},
+                  "else": {"not": {"required": ["error"]}}
+                }
+              ]
+            }
+          }
+        }
+      ]
+    },
+    "chatCancelRequest": {
+      "allOf": [
+        {"$ref": "#/$defs/baseEnvelope"},
+        {"$ref": "#/$defs/noSequence"},
+        {
+          "required": ["request_id", "session_id", "generation_id"],
+          "properties": {
+            "type": {"const": "chat.cancel.request"},
+            "payload": {
+              "type": "object",
+              "required": ["target_request_id"],
+              "properties": {
+                "target_request_id": {"$ref": "#/$defs/opaqueId"}
+              },
+              "additionalProperties": false
+            }
+          }
+        }
+      ]
+    },
+    "chatCancelAck": {
+      "allOf": [
+        {"$ref": "#/$defs/baseEnvelope"},
+        {"$ref": "#/$defs/noSequence"},
+        {
+          "required": ["request_id", "session_id", "generation_id"],
+          "properties": {
+            "type": {"const": "chat.cancel.ack"},
+            "payload": {
+              "type": "object",
+              "required": ["target_request_id", "outcome"],
+              "properties": {
+                "target_request_id": {"$ref": "#/$defs/opaqueId"},
+                "outcome": {
+                  "enum": ["cancel_requested", "cancelled", "already_completed", "not_found"]
+                }
+              },
+              "additionalProperties": false
+            }
+          }
+        }
+      ]
+    },
+    "stateChanged": {
+      "allOf": [
+        {"$ref": "#/$defs/baseEnvelope"},
+        {"$ref": "#/$defs/noIdentifiers"},
+        {
+          "properties": {
+            "type": {"const": "state.changed"},
+            "payload": {
+              "type": "object",
+              "required": ["state"],
+              "properties": {
+                "state": {"$ref": "#/$defs/sidecarState"},
+                "reason": {"type": "string", "maxLength": 512}
+              },
+              "additionalProperties": false
+            }
+          }
+        }
+      ]
+    },
+    "backendWarning": {
+      "allOf": [
+        {"$ref": "#/$defs/baseEnvelope"},
+        {"$ref": "#/$defs/noSequence"},
+        {
+          "properties": {
+            "type": {"const": "backend.warning"},
+            "payload": {
+              "type": "object",
+              "required": ["code", "message"],
+              "properties": {
+                "code": {"type": "string", "minLength": 1, "maxLength": 64},
+                "message": {"type": "string", "minLength": 1, "maxLength": 512}
+              },
+              "additionalProperties": false
+            }
+          }
+        }
+      ]
+    },
+    "error": {
+      "allOf": [
+        {"$ref": "#/$defs/baseEnvelope"},
+        {"$ref": "#/$defs/noSequence"},
+        {
+          "properties": {
+            "type": {"const": "error"},
+            "payload": {"$ref": "#/$defs/errorDetail"}
+          }
+        }
+      ]
+    }
+  }
+}
