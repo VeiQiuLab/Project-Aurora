@@ -1,8 +1,9 @@
 # Python sidecar lifecycle contract
 
-V4-1 defines this lifecycle but does not implement a production or mock
-sidecar. The current environment has no suitable WebSocket server dependency,
-so adding an unverified dependency would weaken the contract-first boundary.
+V4-1 defined this lifecycle without an implementation. V4-2 adds an isolated
+mock under `mock_sidecar/`, pinned to `websockets==17.1` in a prototype-local
+virtual environment. It emits only fixed synthetic tokens and imports none of
+Stable Aurora's AI, persistence, settings, or voice modules.
 
 ## Bootstrap
 
@@ -27,6 +28,13 @@ Recommended inherited variables (names are part of the bootstrap contract):
 
 The bootstrap line contains the selected port, PID, supported versions, and a
 fresh opaque `sidecar_instance_id`; it never contains or echoes the token.
+
+On this Windows Python distribution, a virtual-environment `python.exe` is a
+launcher that starts the base interpreter as a child process. Rust reads the
+prototype venv's `pyvenv.cfg`, starts that base interpreter directly, and adds
+only the prototype venv's `site-packages` to `PYTHONPATH`. The bootstrap PID
+therefore matches the process Rust supervises. Rust assigns that process to a
+kill-on-close Job Object, which also contains any descendants.
 
 Python choosing port `0` avoids the time-of-check/time-of-use race created when
 Rust reserves a port, releases it, and asks the child to bind it. Rust still
@@ -56,3 +64,15 @@ event. A fresh restart rotates both token and `sidecar_instance_id`.
 
 This protects against accidental or unrelated localhost clients. It is not a
 defence against a process already running as the same compromised OS user.
+
+## Prototype setup and tests
+
+```powershell
+py -3.12 -m venv .venv
+.\.venv\Scripts\python.exe -m pip install -r requirements.txt
+.\.venv\Scripts\python.exe -m unittest discover -s tests -v
+```
+
+The server isn't intended to be started by hand. Rust supplies its bootstrap
+environment, supervises it, and places it in a kill-on-close Windows Job Object
+so an abnormal desktop exit cannot orphan the Python child.
