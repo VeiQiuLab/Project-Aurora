@@ -7,6 +7,7 @@ import urllib.error
 import urllib.request
 from time import monotonic
 
+from modules.ollama_request_policy import resolve_ollama_request_policy
 from modules.settings import settings
 
 DEFAULT_SYSTEM_CONTEXT = "You are Aurora, a helpful local AI assistant."
@@ -86,6 +87,9 @@ class StreamingRequestHandle:
         self._diagnostics.setdefault("history_chars", None)
         self._diagnostics.setdefault("current_user_chars", None)
         self._diagnostics.setdefault("reasoning_chars", 0)
+        self._diagnostics.setdefault("ollama_think_mode", None)
+        self._diagnostics.setdefault("think_payload_value", None)
+        self._diagnostics.setdefault("ollama_keep_alive", None)
 
     @property
     def diagnostics(self):
@@ -618,6 +622,7 @@ def stream_chat(
     request_handle=None,
     diagnostics=None,
     raw_line_observer=None,
+    thinking_mode=None,
 ):
     """Stream one Ollama response while preserving the session context."""
 
@@ -653,6 +658,10 @@ def stream_chat(
         handle.finish("cancelled")
         return "stopped"
 
+    request_policy = resolve_ollama_request_policy(
+        settings,
+        thinking_mode=thinking_mode,
+    )
     session.add_user(prompt)
     messages = session.snapshot()
     payload = {
@@ -660,6 +669,7 @@ def stream_chat(
         "messages": messages,
         "stream": True
     }
+    request_policy.apply(payload)
     request = urllib.request.Request(
         f"{host}/api/chat",
         data=json.dumps(payload).encode("utf-8"),
@@ -667,6 +677,7 @@ def stream_chat(
         method="POST"
     )
     handle.update_diagnostics(_stream_input_diagnostics(messages, prompt))
+    handle.update_diagnostics(request_policy.diagnostics())
     handle.mark_timing("payload_ready_monotonic", first=True)
     assistant_parts = []
     response = None

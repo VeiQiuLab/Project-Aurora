@@ -148,7 +148,9 @@ class Settings:
             },
             "ollama": {
                 "host": "http://127.0.0.1:11434",
-                "auto_start": False
+                "auto_start": False,
+                "thinking_mode": "off",
+                "keep_alive": "30m"
             },
             "services": {
                 "ollama": {

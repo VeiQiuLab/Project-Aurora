@@ -51,3 +51,38 @@ def test_model_selection_modes_are_normalized_and_validated():
     valid, _values, errors = controller.validate({"chat_model_mode": "random"})
     assert valid is False
     assert "Invalid model selection mode: chat_model_mode" in errors
+
+
+def test_ollama_request_policy_settings_are_normalized_and_validated():
+    controller = SettingsController(_Store())
+
+    valid, values, errors = controller.validate({
+        "ollama.thinking_mode": " OFF ",
+        "ollama.keep_alive": " 30m ",
+    })
+
+    assert valid is True
+    assert errors == []
+    assert values == {
+        "ollama.thinking_mode": "off",
+        "ollama.keep_alive": "30m",
+    }
+
+    valid, _values, errors = controller.validate({
+        "ollama.thinking_mode": "sometimes",
+        "ollama.keep_alive": "thirty minutes",
+    })
+
+    assert valid is False
+    assert "Invalid Ollama thinking mode." in errors
+    assert "Invalid Ollama keep_alive duration." in errors
+
+
+def test_ollama_keep_alive_default_alias_is_saved_as_null():
+    valid, values, errors = SettingsController(_Store()).validate({
+        "ollama.keep_alive": "default",
+    })
+
+    assert valid is True
+    assert errors == []
+    assert values["ollama.keep_alive"] is None

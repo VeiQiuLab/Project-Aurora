@@ -131,7 +131,9 @@
     },
     "ollama": {
         "host": "http://127.0.0.1:11434",
-        "auto_start": false
+        "auto_start": false,
+        "thinking_mode": "off",
+        "keep_alive": "30m"
     },
     "services": {
         "ollama": {

@@ -2,6 +2,7 @@ from urllib.parse import urlparse
 
 from modules.i18n import normalize_language
 from modules.models import infer_model_capability
+from modules.ollama_request_policy import normalize_keep_alive, normalize_thinking_mode
 from modules.settings import settings as default_settings
 
 
@@ -43,6 +44,22 @@ class SettingsController:
         for key in ("ollama.host",):
             if key in normalized and not self._is_valid_url(normalized.get(key)):
                 errors.append(f"Invalid URL: {key}")
+
+        if "ollama.thinking_mode" in normalized:
+            try:
+                normalized["ollama.thinking_mode"] = normalize_thinking_mode(
+                    normalized["ollama.thinking_mode"]
+                )
+            except ValueError:
+                errors.append("Invalid Ollama thinking mode.")
+
+        if "ollama.keep_alive" in normalized:
+            try:
+                normalized["ollama.keep_alive"] = normalize_keep_alive(
+                    normalized["ollama.keep_alive"]
+                )
+            except ValueError:
+                errors.append("Invalid Ollama keep_alive duration.")
 
         for key in ("chat_model_mode", "embedding_model_mode"):
             if key in normalized:

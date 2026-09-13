@@ -48,6 +48,10 @@ def configured_chat(monkeypatch):
     def get_setting(key, default=None):
         if key == "ollama.host":
             return "http://127.0.0.1:11434"
+        if key == "ollama.thinking_mode":
+            return "off"
+        if key == "ollama.keep_alive":
+            return "30m"
         return original_get(key, default)
 
     monkeypatch.setattr(chat.settings, "get", get_setting)
@@ -119,6 +123,9 @@ def test_stream_records_first_token_timings_context_and_final_metrics(monkeypatc
     assert diagnostics["approx_input_chars"] == len("sysold userold assistantnew")
     assert diagnostics["approx_input_tokens"] > 0
     assert diagnostics["reasoning_chars"] == len("internal")
+    assert diagnostics["ollama_think_mode"] == "off"
+    assert diagnostics["think_payload_value"] is False
+    assert diagnostics["ollama_keep_alive"] == "30m"
     assert diagnostics["total_duration_ms"] == 4.0
     assert diagnostics["load_duration_ms"] == 1.0
     assert diagnostics["prompt_eval_duration_ms"] == 2.0
@@ -250,7 +257,15 @@ def test_payload_and_public_call_shape_remain_compatible(monkeypatch):
     assert list(signature.parameters)[:5] == ["model", "prompt", "session", "on_chunk", "stop_event"]
     assert captured["payload"]["model"] == MODEL
     assert captured["payload"]["stream"] is True
-    assert set(captured["payload"]) == {"model", "messages", "stream"}
+    assert captured["payload"]["think"] is False
+    assert captured["payload"]["keep_alive"] == "30m"
+    assert set(captured["payload"]) == {
+        "model",
+        "messages",
+        "stream",
+        "think",
+        "keep_alive",
+    }
     assert captured["timeout"] == 120
 
 
@@ -277,6 +292,25 @@ def test_cancel_before_transport_keeps_timing_diagnostics_consistent(monkeypatch
     assert diagnostics["stream_total_ms"] >= 0
     assert diagnostics["urlopen_start_monotonic"] is None
     assert diagnostics["active_response"] is False
+    urlopen.assert_not_called()
+
+
+def test_invalid_thinking_override_does_not_mutate_session_or_open_transport(monkeypatch):
+    session = ChatSession()
+    urlopen = Mock()
+    monkeypatch.setattr(chat.urllib.request, "urlopen", urlopen)
+
+    with pytest.raises(ValueError, match="thinking mode"):
+        chat.stream_chat(
+            MODEL,
+            "hello",
+            session,
+            lambda _chunk: None,
+            threading.Event(),
+            thinking_mode="invalid",
+        )
+
+    assert session.snapshot() == [{"role": "system", "content": session.system_context}]
     urlopen.assert_not_called()
 
 
@@ -314,11 +348,18 @@ def test_smoke_think_mode_only_changes_diagnostic_payload(
     assert report["status"] == "completed"
     assert report["think_mode"] == think_mode
     assert report["think_payload_value"] is expected_value
+    assert report["ollama_think_mode"] == think_mode
+    assert report["ollama_keep_alive"] == "30m"
     assert ("think" in captured["payload"]) is expected_present
     if expected_present:
         assert captured["payload"]["think"] is expected_value
     else:
-        assert set(captured["payload"]) == {"model", "messages", "stream"}
+        assert set(captured["payload"]) == {
+            "model",
+            "messages",
+            "stream",
+            "keep_alive",
+        }
 
 
 def test_smoke_summary_counts_reasoning_and_visible_text_without_saving_body(

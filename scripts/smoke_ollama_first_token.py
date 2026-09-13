@@ -5,7 +5,6 @@ import json
 import subprocess
 import sys
 import threading
-import urllib.request
 from pathlib import Path
 from unittest.mock import patch
 
@@ -15,13 +14,11 @@ if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 
 from modules.chat import DEFAULT_SYSTEM_CONTEXT, ChatSession, StreamingRequestHandle, stream_chat
+from modules.ollama_request_policy import thinking_payload_value
 from modules.settings import settings
 
 
 DEFAULT_PROMPT = "只回复：测试成功。"
-ORIGINAL_REQUEST_FACTORY = urllib.request.Request
-
-
 def parse_args():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument(
@@ -101,35 +98,6 @@ def make_session(mode, aurora_messages):
     return session
 
 
-def think_payload_value(think_mode):
-    if think_mode == "on":
-        return True
-    if think_mode == "off":
-        return False
-    if think_mode == "default":
-        return None
-    raise ValueError(f"Unsupported think mode: {think_mode}")
-
-
-def request_factory_for_think_mode(think_mode):
-    think_value = think_payload_value(think_mode)
-
-    def build_request(url, data=None, headers=None, method=None, **kwargs):
-        if think_value is not None and data is not None:
-            payload = json.loads(data.decode("utf-8"))
-            payload["think"] = think_value
-            data = json.dumps(payload).encode("utf-8")
-        return ORIGINAL_REQUEST_FACTORY(
-            url,
-            data=data,
-            headers=headers or {},
-            method=method,
-            **kwargs,
-        )
-
-    return build_request
-
-
 def concise_report(mode, run_index, think_mode, diagnostics, status, visible_chars, error):
     names = (
         "chat_request_start_monotonic",
@@ -163,13 +131,15 @@ def concise_report(mode, run_index, think_mode, diagnostics, status, visible_cha
         "history_chars",
         "current_user_chars",
         "reasoning_chars",
+        "ollama_think_mode",
+        "ollama_keep_alive",
     )
     report = {
         "type": "run_summary",
         "mode": mode,
         "run_index": run_index,
         "think_mode": think_mode,
-        "think_payload_value": think_payload_value(think_mode),
+        "think_payload_value": thinking_payload_value(think_mode),
         "request_start": diagnostics.get("chat_request_start_monotonic"),
         "headers_time": diagnostics.get("response_headers_monotonic"),
         "first_raw_line": diagnostics.get("first_raw_line_monotonic"),
@@ -207,19 +177,16 @@ def run_once(model, prompt, mode, run_index, aurora_messages, think_mode="defaul
     status = "failed"
     error = ""
     try:
-        with patch(
-            "modules.chat.urllib.request.Request",
-            new=request_factory_for_think_mode(think_mode),
-        ):
-            result = stream_chat(
-                model,
-                prompt,
-                make_session(mode, aurora_messages),
-                on_chunk,
-                stop_event,
-                request_handle=handle,
-                raw_line_observer=observe_raw_line,
-            )
+        result = stream_chat(
+            model,
+            prompt,
+            make_session(mode, aurora_messages),
+            on_chunk,
+            stop_event,
+            request_handle=handle,
+            raw_line_observer=observe_raw_line,
+            thinking_mode=think_mode,
+        )
         status = "cancelled" if result == "stopped" else result
     except KeyboardInterrupt:
         handle.cancel()

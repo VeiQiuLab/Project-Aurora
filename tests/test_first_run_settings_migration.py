@@ -51,6 +51,30 @@ def test_existing_explicit_incomplete_first_run_is_not_overridden(monkeypatch, t
     assert store.get("first_run.completed") is False
 
 
+def test_existing_user_receives_ollama_request_policy_defaults(monkeypatch, tmp_path):
+    defaults = {
+        "first_run": {"completed": False},
+        "language": "zh_CN",
+        "ollama": {
+            "host": "http://127.0.0.1:11434",
+            "thinking_mode": "off",
+            "keep_alive": "30m",
+        },
+    }
+    config_file = _configure_paths(monkeypatch, tmp_path, defaults)
+    config_file.parent.mkdir(parents=True)
+    config_file.write_text(json.dumps({
+        "first_run": {"completed": True},
+        "ollama": {"host": "http://localhost:11434"},
+    }), encoding="utf-8")
+
+    store = settings_module.Settings()
+
+    assert store.get("ollama.host") == "http://localhost:11434"
+    assert store.get("ollama.thinking_mode") == "off"
+    assert store.get("ollama.keep_alive") == "30m"
+
+
 def test_empty_legacy_chat_selection_migrates_to_auto(monkeypatch, tmp_path):
     defaults = {
         "first_run": {"completed": False},

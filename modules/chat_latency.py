@@ -198,6 +198,9 @@ class PreLLMLatencyDiagnostics:
                     "error_type",
                     "active_response",
                     "status",
+                    "ollama_think_mode",
+                    "think_payload_value",
+                    "ollama_keep_alive",
                 }
                 or key.endswith("_monotonic")
                 or key.endswith("_ms")

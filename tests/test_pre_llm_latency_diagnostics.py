@@ -170,6 +170,9 @@ def test_chat_page_connects_pre_llm_and_first_token_diagnostics(monkeypatch):
         diagnostics["urlopen_start_monotonic"] = clock()
         diagnostics["first_model_output_monotonic"] = clock()
         diagnostics["first_nonempty_content_monotonic"] = clock()
+        diagnostics["ollama_think_mode"] = "off"
+        diagnostics["think_payload_value"] = False
+        diagnostics["ollama_keep_alive"] = "30m"
         on_chunk("ok")
         return "completed"
 
@@ -188,6 +191,9 @@ def test_chat_page_connects_pre_llm_and_first_token_diagnostics(monkeypatch):
     assert report["rag_context_status"] == "not_run"
     assert report["turn_to_ollama_request_ms"] > 0
     assert report["first_nonempty_content_monotonic"] is not None
+    assert report["ollama_think_mode"] == "off"
+    assert report["think_payload_value"] is False
+    assert report["ollama_keep_alive"] == "30m"
     assert any(message.startswith("chat_latency_diagnostics ") for message in page.logger.messages)
 
 
