@@ -1,0 +1,109 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta name="color-scheme" content="dark" />
+    <title>Aurora v4 Prototype</title>
+  </head>
+  <body>
+    <div id="app" class="window-shell">
+      <header class="titlebar" data-tauri-drag-region>
+        <div class="brand" data-tauri-drag-region>
+          <span class="brand-mark" aria-hidden="true"></span>
+          <span data-tauri-drag-region>Aurora</span>
+          <span class="prototype-label" data-tauri-drag-region>V4 prototype</span>
+        </div>
+        <div class="window-controls" aria-label="窗口控制">
+          <button id="window-minimize" class="window-button" type="button" aria-label="最小化">—</button>
+          <button id="window-maximize" class="window-button" type="button" aria-label="最大化或还原">□</button>
+          <button id="window-close" class="window-button close" type="button" aria-label="关闭">×</button>
+        </div>
+      </header>
+
+      <div class="workspace">
+        <aside class="sidebar" aria-label="会话列表">
+          <div class="sidebar-heading">
+            <span>Conversations</span>
+            <button class="icon-button" type="button" aria-label="新建模拟会话">＋</button>
+          </div>
+          <nav class="conversation-list">
+            <button class="conversation active" type="button">
+              <span class="conversation-title">Aurora v4 architecture</span>
+              <span class="conversation-preview">Desktop prototype</span>
+            </button>
+            <button class="conversation" type="button">
+              <span class="conversation-title">Streaming notes</span>
+              <span class="conversation-preview">Mock sidecar contract</span>
+            </button>
+            <button class="conversation" type="button">
+              <span class="conversation-title">Visual language</span>
+              <span class="conversation-preview">Frost and local Glass</span>
+            </button>
+          </nav>
+          <div class="sidebar-footer">
+            <label class="effects-toggle">
+              <input id="reduced-effects" type="checkbox" />
+              <span aria-hidden="true" class="toggle-track"><span></span></span>
+              <span>Low GPU</span>
+            </label>
+          </div>
+        </aside>
+
+        <main class="chat-pane">
+          <section class="chat-header" aria-label="当前会话状态">
+            <div>
+              <h1>Aurora v4 architecture</h1>
+              <p>Isolated desktop + Python sidecar prototype</p>
+            </div>
+            <div class="backend-controls">
+              <span id="backend-status" class="status-pill disconnected" role="status">
+                <span class="status-dot"></span>
+                <span id="backend-status-text">Starting backend</span>
+              </span>
+              <button id="restart-backend" class="ghost-button" type="button">Restart Backend</button>
+              <button id="crash-backend" class="ghost-button danger" type="button">Crash Backend · DEV</button>
+            </div>
+          </section>
+
+          <section id="messages" class="messages" aria-live="polite" aria-label="模拟对话">
+            <article class="message assistant">
+              <div class="avatar" aria-hidden="true">A</div>
+              <div class="bubble">
+                This prototype keeps the interface responsive while an isolated Python backend streams mock tokens.
+              </div>
+            </article>
+            <article class="message user">
+              <div class="bubble">验证 Tauri、IPC、取消与恢复边界。</div>
+            </article>
+          </section>
+
+          <footer class="composer-wrap">
+            <div class="composer glass-surface">
+              <label class="sr-only" for="prompt-input">输入消息</label>
+              <textarea
+                id="prompt-input"
+                rows="1"
+                maxlength="262144"
+                placeholder="向 Aurora 发送一条 mock 消息…"
+              ></textarea>
+              <div class="composer-actions">
+                <span id="ime-state" class="ime-state">IME ready</span>
+                <button id="stop-button" class="stop-button" type="button" disabled>Stop</button>
+                <button id="send-button" class="send-button" type="button">Send</button>
+              </div>
+            </div>
+            <div class="debug-strip" aria-label="Prototype metrics">
+              <span id="metric-startup">startup —</span>
+              <span id="metric-ready">ready —</span>
+              <span id="metric-first-delta">first delta —</span>
+              <span id="metric-cancel">cancel —</span>
+              <span id="metric-crash">disconnect —</span>
+            </div>
+          </footer>
+        </main>
+      </div>
+    </div>
+    <script type="module" src="/src/main.ts"></script>
+  </body>
+</html>
