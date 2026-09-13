@@ -7,8 +7,13 @@ import uuid
 from copy import deepcopy
 from datetime import datetime, timezone
 from pathlib import Path
+from time import monotonic
 
 from modules.app_paths import CONVERSATIONS_DIR
+
+
+TITLE_GENERATION_IDLE_SECONDS = 4.0
+TITLE_FOREGROUND_POLL_SECONDS = 0.05
 
 
 class ConversationManager:
@@ -200,10 +205,34 @@ def schedule_conversation_intelligence(
     on_title_updated=None,
     title_model=None,
     title_generator=None,
+    title_idle_seconds=TITLE_GENERATION_IDLE_SECONDS,
+    foreground_active=None,
+    foreground_generation=None,
+    title_cancel_event=None,
+    clock=monotonic,
 ):
     captured_messages = deepcopy(messages or [])
     expected_message_count = len(captured_messages)
     thread_factory = thread_factory or threading.Thread
+    foreground_active = foreground_active or (lambda: False)
+    foreground_generation = foreground_generation or (lambda: 0)
+    title_cancel_event = title_cancel_event or threading.Event()
+    try:
+        title_idle_seconds = max(0.0, float(title_idle_seconds))
+    except (TypeError, ValueError):
+        title_idle_seconds = TITLE_GENERATION_IDLE_SECONDS
+    scheduled_at = clock()
+    try:
+        observed_foreground_generation = foreground_generation()
+    except Exception:
+        observed_foreground_generation = 0
+
+    def log_info(message):
+        if logger:
+            try:
+                logger.info(message)
+            except Exception:
+                pass
 
     def log_error(message):
         if logger:
@@ -212,9 +241,62 @@ def schedule_conversation_intelligence(
             except Exception:
                 pass
 
+    def foreground_is_active():
+        try:
+            return bool(foreground_active())
+        except Exception:
+            return False
+
+    def current_foreground_generation():
+        try:
+            return foreground_generation()
+        except Exception:
+            return observed_foreground_generation
+
+    def wait_for_title_idle():
+        nonlocal observed_foreground_generation
+        if not generate_title:
+            return True
+        delay = title_idle_seconds
+        while True:
+            if title_cancel_event.wait(delay):
+                wait_ms = max(0.0, (clock() - scheduled_at) * 1000.0)
+                log_info(
+                    f"title_generation_cancelled_pending conversation_id={conversation_id} "
+                    f"reason=shutdown title_generation_wait_ms={wait_ms:.1f}"
+                )
+                return False
+            current_generation = current_foreground_generation()
+            generation_changed = current_generation != observed_foreground_generation
+            active = foreground_is_active()
+            if not active and not generation_changed:
+                return True
+            if active:
+                log_info(
+                    f"title_generation_skipped_foreground conversation_id={conversation_id} "
+                    "reason=active_turn"
+                )
+            log_info(
+                f"title_generation_cancelled_pending conversation_id={conversation_id} "
+                f"reason={'foreground_active' if active else 'foreground_started'}"
+            )
+            while foreground_is_active():
+                if title_cancel_event.wait(TITLE_FOREGROUND_POLL_SECONDS):
+                    wait_ms = max(0.0, (clock() - scheduled_at) * 1000.0)
+                    log_info(
+                        f"title_generation_cancelled_pending conversation_id={conversation_id} "
+                        f"reason=shutdown title_generation_wait_ms={wait_ms:.1f}"
+                    )
+                    return False
+            observed_foreground_generation = current_foreground_generation()
+            log_info(
+                f"title_generation_scheduled conversation_id={conversation_id} "
+                f"reason=foreground_idle debounce_ms={title_idle_seconds * 1000.0:.1f}"
+            )
+            delay = title_idle_seconds
+
     def run_analysis():
-        if logger and generate_title:
-            logger.info(f"title_generation_started conversation_id={conversation_id}")
+        nonlocal observed_foreground_generation
         try:
             if analyzer is None:
                 from modules.conversation_intelligence import analyze_conversation
@@ -223,37 +305,90 @@ def schedule_conversation_intelligence(
                 analysis = analyzer(captured_messages)
         except Exception as error:
             log_error(f"Conversation intelligence analysis failed: {error}")
-            if logger and generate_title:
-                logger.info(f"title_generation_completed conversation_id={conversation_id} title_summary=")
+            if generate_title:
+                log_info(
+                    f"title_generation_failed conversation_id={conversation_id} "
+                    f"stage=analysis error={type(error).__name__}"
+                )
             return
 
         if generate_title:
+            while True:
+                if not wait_for_title_idle():
+                    return
+                launch_active = foreground_is_active()
+                launch_generation = current_foreground_generation()
+                if (
+                    not launch_active
+                    and launch_generation == observed_foreground_generation
+                ):
+                    break
+                log_info(
+                    f"title_generation_skipped_foreground conversation_id={conversation_id} "
+                    "reason=launch_guard"
+                )
+                log_info(
+                    f"title_generation_cancelled_pending conversation_id={conversation_id} "
+                    "reason=launch_guard"
+                )
+                observed_foreground_generation = launch_generation
+            wait_ms = max(0.0, (clock() - scheduled_at) * 1000.0)
+            log_info(
+                f"title_generation_started conversation_id={conversation_id} "
+                f"title_generation_wait_ms={wait_ms:.1f} "
+                f"model={title_model or ''} think_mode=off"
+            )
+            request_started = None
+            request_ms = None
             try:
                 if title_generator is not None:
+                    request_started = clock()
                     title_summary, title_source = title_generator(captured_messages, title_model)
+                    request_ms = max(0.0, (clock() - request_started) * 1000.0)
                 elif analyzer is None:
                     from modules.conversation_intelligence import generate_title_summary
-                    title_summary, title_source = generate_title_summary(captured_messages, title_model)
+                    title_diagnostics = {}
+                    request_started = clock()
+                    title_summary, title_source = generate_title_summary(
+                        captured_messages,
+                        title_model,
+                        diagnostics=title_diagnostics,
+                    )
+                    request_ms = max(0.0, (clock() - request_started) * 1000.0)
+                    if title_diagnostics.get("llm_status") != "completed":
+                        log_info(
+                            f"title_generation_failed conversation_id={conversation_id} "
+                            f"stage=request reason={title_diagnostics.get('llm_status', 'unknown')} "
+                            f"error={title_diagnostics.get('error_type') or 'none'} "
+                            f"title_generation_request_ms={request_ms:.1f}"
+                        )
                 else:
                     title_summary = analysis.get("title_summary", "") if isinstance(analysis, dict) else ""
                     title_source = "rule" if title_summary else "default"
                 analysis["title_summary"] = title_summary
                 analysis["title_source"] = title_source
             except Exception as error:
-                if logger:
-                    logger.info(
-                        f"title_generation_failed conversation_id={conversation_id} "
-                        f"error={type(error).__name__}"
-                    )
+                if request_started is not None:
+                    request_ms = max(0.0, (clock() - request_started) * 1000.0)
+                request_value = f"{request_ms:.1f}" if request_ms is not None else "none"
+                log_info(
+                    f"title_generation_failed conversation_id={conversation_id} "
+                    f"stage=request error={type(error).__name__} "
+                    f"title_generation_request_ms={request_value}"
+                )
                 analysis["title_summary"] = ""
                 analysis["title_source"] = "default"
 
-        if logger and generate_title:
-            logger.info(
+        if generate_title:
+            request_value = f"{request_ms:.1f}" if request_ms is not None else "none"
+            log_info(
                 f"title_generation_completed conversation_id={conversation_id} "
-                f"title_summary={analysis.get('title_summary', '') if isinstance(analysis, dict) else ''}"
+                f"status={'completed' if analysis.get('title_source') == 'llm' else 'fallback'} "
+                f"title_generation_wait_ms={wait_ms:.1f} "
+                f"title_generation_request_ms={request_value} "
+                f"title_source={analysis.get('title_source', 'default')}"
             )
-            logger.info(
+            log_info(
                 f"title_generation_fallback conversation_id={conversation_id} "
                 f"title_source={analysis.get('title_source', 'default')}"
             ) if analysis.get("title_source") != "llm" else None
@@ -293,6 +428,11 @@ def schedule_conversation_intelligence(
         except Exception as error:
             log_error(f"Conversation intelligence metadata save failed: {error}")
 
+    if generate_title:
+        log_info(
+            f"title_generation_scheduled conversation_id={conversation_id} "
+            f"reason=first_turn debounce_ms={title_idle_seconds * 1000.0:.1f}"
+        )
     thread = thread_factory(target=run_analysis, daemon=True)
     thread.start()
     return thread

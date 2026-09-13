@@ -200,6 +200,7 @@ class ConversationIntelligencePipelineTests(unittest.TestCase):
             expected_updated_time=conversation["updated_time"],
             expected_title="Aurora对话",
             generate_title=True,
+            title_idle_seconds=0,
             analyzer=lambda _messages: {"title_summary": "语音测试规划"},
             thread_factory=ImmediateThread,
         )
@@ -225,6 +226,7 @@ class ConversationIntelligencePipelineTests(unittest.TestCase):
             expected_updated_time=renamed["updated_time"],
             expected_title="临时标题",
             generate_title=True,
+            title_idle_seconds=0,
             analyzer=lambda _messages: {"title_summary": "自动标题"},
             thread_factory=ImmediateThread,
         )
@@ -251,6 +253,7 @@ class ConversationIntelligencePipelineTests(unittest.TestCase):
             expected_updated_time=conversation["updated_time"],
             expected_title="短内容",
             generate_title=True,
+            title_idle_seconds=0,
             analyzer=lambda _messages: {"title_summary": "标题太长" * 10},
             thread_factory=ImmediateThread,
         )

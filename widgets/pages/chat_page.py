@@ -6,7 +6,11 @@ import customtkinter as ctk
 
 from modules.chat import ChatError, ChatSession
 from modules.chat_latency import PreLLMLatencyDiagnostics, callback_accepts_keyword
-from modules.conversation import ConversationManager, schedule_conversation_intelligence
+from modules.conversation import (
+    TITLE_GENERATION_IDLE_SECONDS,
+    ConversationManager,
+    schedule_conversation_intelligence,
+)
 from modules.conversation_intelligence import fallback_title
 from modules.experience.state import CompanionState, CompanionStateStore
 from modules.runtime_dependencies import (
@@ -81,6 +85,7 @@ class ChatPage(ctk.CTkFrame):
         self._turn_lock = threading.Lock()
         self._external_message_lock = self._turn_lock
         self._turn_counter = 0
+        self._title_generation_cancel_event = threading.Event()
         self.conversation_records = []
         self.conversation_labels = []
         self.conversation_search_entry = None
@@ -387,6 +392,7 @@ class ChatPage(ctk.CTkFrame):
         self.after(0, lambda: self.update_models(records))
 
     def destroy(self):
+        self._title_generation_cancel_event.set()
         if self._runtime_unsubscribe:
             self._runtime_unsubscribe()
         if self.voice_runtime is not None:
@@ -496,7 +502,11 @@ class ChatPage(ctk.CTkFrame):
             generate_title=first_turn,
             title_model=self.selected_model.get("name") or self.settings.get("chat_model", ""),
             on_title_updated=self._on_title_updated,
-            logger=self.logger
+            logger=self.logger,
+            title_idle_seconds=TITLE_GENERATION_IDLE_SECONDS,
+            foreground_active=self._turn_lock.locked,
+            foreground_generation=lambda: self._turn_counter,
+            title_cancel_event=self._title_generation_cancel_event,
         )
 
     def _on_title_updated(self, data):

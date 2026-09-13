@@ -10,6 +10,8 @@ from typing import Any
 
 
 ANALYSIS_VERSION = "conversation_intelligence_v1"
+TITLE_GENERATION_TIMEOUT_SECONDS = 20
+TITLE_GENERATION_MAX_TOKENS = 32
 VALID_ROLES = {"user", "assistant"}
 STOPWORDS = {
     "about", "after", "again", "also", "and", "are", "assistant", "but", "can",
@@ -69,17 +71,32 @@ def _clean_title(value: str) -> str:
     return title
 
 
-def generate_title_summary(messages, model, *, llm_call=None) -> tuple[str, str]:
+def generate_title_summary(
+    messages,
+    model,
+    *,
+    llm_call=None,
+    diagnostics=None,
+) -> tuple[str, str]:
     """Return (title, source), using Ollama first and deterministic fallback second."""
+    diagnostics = diagnostics if diagnostics is not None else {}
     if llm_call is None:
         from modules.chat import chat_with_messages
-        llm_call = lambda prompt: chat_with_messages(model, [{"role": "user", "content": prompt}], timeout=20)
+        llm_call = lambda prompt: chat_with_messages(
+            model,
+            [{"role": "user", "content": prompt}],
+            timeout=TITLE_GENERATION_TIMEOUT_SECONDS,
+            thinking_mode="off",
+            num_predict=TITLE_GENERATION_MAX_TOKENS,
+        )
     try:
         title = _clean_title(llm_call(_title_prompt(messages)))
         if title:
+            diagnostics.update(llm_status="completed", error_type=None)
             return title, "llm"
-    except Exception:
-        pass
+        diagnostics.update(llm_status="invalid_title", error_type=None)
+    except Exception as error:
+        diagnostics.update(llm_status="failed", error_type=type(error).__name__)
     title = ConversationIntelligence()._title_summary_from_messages(messages)
     if title:
         return title, "rule"

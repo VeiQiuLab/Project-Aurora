@@ -462,7 +462,14 @@ def chat_with_ollama(model, prompt):
     return chat_with_messages(model, [{"role": "user", "content": prompt}])
 
 
-def chat_with_messages(model, messages, timeout=120):
+def chat_with_messages(
+    model,
+    messages,
+    timeout=120,
+    *,
+    thinking_mode=None,
+    num_predict=None,
+):
     """Send prepared chat messages to Ollama and return the assistant response."""
 
     try:
@@ -502,6 +509,22 @@ def chat_with_messages(model, messages, timeout=120):
     }
     if not payload["messages"]:
         payload["messages"] = [{"role": "user", "content": ""}]
+    if thinking_mode is not None:
+        request_policy = resolve_ollama_request_policy(
+            settings,
+            thinking_mode=thinking_mode,
+        )
+        request_policy.apply(payload)
+    if num_predict is not None:
+        if isinstance(num_predict, bool):
+            raise ValueError("num_predict must be a positive integer")
+        try:
+            output_limit = int(num_predict)
+        except (TypeError, ValueError) as error:
+            raise ValueError("num_predict must be a positive integer") from error
+        if output_limit < 1:
+            raise ValueError("num_predict must be a positive integer")
+        payload["options"] = {"num_predict": output_limit}
 
     request = urllib.request.Request(
         url,
