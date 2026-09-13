@@ -25,6 +25,7 @@ import time
 import urllib.error
 import urllib.parse
 import urllib.request
+from contextlib import nullcontext
 from datetime import datetime
 from tkinter import filedialog, messagebox, StringVar
 
@@ -1075,61 +1076,141 @@ def build_chat_runtime_callbacks():
             logger.info("Persona disabled")
         return build_memory_context(persona=initial_persona)
 
-    def prepare_chat_prompt_context(prompt, conversation_messages, debug_enabled=False):
-        logger.info("Memory retrieval started")
-        memory_retrieval_config = build_memory_retrieval_config(settings)
+    def prepare_chat_prompt_context(
+        prompt,
+        conversation_messages,
+        debug_enabled=False,
+        *,
+        latency_diagnostics=None,
+    ):
+        latency = latency_diagnostics
+
+        def latency_stage(name, *, enabled=True):
+            if latency is None:
+                return nullcontext()
+            return latency.stage(name, enabled=enabled)
+
         rag_enabled = bool(settings.get("rag.pipeline_enabled", False))
-        matched_memories = retrieve_memories(
-            prompt,
-            memory_store.list_memories(),
-            enriched=rag_enabled,
-            **memory_retrieval_config,
-        )
+        with latency_stage("memory_context"):
+            logger.info("Memory retrieval started")
+            memory_retrieval_config = build_memory_retrieval_config(settings)
+            matched_memories = retrieve_memories(
+                prompt,
+                memory_store.list_memories(),
+                enriched=rag_enabled,
+                **memory_retrieval_config,
+            )
         logger.info(f"Memory matched: {len(matched_memories)}")
+        if latency is not None:
+            latency.update(
+                memory_enabled=True,
+                memory_match_count=len(matched_memories),
+                memory_chars=sum(
+                    len(str(item.get("content", "") or ""))
+                    for item in matched_memories
+                    if isinstance(item, dict)
+                ),
+            )
 
         matched_knowledge = []
         active_persona = None
-        if settings.get("persona.enabled", True):
-            active_persona = persona_store.load()
-            logger.info("Persona enabled")
-            logger.info("Persona loaded timestamp updated")
-        else:
-            logger.info("Persona disabled")
-
-        if settings.get("knowledge.enabled", True):
-            logger.info("Knowledge search started")
-            try:
-                max_knowledge = max(0, int(settings.get("knowledge.max_results", 3)))
-            except (TypeError, ValueError):
-                max_knowledge = 3
-            knowledge_items = knowledge_store.list_items()
-            matched_knowledge = knowledge_store.retrieve(
-                prompt,
-                max_results=max_knowledge,
-                enriched=rag_enabled,
+        persona_enabled = bool(settings.get("persona.enabled", True))
+        with latency_stage("persona_context", enabled=persona_enabled):
+            if persona_enabled:
+                active_persona = persona_store.load()
+                logger.info("Persona enabled")
+                logger.info("Persona loaded timestamp updated")
+            else:
+                logger.info("Persona disabled")
+        if latency is not None:
+            latency.update(
+                persona_enabled=persona_enabled,
+                persona_rule_count=(
+                    len(active_persona.get("rules", []))
+                    if isinstance(active_persona, dict)
+                    and isinstance(active_persona.get("rules"), list)
+                    else 0
+                ) if persona_enabled else None,
             )
-            disabled_matches = retrieval_summary(
-                prompt,
-                knowledge_items,
-                max_results=max_knowledge,
-                knowledge_enabled=settings.get("knowledge.enabled", True)
-            ).get("results", [])
-            if any((not item.get("enabled")) and (not item.get("injected")) for item in disabled_matches):
-                logger.info("Knowledge skipped disabled file")
-            if any(item.get("status") == "Missing File" for item in disabled_matches):
-                logger.info("Knowledge skipped missing file")
-            if any(item.get("status") not in {"OK", "Missing File"} for item in disabled_matches):
-                logger.info("Knowledge skipped invalid file")
-            logger.info(f"Knowledge matched: {len(matched_knowledge)}")
 
-        rag_result = run_configured_rag_pipeline(
-            matched_memories,
-            matched_knowledge,
-            settings_store=settings,
-            query=prompt,
-            conversation_messages=conversation_messages,
-            logger=logger,
-        )
+        knowledge_enabled = bool(settings.get("knowledge.enabled", True))
+        with latency_stage("knowledge_context", enabled=knowledge_enabled):
+            if knowledge_enabled:
+                logger.info("Knowledge search started")
+                try:
+                    max_knowledge = max(0, int(settings.get("knowledge.max_results", 3)))
+                except (TypeError, ValueError):
+                    max_knowledge = 3
+                knowledge_items = knowledge_store.list_items()
+                matched_knowledge = knowledge_store.retrieve(
+                    prompt,
+                    max_results=max_knowledge,
+                    enriched=rag_enabled,
+                )
+                disabled_matches = retrieval_summary(
+                    prompt,
+                    knowledge_items,
+                    max_results=max_knowledge,
+                    knowledge_enabled=knowledge_enabled,
+                ).get("results", [])
+                if any((not item.get("enabled")) and (not item.get("injected")) for item in disabled_matches):
+                    logger.info("Knowledge skipped disabled file")
+                if any(item.get("status") == "Missing File" for item in disabled_matches):
+                    logger.info("Knowledge skipped missing file")
+                if any(item.get("status") not in {"OK", "Missing File"} for item in disabled_matches):
+                    logger.info("Knowledge skipped invalid file")
+                logger.info(f"Knowledge matched: {len(matched_knowledge)}")
+        if latency is not None:
+            latency.update(
+                knowledge_enabled=knowledge_enabled,
+                knowledge_match_count=len(matched_knowledge) if knowledge_enabled else None,
+                knowledge_chars=(
+                    sum(
+                        len(str(item.get("content", "") or ""))
+                        for item in matched_knowledge
+                        if isinstance(item, dict)
+                    )
+                    if knowledge_enabled
+                    else None
+                ),
+            )
+
+        with latency_stage("rag_context", enabled=rag_enabled):
+            rag_result = run_configured_rag_pipeline(
+                matched_memories,
+                matched_knowledge,
+                settings_store=settings,
+                query=prompt,
+                conversation_messages=conversation_messages,
+                logger=logger,
+            )
+        if latency is not None:
+            rag_diagnostics = rag_result.get("diagnostics", {})
+            rag_metrics = (
+                rag_diagnostics.get("metrics", {})
+                if isinstance(rag_diagnostics, dict)
+                else {}
+            )
+            latency.update(
+                rag_enabled=rag_enabled,
+                rag_input_count=(
+                    len(matched_memories) + len(matched_knowledge)
+                    if rag_enabled
+                    else None
+                ),
+                rag_optimized_count=(
+                    rag_metrics.get("optimized_count")
+                    if rag_enabled and isinstance(rag_metrics, dict)
+                    else None
+                ),
+                rag_context_status=(
+                    "completed"
+                    if rag_enabled and rag_diagnostics.get("success")
+                    else "failed"
+                    if rag_enabled
+                    else "not_run"
+                ),
+            )
         optimized_memory_text = None
         optimized_knowledge_text = None
         if rag_enabled and rag_result["diagnostics"].get("success"):
@@ -1165,14 +1246,22 @@ def build_chat_runtime_callbacks():
             if warning:
                 logger.info("Context size warning")
 
+        system_context = build_memory_context(
+            matched_memories,
+            matched_knowledge,
+            active_persona,
+            memory_text=optimized_memory_text,
+            knowledge_text=optimized_knowledge_text,
+        )
+        if latency is not None:
+            latency.update(
+                final_system_chars=len(system_context),
+                debug_context_chars=len(debug_text),
+                conversation_message_count=len(conversation_messages or []),
+            )
+
         return {
-            "system_context": build_memory_context(
-                matched_memories,
-                matched_knowledge,
-                active_persona,
-                memory_text=optimized_memory_text,
-                knowledge_text=optimized_knowledge_text,
-            ),
+            "system_context": system_context,
             "debug_text": debug_text,
             "context_diagnostics": {
                 "memory_retrieval": True,

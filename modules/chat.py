@@ -1,5 +1,6 @@
 import copy
 import json
+import math
 import socket
 import threading
 import urllib.error
@@ -10,6 +11,36 @@ from modules.settings import settings
 
 DEFAULT_SYSTEM_CONTEXT = "You are Aurora, a helpful local AI assistant."
 DEFAULT_CONTEXT_WARNING_TOKENS = 6000
+
+_STREAM_TIMING_FIELDS = (
+    "chat_request_start_monotonic",
+    "payload_ready_monotonic",
+    "urlopen_start_monotonic",
+    "response_headers_monotonic",
+    "first_raw_line_monotonic",
+    "first_json_message_monotonic",
+    "first_model_output_monotonic",
+    "first_nonempty_content_monotonic",
+    "stream_end_monotonic",
+)
+_STREAM_DURATION_FIELDS = {
+    "request_to_payload_ms": ("chat_request_start_monotonic", "payload_ready_monotonic"),
+    "payload_to_urlopen_ms": ("payload_ready_monotonic", "urlopen_start_monotonic"),
+    "urlopen_to_headers_ms": ("urlopen_start_monotonic", "response_headers_monotonic"),
+    "request_to_headers_ms": ("chat_request_start_monotonic", "response_headers_monotonic"),
+    "headers_to_first_raw_line_ms": ("response_headers_monotonic", "first_raw_line_monotonic"),
+    "first_raw_to_first_content_ms": ("first_raw_line_monotonic", "first_nonempty_content_monotonic"),
+    "request_to_first_model_output_ms": ("chat_request_start_monotonic", "first_model_output_monotonic"),
+    "request_to_first_content_ms": ("chat_request_start_monotonic", "first_nonempty_content_monotonic"),
+    "stream_total_ms": ("chat_request_start_monotonic", "stream_end_monotonic"),
+}
+_OLLAMA_DURATION_FIELDS = (
+    "total_duration",
+    "load_duration",
+    "prompt_eval_duration",
+    "eval_duration",
+)
+_OLLAMA_COUNT_FIELDS = ("prompt_eval_count", "eval_count")
 
 
 class ChatError(Exception):
@@ -40,6 +71,21 @@ class StreamingRequestHandle:
             "active_response": False,
             "status": "pending",
         })
+        for field in _STREAM_TIMING_FIELDS:
+            self._diagnostics.setdefault(field, None)
+        for field in _STREAM_DURATION_FIELDS:
+            self._diagnostics.setdefault(field, None)
+        for field in _OLLAMA_DURATION_FIELDS:
+            self._diagnostics.setdefault(f"{field}_ms", None)
+        for field in _OLLAMA_COUNT_FIELDS:
+            self._diagnostics.setdefault(field, None)
+        self._diagnostics.setdefault("message_count", None)
+        self._diagnostics.setdefault("approx_input_chars", None)
+        self._diagnostics.setdefault("approx_input_tokens", None)
+        self._diagnostics.setdefault("system_chars", None)
+        self._diagnostics.setdefault("history_chars", None)
+        self._diagnostics.setdefault("current_user_chars", None)
+        self._diagnostics.setdefault("reasoning_chars", 0)
 
     @property
     def diagnostics(self):
@@ -55,6 +101,28 @@ class StreamingRequestHandle:
     def active_response(self):
         with self._lock:
             return self._response
+
+    def mark_timing(self, name, *, first=False):
+        """Record one request-local monotonic timestamp without blocking I/O."""
+
+        now = self._clock()
+        with self._lock:
+            if first and self._diagnostics.get(name) is not None:
+                return now
+            self._diagnostics[name] = now
+        return now
+
+    def update_diagnostics(self, values):
+        """Merge small diagnostic values under the request-local lock."""
+
+        with self._lock:
+            self._diagnostics.update(values)
+
+    def increment_diagnostic(self, name, amount):
+        """Increment one numeric request-local counter."""
+
+        with self._lock:
+            self._diagnostics[name] = self._diagnostics.get(name, 0) + amount
 
     def register_response(self, response):
         """Register *response*, or abort it immediately after an earlier cancel."""
@@ -124,6 +192,7 @@ class StreamingRequestHandle:
             self._response = None
             self._diagnostics["active_response"] = False
             self._diagnostics["stream_exit_monotonic"] = now
+            self._diagnostics["stream_end_monotonic"] = now
             cancel_requested = self._diagnostics["cancel_requested_monotonic"]
             if cancel_requested is not None:
                 status = "cancelled"
@@ -132,6 +201,7 @@ class StreamingRequestHandle:
                     (now - cancel_requested) * 1000.0,
                 )
             self._diagnostics["status"] = status
+            _derive_stream_durations(self._diagnostics)
 
     def _abort_registered_response(self, response):
         now = self._clock()
@@ -180,6 +250,76 @@ def _watch_stream_cancellation(handle, finished_event):
         if handle.stop_event.is_set():
             handle.cancel()
             return
+
+
+def _derive_stream_durations(diagnostics):
+    for output_name, (start_name, end_name) in _STREAM_DURATION_FIELDS.items():
+        start = diagnostics.get(start_name)
+        end = diagnostics.get(end_name)
+        if isinstance(start, (int, float)) and isinstance(end, (int, float)):
+            diagnostics[output_name] = max(0.0, (end - start) * 1000.0)
+        else:
+            diagnostics[output_name] = None
+
+
+def _stream_input_diagnostics(messages, current_prompt):
+    contents = [str(message.get("content", "") or "") for message in messages]
+    total_chars = sum(len(content) for content in contents)
+    system_chars = sum(
+        len(content)
+        for message, content in zip(messages, contents)
+        if message.get("role") == "system"
+    )
+    current_user_chars = len(str(current_prompt or ""))
+    history_chars = max(0, total_chars - system_chars - current_user_chars)
+    return {
+        "message_count": len(messages),
+        "approx_input_chars": total_chars,
+        "approx_input_tokens": estimate_tokens("\n".join(contents)),
+        "system_chars": system_chars,
+        "history_chars": history_chars,
+        "current_user_chars": current_user_chars,
+    }
+
+
+def _finite_nonnegative_number(value):
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        return None
+    number = float(value)
+    if not math.isfinite(number) or number < 0:
+        return None
+    return number
+
+
+def _ollama_metrics(data):
+    metrics = {}
+    for field in _OLLAMA_DURATION_FIELDS:
+        value = _finite_nonnegative_number(data.get(field))
+        if value is not None:
+            metrics[f"{field}_ms"] = value / 1_000_000.0
+    for field in _OLLAMA_COUNT_FIELDS:
+        value = _finite_nonnegative_number(data.get(field))
+        if value is not None and value.is_integer():
+            metrics[field] = int(value)
+    return metrics
+
+
+def _raw_line_observation(timestamp, data):
+    message = data.get("message")
+    if not isinstance(message, dict):
+        message = {}
+    content = message.get("content")
+    thinking = message.get("thinking", data.get("thinking"))
+    reasoning = message.get("reasoning", data.get("reasoning"))
+    return {
+        "timestamp": timestamp,
+        "top_level_keys": sorted(str(key) for key in data),
+        "message_keys": sorted(str(key) for key in message),
+        "done": bool(data.get("done")),
+        "content_length": len(content) if isinstance(content, str) else 0,
+        "thinking_length": len(thinking) if isinstance(thinking, str) else 0,
+        "reasoning_length": len(reasoning) if isinstance(reasoning, str) else 0,
+    }
 
 
 def estimate_tokens(text):
@@ -477,8 +617,14 @@ def stream_chat(
     *,
     request_handle=None,
     diagnostics=None,
+    raw_line_observer=None,
 ):
     """Stream one Ollama response while preserving the session context."""
+
+    handle = request_handle or StreamingRequestHandle(stop_event, diagnostics)
+    if handle.stop_event is not stop_event:
+        raise ValueError("request_handle must own the supplied stop_event")
+    handle.mark_timing("chat_request_start_monotonic", first=True)
 
     try:
         from modules.models import model_supports_chat
@@ -502,18 +648,16 @@ def stream_chat(
             stage="ollama_connection"
         )
 
-    handle = request_handle or StreamingRequestHandle(stop_event, diagnostics)
-    if handle.stop_event is not stop_event:
-        raise ValueError("request_handle must own the supplied stop_event")
     if stop_event.is_set():
         handle.cancel()
         handle.finish("cancelled")
         return "stopped"
 
     session.add_user(prompt)
+    messages = session.snapshot()
     payload = {
         "model": model,
-        "messages": session.snapshot(),
+        "messages": messages,
         "stream": True
     }
     request = urllib.request.Request(
@@ -522,6 +666,8 @@ def stream_chat(
         headers={"Content-Type": "application/json"},
         method="POST"
     )
+    handle.update_diagnostics(_stream_input_diagnostics(messages, prompt))
+    handle.mark_timing("payload_ready_monotonic", first=True)
     assistant_parts = []
     response = None
     stream_finished = threading.Event()
@@ -535,7 +681,9 @@ def stream_chat(
     status = "completed"
 
     try:
+        handle.mark_timing("urlopen_start_monotonic", first=True)
         response = urllib.request.urlopen(request, timeout=120)
+        handle.mark_timing("response_headers_monotonic", first=True)
         if handle.register_response(response):
             for raw_line in response:
                 if handle.cancelled:
@@ -544,7 +692,9 @@ def stream_chat(
                 if not raw_line.strip():
                     continue
 
+                raw_timestamp = handle.mark_timing("first_raw_line_monotonic", first=True)
                 data = json.loads(raw_line.decode("utf-8"))
+                handle.mark_timing("first_json_message_monotonic", first=True)
                 if handle.cancelled:
                     status = "cancelled"
                     break
@@ -552,13 +702,35 @@ def stream_chat(
                     raise ChatError(str(data["error"]))
 
                 message = data.get("message", {})
+                thinking = message.get("thinking", data.get("thinking", ""))
+                reasoning = message.get("reasoning", data.get("reasoning", ""))
+                reasoning_chars = sum(
+                    len(value)
+                    for value in (thinking, reasoning)
+                    if isinstance(value, str)
+                )
                 chunk = message.get("content", "")
+                if reasoning_chars:
+                    handle.mark_timing("first_model_output_monotonic", first=True)
+                    handle.increment_diagnostic("reasoning_chars", reasoning_chars)
+                if callable(raw_line_observer):
+                    try:
+                        raw_line_observer(_raw_line_observation(raw_timestamp, data))
+                    except Exception:
+                        pass
                 if chunk:
                     if handle.cancelled:
                         status = "cancelled"
                         break
+                    handle.mark_timing("first_model_output_monotonic", first=True)
+                    handle.mark_timing("first_nonempty_content_monotonic", first=True)
                     assistant_parts.append(chunk)
                     on_chunk(chunk)
+
+                if data.get("done"):
+                    metrics = _ollama_metrics(data)
+                    if metrics:
+                        handle.update_diagnostics(metrics)
 
                 if data.get("done"):
                     break

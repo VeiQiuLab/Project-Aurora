@@ -5,6 +5,7 @@ from tkinter import messagebox
 import customtkinter as ctk
 
 from modules.chat import ChatError, ChatSession
+from modules.chat_latency import PreLLMLatencyDiagnostics, callback_accepts_keyword
 from modules.conversation import ConversationManager, schedule_conversation_intelligence
 from modules.conversation_intelligence import fallback_title
 from modules.experience.state import CompanionState, CompanionStateStore
@@ -76,6 +77,7 @@ class ChatPage(ctk.CTkFrame):
             "running": False,
             "stop_event": None
         }
+        self.last_latency_diagnostics = None
         self._turn_lock = threading.Lock()
         self._external_message_lock = self._turn_lock
         self._turn_counter = 0
@@ -555,6 +557,7 @@ class ChatPage(ctk.CTkFrame):
             self.logger.error(f"Conversation rename failed: {error}")
 
     def send_prompt(self):
+        latency = PreLLMLatencyDiagnostics(source="text")
         if self.stream_state["running"]:
             self.set_status(self.t("chat_window_stop_generation_first"), "warning")
             self.focus_input()
@@ -578,6 +581,7 @@ class ChatPage(ctk.CTkFrame):
             self.set_status(self.t("chat_window_stop_generation_first"), "warning")
             self.focus_input()
             return
+        latency.set_turn_id(self._turn_counter)
 
         self.companion_state.transition(
             CompanionState.THINKING,
@@ -585,12 +589,18 @@ class ChatPage(ctk.CTkFrame):
             source="chat_page",
         )
         try:
-            context = self.prepare_prompt_context_callback(
-                prompt,
-                self.session.snapshot(),
-                self.debug_context_var.get(),
-            )
-        except Exception:
+            with latency.stage("session_snapshot"):
+                conversation_messages = self.session.snapshot()
+            with latency.stage("context_builder"):
+                context = self._prepare_context_with_diagnostics(
+                    prompt,
+                    conversation_messages,
+                    self.debug_context_var.get(),
+                    latency,
+                )
+        except Exception as error:
+            latency.finish_turn("failed")
+            self._record_latency_diagnostics(latency)
             self._end_turn("text")
             self.companion_state.transition(
                 CompanionState.ERROR,
@@ -603,6 +613,7 @@ class ChatPage(ctk.CTkFrame):
             )
             raise
         self.session.set_system_context(context.get("system_context", ""))
+        latency.mark("final_messages_ready_monotonic")
         if context.get("debug_text"):
             self.append_text(context["debug_text"])
 
@@ -619,6 +630,7 @@ class ChatPage(ctk.CTkFrame):
         self.stream_state["stop_event"] = threading.Event()
 
         def run_request():
+            result = "failed"
             try:
                 def append_chunk(chunk):
                     try:
@@ -626,12 +638,14 @@ class ChatPage(ctk.CTkFrame):
                     except Exception:
                         return
 
-                result = self.stream_chat_callback(
+                latency.mark("stream_chat_enter_monotonic")
+                result = self._stream_chat_with_diagnostics(
                     model,
                     prompt,
                     self.session,
                     append_chunk,
-                    self.stream_state["stop_event"]
+                    self.stream_state["stop_event"],
+                    latency,
                 )
                 error_message = None
                 self.logger.info(f"Chat request succeeded: {model}")
@@ -664,6 +678,10 @@ class ChatPage(ctk.CTkFrame):
                     reason="chat_request_failed",
                     source="chat_page",
                 )
+            finally:
+                turn_status = "cancelled" if result == "stopped" else result
+                latency.finish_turn(turn_status)
+                self._record_latency_diagnostics(latency)
 
             def update_chat():
                 try:
@@ -702,6 +720,7 @@ class ChatPage(ctk.CTkFrame):
 
     def handle_external_prompt(self, prompt, *, on_chunk=None, cancel_event=None, source="voice"):
         """Run a non-UI input through the active ChatPage session and save it."""
+        latency = PreLLMLatencyDiagnostics(source=source)
         prompt = str(prompt or "").strip()
         if not prompt:
             raise ChatError("External chat input is empty.")
@@ -716,19 +735,26 @@ class ChatPage(ctk.CTkFrame):
         stop_event = cancel_event or threading.Event()
         if not self._try_begin_turn(source):
             raise ChatError("Chat turn busy.")
+        latency.set_turn_id(self._turn_counter)
         finalize_scheduled = False
+        turn_status = "failed"
         try:
             self.companion_state.transition(
                 CompanionState.THINKING,
                 reason=f"{source}_request_started",
                 source="chat_page",
             )
-            context = self.prepare_prompt_context_callback(
-                prompt,
-                self.session.snapshot(),
-                False,
-            )
+            with latency.stage("session_snapshot"):
+                conversation_messages = self.session.snapshot()
+            with latency.stage("context_builder"):
+                context = self._prepare_context_with_diagnostics(
+                    prompt,
+                    conversation_messages,
+                    False,
+                    latency,
+                )
             self.session.set_system_context(context.get("system_context", ""))
+            latency.mark("final_messages_ready_monotonic")
 
             def prepare_display():
                 if self.is_open():
@@ -751,14 +777,17 @@ class ChatPage(ctk.CTkFrame):
                 except Exception:
                     pass
 
-            result = self.stream_chat_callback(
+            latency.mark("stream_chat_enter_monotonic")
+            result = self._stream_chat_with_diagnostics(
                 model,
                 prompt,
                 self.session,
                 append_chunk,
                 stop_event,
+                latency,
             )
             if result != "completed":
+                turn_status = "cancelled" if result == "stopped" else result
                 self.companion_state.force_idle(
                     reason=f"{source}_request_stopped",
                     source="chat_page",
@@ -786,10 +815,62 @@ class ChatPage(ctk.CTkFrame):
                 reason=f"{source}_response_ready",
                 source="chat_page",
             )
+            turn_status = "completed"
             return response
         finally:
+            latency.finish_turn(turn_status)
+            self._record_latency_diagnostics(latency)
             if not finalize_scheduled:
                 self._end_turn(source)
+
+    def _prepare_context_with_diagnostics(
+        self,
+        prompt,
+        conversation_messages,
+        debug_enabled,
+        latency,
+    ):
+        kwargs = {}
+        if callback_accepts_keyword(
+            self.prepare_prompt_context_callback,
+            "latency_diagnostics",
+        ):
+            kwargs["latency_diagnostics"] = latency
+        return self.prepare_prompt_context_callback(
+            prompt,
+            conversation_messages,
+            debug_enabled,
+            **kwargs,
+        )
+
+    def _stream_chat_with_diagnostics(
+        self,
+        model,
+        prompt,
+        session,
+        on_chunk,
+        stop_event,
+        latency,
+    ):
+        kwargs = {}
+        if callback_accepts_keyword(self.stream_chat_callback, "diagnostics"):
+            kwargs["diagnostics"] = latency.data
+        return self.stream_chat_callback(
+            model,
+            prompt,
+            session,
+            on_chunk,
+            stop_event,
+            **kwargs,
+        )
+
+    def _record_latency_diagnostics(self, latency):
+        report = latency.report()
+        self.last_latency_diagnostics = report
+        try:
+            self.logger.info(latency.to_log_line())
+        except Exception:
+            pass
 
     def _try_begin_turn(self, source):
         if not self._turn_lock.acquire(blocking=False):
