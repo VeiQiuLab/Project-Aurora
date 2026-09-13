@@ -15,9 +15,14 @@ DEFAULT_CONTEXT_WARNING_TOKENS = 6000
 
 _STREAM_TIMING_FIELDS = (
     "chat_request_start_monotonic",
+    "payload_serialized_monotonic",
+    "request_object_ready_monotonic",
     "payload_ready_monotonic",
+    "urlopen_call_start_monotonic",
     "urlopen_start_monotonic",
+    "urlopen_return_monotonic",
     "response_headers_monotonic",
+    "first_response_read_start_monotonic",
     "first_raw_line_monotonic",
     "first_json_message_monotonic",
     "first_model_output_monotonic",
@@ -28,6 +33,9 @@ _STREAM_DURATION_FIELDS = {
     "request_to_payload_ms": ("chat_request_start_monotonic", "payload_ready_monotonic"),
     "payload_to_urlopen_ms": ("payload_ready_monotonic", "urlopen_start_monotonic"),
     "urlopen_to_headers_ms": ("urlopen_start_monotonic", "response_headers_monotonic"),
+    "transport_pre_urlopen_ms": ("request_object_ready_monotonic", "urlopen_call_start_monotonic"),
+    "transport_urlopen_blocking_ms": ("urlopen_call_start_monotonic", "urlopen_return_monotonic"),
+    "transport_first_read_wait_ms": ("first_response_read_start_monotonic", "first_raw_line_monotonic"),
     "request_to_headers_ms": ("chat_request_start_monotonic", "response_headers_monotonic"),
     "headers_to_first_raw_line_ms": ("response_headers_monotonic", "first_raw_line_monotonic"),
     "first_raw_to_first_content_ms": ("first_raw_line_monotonic", "first_nonempty_content_monotonic"),
@@ -670,15 +678,18 @@ def stream_chat(
         "stream": True
     }
     request_policy.apply(payload)
+    payload_bytes = json.dumps(payload).encode("utf-8")
+    handle.mark_timing("payload_serialized_monotonic", first=True)
     request = urllib.request.Request(
         f"{host}/api/chat",
-        data=json.dumps(payload).encode("utf-8"),
+        data=payload_bytes,
         headers={"Content-Type": "application/json"},
         method="POST"
     )
+    request_ready = handle.mark_timing("request_object_ready_monotonic", first=True)
     handle.update_diagnostics(_stream_input_diagnostics(messages, prompt))
     handle.update_diagnostics(request_policy.diagnostics())
-    handle.mark_timing("payload_ready_monotonic", first=True)
+    handle.update_diagnostics({"payload_ready_monotonic": request_ready})
     assistant_parts = []
     response = None
     stream_finished = threading.Event()
@@ -692,10 +703,13 @@ def stream_chat(
     status = "completed"
 
     try:
-        handle.mark_timing("urlopen_start_monotonic", first=True)
+        urlopen_started = handle.mark_timing("urlopen_call_start_monotonic", first=True)
+        handle.update_diagnostics({"urlopen_start_monotonic": urlopen_started})
         response = urllib.request.urlopen(request, timeout=120)
-        handle.mark_timing("response_headers_monotonic", first=True)
+        urlopen_returned = handle.mark_timing("urlopen_return_monotonic", first=True)
+        handle.update_diagnostics({"response_headers_monotonic": urlopen_returned})
         if handle.register_response(response):
+            handle.mark_timing("first_response_read_start_monotonic", first=True)
             for raw_line in response:
                 if handle.cancelled:
                     status = "cancelled"
