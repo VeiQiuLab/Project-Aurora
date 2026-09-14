@@ -63,3 +63,15 @@ mode with a scale factor of 1 on the active display.
 This limitation does not affect the process/IPC/crash-isolation proof, but the
 native interaction checklist remains an acceptance gate before calling V4-2
 fully complete or starting production sidecar migration.
+
+## V4-2.5 / V4-2.5.1 manual visual acceptance
+
+Manual visual acceptance: **PASS**
+
+Date: 2026-09-14
+
+The user manually inspected the release build and accepted the black/white
+minimal interface and geometry correction. This records the user's visual
+acceptance after the earlier automated verification; it does not claim that
+the earlier automation limitations were resolved or that every monitor/DPI
+configuration was tested. No user screenshots are stored in the repository.

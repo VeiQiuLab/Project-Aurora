@@ -4,101 +4,81 @@
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <meta name="color-scheme" content="dark" />
-    <title>Aurora v4 Prototype</title>
+    <title>Aurora</title>
   </head>
   <body>
     <div id="app" class="window-shell">
-      <header class="titlebar" data-tauri-drag-region>
+      <header class="titlebar">
         <div class="brand" data-tauri-drag-region>
-          <span class="brand-mark" aria-hidden="true"></span>
           <span data-tauri-drag-region>Aurora</span>
-          <span class="prototype-label" data-tauri-drag-region>V4 prototype</span>
         </div>
         <div class="window-controls" aria-label="窗口控制">
-          <button id="window-minimize" class="window-button" type="button" aria-label="最小化">—</button>
-          <button id="window-maximize" class="window-button" type="button" aria-label="最大化或还原">□</button>
-          <button id="window-close" class="window-button close" type="button" aria-label="关闭">×</button>
+          <button id="window-minimize" class="window-button" type="button" aria-label="最小化" title="最小化"><svg viewBox="0 0 16 16" aria-hidden="true"><path d="M3 8h10" /></svg></button>
+          <button id="window-maximize" class="window-button" type="button" aria-label="最大化" title="最大化"><svg class="maximize-icon" viewBox="0 0 16 16" aria-hidden="true"><rect x="3.5" y="3.5" width="9" height="9" /></svg><svg class="restore-icon" viewBox="0 0 16 16" aria-hidden="true"><path d="M5.5 5.5v-3h8v8h-3" /><rect x="2.5" y="5.5" width="8" height="8" /></svg></button>
+          <button id="window-close" class="window-button close" type="button" aria-label="关闭" title="关闭"><svg viewBox="0 0 16 16" aria-hidden="true"><path d="m3.5 3.5 9 9m0-9-9 9" /></svg></button>
         </div>
       </header>
 
       <div class="workspace">
         <aside class="sidebar" aria-label="会话列表">
           <div class="sidebar-heading">
-            <span>Conversations</span>
-            <button class="icon-button" type="button" aria-label="新建模拟会话">＋</button>
+            <span>对话</span>
+            <button id="new-conversation" class="icon-button" type="button" aria-label="新建对话" title="新建对话"><svg viewBox="0 0 20 20" aria-hidden="true"><path d="M10 4v12M4 10h12" /></svg></button>
           </div>
-          <nav class="conversation-list">
-            <button class="conversation active" type="button">
-              <span class="conversation-title">Aurora v4 architecture</span>
-              <span class="conversation-preview">Desktop prototype</span>
-            </button>
-            <button class="conversation" type="button">
-              <span class="conversation-title">Streaming notes</span>
-              <span class="conversation-preview">Mock sidecar contract</span>
-            </button>
-            <button class="conversation" type="button">
-              <span class="conversation-title">Visual language</span>
-              <span class="conversation-preview">Frost and local Glass</span>
-            </button>
-          </nav>
+          <nav id="conversation-list" class="conversation-list" aria-label="对话列表"></nav>
           <div class="sidebar-footer">
             <label class="effects-toggle">
               <input id="reduced-effects" type="checkbox" />
               <span aria-hidden="true" class="toggle-track"><span></span></span>
-              <span>Low GPU</span>
+              <span>低 GPU</span>
             </label>
           </div>
         </aside>
 
         <main class="chat-pane">
           <section class="chat-header" aria-label="当前会话状态">
-            <div>
-              <h1>Aurora v4 architecture</h1>
-              <p>Isolated desktop + Python sidecar prototype</p>
-            </div>
+            <div class="content-column header-content">
+              <h1 id="current-conversation-title">桌面架构</h1>
             <div class="backend-controls">
-              <span id="backend-status" class="status-pill disconnected" role="status">
-                <span class="status-dot"></span>
-                <span id="backend-status-text">Starting backend</span>
+              <span id="backend-status" class="backend-status" role="status">
+                <span id="backend-status-text">正在连接…</span>
               </span>
-              <button id="restart-backend" class="ghost-button" type="button">Restart Backend</button>
-              <button id="crash-backend" class="ghost-button danger" type="button">Crash Backend · DEV</button>
+              <details class="developer-menu">
+                <summary aria-label="打开开发选项" title="开发选项"><svg viewBox="0 0 20 20" aria-hidden="true"><circle cx="4" cy="10" r="1"/><circle cx="10" cy="10" r="1"/><circle cx="16" cy="10" r="1"/></svg></summary>
+                <div class="developer-popover">
+                  <div class="developer-heading">开发选项</div>
+                  <button id="restart-backend" class="ghost-button" type="button">重启后端</button>
+                  <button id="crash-backend" class="ghost-button" type="button">模拟后端崩溃</button>
+                  <div class="developer-metrics" aria-label="原型性能指标">
+                    <span id="metric-startup">启动 —</span>
+                    <span id="metric-ready">就绪 —</span>
+                    <span id="metric-first-delta">首段 —</span>
+                    <span id="metric-cancel">取消 —</span>
+                    <span id="metric-crash">断开 —</span>
+                  </div>
+                </div>
+              </details>
+            </div>
             </div>
           </section>
 
-          <section id="messages" class="messages" aria-live="polite" aria-label="模拟对话">
-            <article class="message assistant">
-              <div class="avatar" aria-hidden="true">A</div>
-              <div class="bubble">
-                This prototype keeps the interface responsive while an isolated Python backend streams mock tokens.
-              </div>
-            </article>
-            <article class="message user">
-              <div class="bubble">验证 Tauri、IPC、取消与恢复边界。</div>
-            </article>
+          <section id="message-viewport" class="message-viewport" aria-label="当前对话">
+            <div id="messages" class="messages content-column" aria-live="polite"></div>
           </section>
 
           <footer class="composer-wrap">
-            <div class="composer glass-surface">
+            <div class="composer content-column">
               <label class="sr-only" for="prompt-input">输入消息</label>
               <textarea
                 id="prompt-input"
                 rows="1"
                 maxlength="262144"
-                placeholder="向 Aurora 发送一条 mock 消息…"
+                placeholder="和 Aurora 说点什么……"
               ></textarea>
               <div class="composer-actions">
-                <span id="ime-state" class="ime-state">IME ready</span>
-                <button id="stop-button" class="stop-button" type="button" disabled>Stop</button>
-                <button id="send-button" class="send-button" type="button">Send</button>
+                <button id="stop-button" class="composer-action" type="button" aria-label="停止生成" title="停止生成" disabled hidden><svg viewBox="0 0 20 20" aria-hidden="true"><rect class="stop-symbol" x="5" y="5" width="10" height="10" rx="1" /></svg></button>
+                <button id="send-button" class="composer-action" type="button" aria-label="发送消息" title="发送消息"><svg viewBox="0 0 20 20" aria-hidden="true"><path d="M10 16V4m-5 5 5-5 5 5" /></svg></button>
               </div>
-            </div>
-            <div class="debug-strip" aria-label="Prototype metrics">
-              <span id="metric-startup">startup —</span>
-              <span id="metric-ready">ready —</span>
-              <span id="metric-first-delta">first delta —</span>
-              <span id="metric-cancel">cancel —</span>
-              <span id="metric-crash">disconnect —</span>
             </div>
           </footer>
         </main>

@@ -1,6 +1,6 @@
 {
   "$schema": "https://schema.tauri.app/config/2",
-  "productName": "Aurora v4 Prototype",
+  "productName": "Aurora",
   "version": "0.1.0",
   "identifier": "com.veiqiulab.aurora.v4.prototype",
   "build": {
@@ -13,7 +13,7 @@
     "windows": [
       {
         "label": "main",
-        "title": "Aurora v4 Prototype",
+        "title": "Aurora",
         "width": 1180,
         "height": 760,
         "minWidth": 720,

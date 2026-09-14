@@ -1,5 +1,13 @@
 import { Channel, invoke } from "@tauri-apps/api/core";
+import { getCurrentWindow } from "@tauri-apps/api/window";
+import {
+  ConversationStore,
+  initialConversations,
+  type MessageRole,
+  type MessageState,
+} from "./conversation_store";
 import { decideComposerAction } from "./input_policy";
+import { captionLabel, composerPresentation } from "./presentation_policy";
 import "./styles.css";
 
 type BackendState =
@@ -57,7 +65,8 @@ interface ActiveGeneration extends ChatStartResult {
   expectedSeq: number;
   terminal: boolean;
   cancelRequested: boolean;
-  bubble: HTMLDivElement;
+  conversationId: string;
+  messageId: string;
   content: string;
 }
 
@@ -72,6 +81,10 @@ const getElement = <T extends HTMLElement>(id: string): T => {
 };
 
 const messages = getElement<HTMLElement>("messages");
+const messageViewport = getElement<HTMLElement>("message-viewport");
+const conversationList = getElement<HTMLElement>("conversation-list");
+const conversationTitle = getElement<HTMLElement>("current-conversation-title");
+const newConversationButton = getElement<HTMLButtonElement>("new-conversation");
 const promptInput = getElement<HTMLTextAreaElement>("prompt-input");
 const sendButton = getElement<HTMLButtonElement>("send-button");
 const stopButton = getElement<HTMLButtonElement>("stop-button");
@@ -79,7 +92,6 @@ const restartButton = getElement<HTMLButtonElement>("restart-backend");
 const crashButton = getElement<HTMLButtonElement>("crash-backend");
 const backendStatus = getElement<HTMLElement>("backend-status");
 const backendStatusText = getElement<HTMLElement>("backend-status-text");
-const imeState = getElement<HTMLElement>("ime-state");
 const reducedEffects = getElement<HTMLInputElement>("reduced-effects");
 
 let backendState: BackendState = "STARTING";
@@ -87,27 +99,48 @@ let activeGeneration: ActiveGeneration | null = null;
 let startingGeneration = false;
 let compositionActive = false;
 let bufferedStartEvents: GatewayEvent[] = [];
+let localConversationIndex = 0;
+let localMessageIndex = 0;
+
+const conversations = new ConversationStore(initialConversations());
+
+const nextLocalId = (kind: "conversation" | "message"): string => {
+  if (kind === "conversation") {
+    localConversationIndex += 1;
+    return `local-conversation-${localConversationIndex}`;
+  }
+  localMessageIndex += 1;
+  return `local-message-${localMessageIndex}`;
+};
+
+const summarize = (text: string, maximum = 22): string => {
+  const normalized = text.replace(/\s+/g, " ").trim();
+  const characters = Array.from(normalized);
+  return characters.length <= maximum
+    ? normalized
+    : `${characters.slice(0, maximum).join("")}…`;
+};
 
 const formatMetric = (name: string, value: number | null): string =>
   value === null ? `${name} —` : `${name} ${value.toFixed(1)}ms`;
 
 const updateMetrics = (metrics: PrototypeMetrics): void => {
   getElement("metric-startup").textContent = formatMetric(
-    "startup",
+    "启动",
     metrics.desktopStartupMs,
   );
   const ready = metrics.restartToReadyMs ?? metrics.bootstrapToReadyMs;
-  getElement("metric-ready").textContent = formatMetric("ready", ready);
+  getElement("metric-ready").textContent = formatMetric("就绪", ready);
   getElement("metric-first-delta").textContent = formatMetric(
-    "first delta",
+    "首段",
     metrics.commandToFirstDeltaMs,
   );
   getElement("metric-cancel").textContent = formatMetric(
-    "cancel",
+    "取消",
     metrics.cancelToTerminalMs,
   );
   getElement("metric-crash").textContent = formatMetric(
-    "disconnect",
+    "断开",
     metrics.crashToDisconnectedMs,
   );
 };
@@ -115,44 +148,122 @@ const updateMetrics = (metrics: PrototypeMetrics): void => {
 const updateControls = (): void => {
   const ready = backendState === "READY";
   const active = activeGeneration !== null && !activeGeneration.terminal;
-  sendButton.disabled = !ready || active || startingGeneration;
-  stopButton.disabled = !active || Boolean(activeGeneration?.cancelRequested);
+  const presentation = composerPresentation({
+    ready, active, starting: startingGeneration,
+    cancelling: Boolean(activeGeneration?.cancelRequested),
+    composing: compositionActive, hasText: Boolean(promptInput.value.trim()),
+  });
+  sendButton.hidden = presentation.showStop;
+  stopButton.hidden = !presentation.showStop;
+  sendButton.disabled = presentation.sendDisabled;
+  stopButton.disabled = presentation.stopDisabled;
+  stopButton.title = presentation.stopLabel;
+  stopButton.setAttribute("aria-label", presentation.stopLabel);
   crashButton.disabled = !ready;
   restartButton.disabled = !["DISCONNECTED", "STOPPED"].includes(backendState);
 };
 
 const updateBackendState = (state: BackendState): void => {
   backendState = state;
-  backendStatus.classList.toggle("ready", state === "READY");
-  backendStatus.classList.toggle("disconnected", state === "DISCONNECTED");
-  backendStatusText.textContent = state
-    .toLowerCase()
-    .replace(/(^|_)([a-z])/g, (_match, prefix, letter: string) =>
-      `${prefix ? " " : ""}${letter.toUpperCase()}`,
-    );
+  backendStatus.hidden = state === "READY";
+  const labels: Record<BackendState, string> = {
+    STOPPED: "已停止",
+    STARTING: "正在连接…",
+    HANDSHAKING: "正在连接…",
+    READY: "",
+    DEGRADED: "能力受限",
+    DISCONNECTED: "连接已断开",
+    RESTARTING: "正在恢复…",
+    STOPPING: "正在停止",
+  };
+  backendStatusText.textContent = labels[state];
   updateControls();
 };
 
-const appendMessage = (
-  role: "user" | "assistant",
+const createMessageElement = (
+  id: string,
+  role: MessageRole,
   text: string,
-): HTMLDivElement => {
+  state: MessageState,
+): HTMLElement => {
   const article = document.createElement("article");
   article.className = `message ${role}`;
-  if (role === "assistant") {
-    const avatar = document.createElement("div");
-    avatar.className = "avatar";
-    avatar.setAttribute("aria-hidden", "true");
-    avatar.textContent = "A";
-    article.append(avatar);
-  }
+  article.dataset.messageId = id;
+  article.classList.toggle("failed", state === "failed");
   const bubble = document.createElement("div");
   bubble.className = "bubble";
   bubble.textContent = text;
   article.append(bubble);
-  messages.append(article);
-  messages.scrollTop = messages.scrollHeight;
-  return bubble;
+  return article;
+};
+
+const renderConversationList = (): void => {
+  conversationList.replaceChildren();
+  conversations.conversations.forEach((conversation) => {
+    const button = document.createElement("button");
+    button.className = "conversation";
+    button.classList.toggle("active", conversation.id === conversations.activeId);
+    button.type = "button";
+    button.dataset.conversationId = conversation.id;
+    if (conversation.id === conversations.activeId) button.setAttribute("aria-current", "page");
+
+    const title = document.createElement("span");
+    title.className = "conversation-title";
+    title.textContent = conversation.title;
+    const preview = document.createElement("span");
+    preview.className = "conversation-preview";
+    preview.textContent = conversation.preview;
+    button.append(title, preview);
+    conversationList.append(button);
+  });
+};
+
+const renderMessages = (): void => {
+  conversationTitle.textContent = conversations.active.title;
+  messages.replaceChildren(
+    ...conversations.active.messages.map((message) =>
+      createMessageElement(message.id, message.role, message.content, message.state),
+    ),
+  );
+  messages.classList.toggle("is-empty", conversations.active.messages.length === 0);
+  if (conversations.active.messages.length === 0) {
+    const empty = document.createElement("div");
+    empty.className = "empty-conversation";
+    empty.textContent = "从一句话开始。";
+    messages.append(empty);
+  }
+  messageViewport.scrollTop = messageViewport.scrollHeight;
+};
+
+const renderConversation = (): void => {
+  renderConversationList();
+  renderMessages();
+};
+
+const appendMessage = (conversationId: string, role: MessageRole, text: string): string => {
+  const id = nextLocalId("message");
+  conversations.addMessage(conversationId, { id, role, content: text, state: "normal" });
+  if (conversationId === conversations.activeId) renderMessages();
+  return id;
+};
+
+const updateMessage = (
+  conversationId: string,
+  messageId: string,
+  content: string,
+  state: MessageState = "normal",
+): void => {
+  conversations.updateMessage(conversationId, messageId, { content, state });
+  if (conversationId !== conversations.activeId) return;
+  const article = messages.querySelector<HTMLElement>(`[data-message-id="${messageId}"]`);
+  const bubble = article?.querySelector<HTMLElement>(".bubble");
+  if (article && bubble) {
+    article.classList.toggle("failed", state === "failed");
+    bubble.textContent = content;
+    messageViewport.scrollTop = messageViewport.scrollHeight;
+  } else {
+    renderMessages();
+  }
 };
 
 const ownsActiveGeneration = (
@@ -186,34 +297,52 @@ const applyGatewayEvent = (event: GatewayEvent): void => {
     if (event.seq !== activeGeneration.expectedSeq) return;
     activeGeneration.expectedSeq += 1;
     activeGeneration.content += event.delta;
-    activeGeneration.bubble.textContent = activeGeneration.content;
-    messages.scrollTop = messages.scrollHeight;
+    updateMessage(
+      activeGeneration.conversationId,
+      activeGeneration.messageId,
+      activeGeneration.content,
+    );
     return;
   }
   if (event.type === "chat_terminal") {
     if (!ownsActiveGeneration(event) || activeGeneration === null) return;
     activeGeneration.terminal = true;
+    let finalContent = activeGeneration.content;
+    let finalState: MessageState = "normal";
     if (event.terminalState !== "completed") {
-      const suffix = event.errorCode
-        ? `\n\n[${event.terminalState}: ${event.errorCode}]`
-        : `\n\n[${event.terminalState}]`;
-      activeGeneration.bubble.textContent = `${activeGeneration.content}${suffix}`;
-      activeGeneration.bubble.closest(".message")?.classList.add("failed");
+      const terminalLabels: Record<string, string> = {
+        cancelled: "已取消",
+        backend_lost: "后端连接已中断",
+      };
+      const label = terminalLabels[event.terminalState] ?? "生成失败";
+      finalContent = `${activeGeneration.content}${activeGeneration.content ? "\n\n" : ""}[${label}${event.errorCode ? ` · ${event.errorCode}` : ""}]`;
+      finalState = event.terminalState === "cancelled" ? "normal" : "failed";
     }
+    updateMessage(
+      activeGeneration.conversationId,
+      activeGeneration.messageId,
+      finalContent,
+      finalState,
+    );
+    conversations.updateSummary(
+      activeGeneration.conversationId,
+      null,
+      summarize(finalContent || "已完成"),
+    );
     activeGeneration = null;
-    stopButton.textContent = "Stop";
+    renderConversationList();
     updateControls();
     promptInput.focus();
     return;
   }
   if (event.type === "cancel_ack") {
     if (activeGeneration?.generationId === event.generationId) {
-      stopButton.textContent = event.outcome === "cancel_requested" ? "Stopping…" : "Stop";
+      updateControls();
     }
     return;
   }
   if (event.type === "protocol_warning") {
-    getElement("metric-crash").textContent = `warning ${event.code}`;
+    getElement("metric-crash").textContent = `提示 ${event.code}`;
   }
 };
 
@@ -221,12 +350,16 @@ const sendPrompt = async (): Promise<void> => {
   if (compositionActive || startingGeneration || activeGeneration !== null) return;
   const input = promptInput.value.trim();
   if (!input || backendState !== "READY") return;
-  appendMessage("user", input);
-  const bubble = appendMessage("assistant", "…");
+  const conversationId = conversations.activeId;
+  const conversation = conversations.active;
+  const title = conversation.title === "新对话" ? summarize(input, 14) : null;
+  conversations.updateSummary(conversationId, title, summarize(input));
+  appendMessage(conversationId, "user", input);
+  const messageId = appendMessage(conversationId, "assistant", "…");
+  renderConversationList();
   promptInput.value = "";
   promptInput.style.height = "auto";
   startingGeneration = true;
-  stopButton.textContent = "Stop";
   bufferedStartEvents = [];
   updateControls();
   try {
@@ -236,7 +369,8 @@ const sendPrompt = async (): Promise<void> => {
       expectedSeq: 0,
       terminal: false,
       cancelRequested: false,
-      bubble,
+      conversationId,
+      messageId,
       content: "",
     };
     startingGeneration = false;
@@ -245,8 +379,7 @@ const sendPrompt = async (): Promise<void> => {
     events.forEach(applyGatewayEvent);
   } catch (error) {
     startingGeneration = false;
-    bubble.textContent = `[request failed: ${String(error)}]`;
-    bubble.closest(".message")?.classList.add("failed");
+    updateMessage(conversationId, messageId, `[请求失败：${String(error)}]`, "failed");
   }
   updateControls();
 };
@@ -255,8 +388,8 @@ const cancelActive = async (): Promise<void> => {
   if (activeGeneration === null || activeGeneration.terminal || activeGeneration.cancelRequested) {
     return;
   }
-  activeGeneration.cancelRequested = true;
-  stopButton.textContent = "Stopping…";
+  const generation = activeGeneration;
+  generation.cancelRequested = true;
   updateControls();
   try {
     await invoke<boolean>("chat_cancel", {
@@ -267,17 +400,35 @@ const cancelActive = async (): Promise<void> => {
       },
     });
   } catch (error) {
-    activeGeneration.bubble.textContent += `\n\n[cancel failed: ${String(error)}]`;
+    if (activeGeneration !== generation || generation.terminal) return;
+    activeGeneration.content += `\n\n[取消失败：${String(error)}]`;
+    updateMessage(
+      activeGeneration.conversationId,
+      activeGeneration.messageId,
+      activeGeneration.content,
+      "failed",
+    );
     activeGeneration.cancelRequested = false;
-    stopButton.textContent = "Stop";
     updateControls();
   }
 };
 
-const invokeWindowAction = async (action: WindowAction): Promise<void> => {
-  const maximized = await invoke<boolean>("window_action", { action });
+const updateCaption = (maximized: boolean): void => {
   document.body.classList.toggle("maximized", maximized);
+  const button = getElement<HTMLButtonElement>("window-maximize");
+  button.title = captionLabel(maximized);
+  button.setAttribute("aria-label", captionLabel(maximized));
 };
+
+const invokeWindowAction = async (action: WindowAction): Promise<void> => {
+  updateCaption(await invoke<boolean>("window_action", { action }));
+};
+
+// Track native resize/maximize too (titlebar double-click, snap, system menu).
+const desktopWindow = getCurrentWindow();
+const syncCaption = async (): Promise<void> => updateCaption(await desktopWindow.isMaximized());
+void desktopWindow.onResized(() => void syncCaption());
+void syncCaption();
 
 getElement("window-minimize").addEventListener("click", () => {
   void invokeWindowAction("minimize");
@@ -294,20 +445,34 @@ reducedEffects.addEventListener("change", () => {
   void invoke("set_reduced_effects", { enabled: reducedEffects.checked });
 });
 
+newConversationButton.addEventListener("click", () => {
+  conversations.create(nextLocalId("conversation"));
+  renderConversation();
+  promptInput.focus();
+});
+
+conversationList.addEventListener("click", (event) => {
+  const target = event.target;
+  if (!(target instanceof Element)) return;
+  const button = target.closest<HTMLButtonElement>("[data-conversation-id]");
+  const id = button?.dataset.conversationId;
+  if (!id || !conversations.select(id)) return;
+  renderConversation();
+  promptInput.focus();
+});
+
 promptInput.addEventListener("input", () => {
   promptInput.style.height = "auto";
   promptInput.style.height = `${Math.min(promptInput.scrollHeight, 132)}px`;
+  updateControls();
 });
 promptInput.addEventListener("compositionstart", () => {
   compositionActive = true;
-  imeState.textContent = "IME composing";
-});
-promptInput.addEventListener("compositionupdate", () => {
-  imeState.textContent = "IME composing…";
+  updateControls();
 });
 promptInput.addEventListener("compositionend", () => {
   compositionActive = false;
-  imeState.textContent = "IME ready";
+  updateControls();
 });
 promptInput.addEventListener("keydown", (event) => {
   const action = decideComposerAction({
@@ -335,7 +500,7 @@ restartButton.addEventListener("click", async () => {
   try {
     await invoke("restart_backend");
   } catch (error) {
-    getElement("metric-crash").textContent = `restart failed ${String(error)}`;
+    getElement("metric-crash").textContent = `重启失败 ${String(error)}`;
   }
 });
 crashButton.addEventListener("click", () => {
@@ -346,6 +511,7 @@ const gatewayChannel = new Channel<GatewayEvent>();
 gatewayChannel.onmessage = applyGatewayEvent;
 
 const initialize = async (): Promise<void> => {
+  renderConversation();
   updateControls();
   const snapshot = await invoke<BackendSnapshot>("backend_subscribe", {
     channel: gatewayChannel,
@@ -356,5 +522,5 @@ const initialize = async (): Promise<void> => {
 
 void initialize().catch((error) => {
   updateBackendState("DISCONNECTED");
-  backendStatusText.textContent = `Desktop gateway unavailable: ${String(error)}`;
+  backendStatusText.textContent = `桌面网关不可用：${String(error)}`;
 });
