@@ -51,3 +51,10 @@ unless concrete values are supplied by the implementation.
 
 Unknown capability keys may be ignored for forward compatibility. Unknown
 message types are not enabled merely because an unknown capability exists.
+
+V4-3A production reports top-level chat_streaming/chat_cancel/memory/knowledge/rag
+as false: none of those RPCs are exposed. Optional `implementation` metadata
+inventories source presence separately (not dependency readiness or callability).
+Python performs discovery; Rust never infers RPC availability from filenames.
+Edge/Remote voice inventory remains true when their implementation files exist;
+voice.ipc, voice.streaming_pcm and voice.cosyvoice_local remain false.

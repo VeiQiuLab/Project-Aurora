@@ -1,5 +1,10 @@
 # Python sidecar lifecycle contract
 
+V4-3A adds opt-in `production_sidecar/`: read-only Settings/policy and GET-only
+Ollama health. No real chat RPC. See [V4_3A_PRODUCTION_SIDECAR.md](../V4_3A_PRODUCTION_SIDECAR.md)
+for audited imports, setup, interpreter resolution and tests. Default is mock;
+`AURORA_V4_BACKEND=production` selects production.
+
 V4-1 defined this lifecycle without an implementation. V4-2 adds an isolated
 mock under `mock_sidecar/`, pinned to `websockets==17.1` in a prototype-local
 virtual environment. It emits only fixed synthetic tokens and imports none of
@@ -31,8 +36,9 @@ fresh opaque `sidecar_instance_id`; it never contains or echoes the token.
 
 On this Windows Python distribution, a virtual-environment `python.exe` is a
 launcher that starts the base interpreter as a child process. Rust reads the
-prototype venv's `pyvenv.cfg`, starts that base interpreter directly, and adds
-only the prototype venv's `site-packages` to `PYTHONPATH`. The bootstrap PID
+selected venv's `pyvenv.cfg`, starts that base interpreter directly, and adds
+its `site-packages` plus explicit source paths to `PYTHONPATH`. Production uses
+the repo venv, mock the prototype venv. The bootstrap PID
 therefore matches the process Rust supervises. Rust assigns that process to a
 kill-on-close Job Object, which also contains any descendants.
 

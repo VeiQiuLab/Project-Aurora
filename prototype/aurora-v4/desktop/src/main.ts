@@ -33,6 +33,19 @@ interface PrototypeMetrics {
 interface BackendSnapshot {
   state: BackendState;
   metrics: PrototypeMetrics;
+  info: BackendInfo;
+}
+
+interface BackendInfo {
+  mode: string;
+  chat_enabled: boolean;
+  error_code: string | null;
+  diagnostics: {
+    settings_status: string;
+    ollama_think_mode: string;
+    ollama_keep_alive: string | null;
+    ollama: { reachable: boolean; configured_model: string; model_available: boolean; probe_duration_ms: number };
+  } | null;
 }
 
 interface ChatStartResult {
@@ -42,7 +55,7 @@ interface ChatStartResult {
 }
 
 type GatewayEvent =
-  | { type: "backend_state"; state: BackendState; metrics: PrototypeMetrics }
+  | { type: "backend_state"; state: BackendState; metrics: PrototypeMetrics; info: BackendInfo }
   | { type: "chat_accepted"; requestId: string; generationId: string }
   | {
       type: "chat_delta";
@@ -95,6 +108,7 @@ const backendStatusText = getElement<HTMLElement>("backend-status-text");
 const reducedEffects = getElement<HTMLInputElement>("reduced-effects");
 
 let backendState: BackendState = "STARTING";
+let backendInfo: BackendInfo = { mode: "mock", chat_enabled: false, diagnostics: null, error_code: null };
 let activeGeneration: ActiveGeneration | null = null;
 let startingGeneration = false;
 let compositionActive = false;
@@ -145,8 +159,23 @@ const updateMetrics = (metrics: PrototypeMetrics): void => {
   );
 };
 
+const updateBackendInfo = (info: BackendInfo): void => {
+  backendInfo = info;
+  const diagnostics = info.diagnostics;
+  const lines = [`后端 ${info.mode === "production" ? "Production" : "Mock"}`];
+  if (info.error_code) lines.push(`启动失败 ${info.error_code} · 详见后端日志`);
+  if (diagnostics) {
+    lines.push(`Python 已连接 · 设置 ${diagnostics.settings_status}`);
+    lines.push(`Ollama ${diagnostics.ollama.reachable ? "已连接" : "不可用"}`);
+    lines.push(`模型 ${diagnostics.ollama.configured_model || "未配置"} · ${diagnostics.ollama.model_available ? "已安装" : "不可用"}`);
+    lines.push(`Thinking ${diagnostics.ollama_think_mode} · Keep Alive ${diagnostics.ollama_keep_alive ?? "默认"}`);
+    lines.push(`探测 ${diagnostics.ollama.probe_duration_ms.toFixed(1)}ms · Chat 尚未开放`);
+  }
+  getElement("backend-diagnostics").textContent = lines.join("\n");
+};
+
 const updateControls = (): void => {
-  const ready = backendState === "READY";
+  const ready = backendState === "READY" && backendInfo.chat_enabled;
   const active = activeGeneration !== null && !activeGeneration.terminal;
   const presentation = composerPresentation({
     ready, active, starting: startingGeneration,
@@ -159,13 +188,13 @@ const updateControls = (): void => {
   stopButton.disabled = presentation.stopDisabled;
   stopButton.title = presentation.stopLabel;
   stopButton.setAttribute("aria-label", presentation.stopLabel);
-  crashButton.disabled = !ready;
-  restartButton.disabled = !["DISCONNECTED", "STOPPED"].includes(backendState);
+  crashButton.disabled = !["READY", "DEGRADED"].includes(backendState);
+  restartButton.disabled = !["READY", "DEGRADED", "DISCONNECTED", "STOPPED"].includes(backendState);
 };
 
 const updateBackendState = (state: BackendState): void => {
   backendState = state;
-  backendStatus.hidden = state === "READY";
+  backendStatus.hidden = state === "READY" || state === "DEGRADED";
   const labels: Record<BackendState, string> = {
     STOPPED: "已停止",
     STARTING: "正在连接…",
@@ -276,6 +305,7 @@ const ownsActiveGeneration = (
 
 const applyGatewayEvent = (event: GatewayEvent): void => {
   if (event.type === "backend_state") {
+    updateBackendInfo(event.info);
     updateBackendState(event.state);
     updateMetrics(event.metrics);
     return;
@@ -349,7 +379,7 @@ const applyGatewayEvent = (event: GatewayEvent): void => {
 const sendPrompt = async (): Promise<void> => {
   if (compositionActive || startingGeneration || activeGeneration !== null) return;
   const input = promptInput.value.trim();
-  if (!input || backendState !== "READY") return;
+  if (!input || backendState !== "READY" || !backendInfo.chat_enabled) return;
   const conversationId = conversations.activeId;
   const conversation = conversations.active;
   const title = conversation.title === "新对话" ? summarize(input, 14) : null;
@@ -516,6 +546,7 @@ const initialize = async (): Promise<void> => {
   const snapshot = await invoke<BackendSnapshot>("backend_subscribe", {
     channel: gatewayChannel,
   });
+  updateBackendInfo(snapshot.info);
   updateBackendState(snapshot.state);
   updateMetrics(snapshot.metrics);
 };

@@ -127,6 +127,13 @@ class MockSidecar:
             "binary_frame_max_bytes": BINARY_FRAME_MAX_BYTES,
         }
 
+    def backend_state(self) -> str:
+        return "READY"
+
+    async def health_payload(self) -> dict[str, Any]:
+        return {"state": self.backend_state(), "sidecar_instance_id": self.instance_id,
+                "capabilities": self.capabilities(), "limits": self.limits()}
+
     def process_request(self, connection: ServerConnection, request: Any):
         expected = f"Bearer {self.token}"
         if request.headers.get("Authorization") != expected:
@@ -201,7 +208,7 @@ class MockSidecar:
                     "payload": {
                         "selected_version": VERSION,
                         "sidecar_instance_id": self.instance_id,
-                        "state": "READY",
+                        "state": self.backend_state(),
                         "capabilities": self.capabilities(),
                         "limits": self.limits(),
                     },
@@ -266,12 +273,7 @@ class MockSidecar:
                     "version": VERSION,
                     "type": "health.response",
                     "request_id": message["request_id"],
-                    "payload": {
-                        "state": "READY",
-                        "sidecar_instance_id": self.instance_id,
-                        "capabilities": self.capabilities(),
-                        "limits": self.limits(),
-                    },
+                    "payload": await self.health_payload(),
                 },
             )
         elif message_type == "chat.request":
@@ -498,6 +500,10 @@ async def run() -> None:
     token, versions = _required_environment()
     delay_ms = max(1.0, float(os.environ.get("AURORA_MOCK_DELTA_DELAY_MS", "45")))
     sidecar = MockSidecar(token, delay_ms / 1000.0)
+    await serve_sidecar(sidecar, versions)
+
+
+async def serve_sidecar(sidecar: MockSidecar, versions: list[int]) -> None:
     async with serve(
         sidecar.handle_connection,
         "127.0.0.1",

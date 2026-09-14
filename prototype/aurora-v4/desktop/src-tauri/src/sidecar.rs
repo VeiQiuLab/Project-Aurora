@@ -26,10 +26,10 @@ use uuid::Uuid;
 
 use crate::{
     protocol::{
-        BOOTSTRAP_MAX_BYTES, BackendSnapshot, BackendState, BootstrapReady, CancelTarget,
-        ChatStartResult, FrontendEvent, PROTOCOL, PrototypeMetrics, VERSION, chat_cancel,
-        chat_request, health, hello, object, require_string, shutdown, validate_hello_ack,
-        validate_sidecar_event,
+        BOOTSTRAP_MAX_BYTES, BackendInfo, BackendSnapshot, BackendState, BootstrapReady,
+        CancelTarget, ChatStartResult, FrontendEvent, PROTOCOL, ProductionDiagnostics,
+        PrototypeMetrics, VERSION, chat_cancel, chat_request, health, hello, object,
+        require_string, shutdown, validate_hello_ack_for_mode, validate_sidecar_event,
     },
     registry::{RequestOwner, RequestRegistry},
 };
@@ -44,12 +44,13 @@ struct SidecarLaunch {
     python: PathBuf,
     script: PathBuf,
     working_directory: PathBuf,
-    python_path: PathBuf,
+    python_path: std::ffi::OsString,
 }
 
 #[derive(Debug)]
 struct BackendData {
     state: BackendState,
+    info: BackendInfo,
     epoch: u64,
     child: Option<Arc<Mutex<Child>>>,
     job: Option<JobGuard>,
@@ -63,12 +64,15 @@ struct BackendData {
     cancel_started: std::collections::HashMap<(String, String), Instant>,
     crash_requested_at: Option<Instant>,
     restart_started_at: Option<Instant>,
+    #[cfg(test)]
+    launch_identity: Option<(u32, u16, String)>,
 }
 
 impl BackendData {
     fn new() -> Self {
         Self {
             state: BackendState::Stopped,
+            info: BackendInfo::default(),
             epoch: 0,
             child: None,
             job: None,
@@ -82,6 +86,8 @@ impl BackendData {
             cancel_started: Default::default(),
             crash_requested_at: None,
             restart_started_at: None,
+            #[cfg(test)]
+            launch_identity: None,
         }
     }
 }
@@ -91,14 +97,24 @@ pub struct BackendManager {
     inner: Arc<Mutex<BackendData>>,
     frontend: Arc<StdMutex<Option<Channel<FrontendEvent>>>>,
     desktop_started: Instant,
+    mode: String,
+    #[cfg(test)]
+    test_data_directory: Option<PathBuf>,
 }
 
 impl BackendManager {
     pub fn new() -> Self {
+        Self::with_mode(std::env::var("AURORA_V4_BACKEND").unwrap_or_else(|_| "mock".into()))
+    }
+
+    fn with_mode(mode: String) -> Self {
         Self {
             inner: Arc::new(Mutex::new(BackendData::new())),
             frontend: Arc::new(StdMutex::new(None)),
             desktop_started: Instant::now(),
+            mode,
+            #[cfg(test)]
+            test_data_directory: None,
         }
     }
 
@@ -107,39 +123,54 @@ impl BackendManager {
             .frontend
             .lock()
             .expect("frontend channel lock poisoned") = Some(channel);
-        let mut data = self.inner.lock().await;
-        data.metrics.desktop_startup_ms = elapsed_ms(self.desktop_started);
+        let data = self.inner.lock().await;
         let snapshot = BackendSnapshot {
             state: data.state,
             metrics: data.metrics.clone(),
+            info: data.info.clone(),
         };
         drop(data);
         self.emit(FrontendEvent::BackendState {
             state: snapshot.state,
             metrics: snapshot.metrics.clone(),
+            info: snapshot.info.clone(),
         });
         snapshot
     }
 
     pub async fn snapshot(&self) -> BackendSnapshot {
-        let mut data = self.inner.lock().await;
-        data.metrics.desktop_startup_ms = elapsed_ms(self.desktop_started);
+        let data = self.inner.lock().await;
         BackendSnapshot {
             state: data.state,
             metrics: data.metrics.clone(),
+            info: data.info.clone(),
         }
     }
 
     pub async fn start(&self, restarting: bool) -> Result<(), String> {
+        let epoch;
         {
             let mut data = self.inner.lock().await;
             if matches!(
                 data.state,
-                BackendState::Starting | BackendState::Handshaking | BackendState::Ready
+                BackendState::Starting
+                    | BackendState::Handshaking
+                    | BackendState::Ready
+                    | BackendState::Degraded
             ) {
                 return Ok(());
             }
             data.epoch += 1;
+            epoch = data.epoch;
+            data.info = BackendInfo {
+                mode: if self.mode == "production" {
+                    "production"
+                } else {
+                    "mock"
+                }
+                .into(),
+                ..Default::default()
+            };
             if restarting {
                 data.restart_started_at = Some(Instant::now());
                 data.state = BackendState::Restarting;
@@ -149,11 +180,15 @@ impl BackendManager {
         }
         self.emit_state().await;
 
-        let result = self.start_once().await;
+        let result = self.start_once(epoch).await;
         if let Err(error) = &result {
             eprintln!("[aurora-v4] event=sidecar_start_failed error={error}");
             let mut data = self.inner.lock().await;
+            if data.epoch != epoch {
+                return Err("Backend startup was superseded.".into());
+            }
             data.state = BackendState::Disconnected;
+            data.info.error_code = Some("BACKEND_START_FAILED".into());
             data.writer = None;
             data.child = None;
             data.job = None;
@@ -161,12 +196,12 @@ impl BackendManager {
             drop(data);
             self.emit_state().await;
         }
-        result
+        result.map_err(|_| "Backend startup failed; see sidecar stderr diagnostics.".into())
     }
 
-    async fn start_once(&self) -> Result<(), String> {
+    async fn start_once(&self, epoch: u64) -> Result<(), String> {
         let spawn_started = Instant::now();
-        let launch = find_sidecar_launch()?;
+        let launch = find_sidecar_launch(&self.mode)?;
         let token = format!("{}{}", Uuid::new_v4().simple(), Uuid::new_v4().simple());
         let mut command = Command::new(&launch.python);
         command
@@ -178,11 +213,17 @@ impl BackendManager {
             .env("AURORA_IPC_SUPPORTED_VERSIONS", VERSION.to_string())
             .env("AURORA_MOCK_DELTA_DELAY_MS", "45")
             .env("PYTHONNOUSERSITE", "1")
+            .env("PYTHONUTF8", "1")
+            .env("PYTHONDONTWRITEBYTECODE", "1")
             .env("PYTHONPATH", &launch.python_path)
             .stdin(Stdio::null())
             .stdout(Stdio::piped())
             .stderr(Stdio::piped())
             .kill_on_drop(true);
+        #[cfg(test)]
+        if let Some(directory) = &self.test_data_directory {
+            command.env("AURORA_USER_DATA_DIR", directory);
+        }
         #[cfg(windows)]
         {
             use std::os::windows::process::CommandExt;
@@ -229,6 +270,9 @@ impl BackendManager {
         let bootstrap: BootstrapReady =
             serde_json::from_slice(&bootstrap_bytes).map_err(|error| error.to_string())?;
         bootstrap.validate()?;
+        if bootstrap.pid != child_pid {
+            return Err("PYTHON_REDIRECTOR_NOT_SUPPORTED_USE_BASE_INTERPRETER".into());
+        }
         eprintln!(
             "[aurora-v4] event=sidecar_bootstrap child_pid={} runtime_pid={}",
             child_pid, bootstrap.pid
@@ -236,6 +280,9 @@ impl BackendManager {
         let bootstrap_received = Instant::now();
         {
             let mut data = self.inner.lock().await;
+            if data.epoch != epoch {
+                return Err("STALE_STARTUP".into());
+            }
             data.metrics.spawn_to_bootstrap_ms = Some(elapsed_ms(spawn_started));
             data.state = BackendState::Handshaking;
         }
@@ -266,7 +313,8 @@ impl BackendManager {
             .to_text()
             .map_err(|_| "sidecar hello_ack must be JSON text".to_string())?;
         let ack_value: Value = serde_json::from_str(ack_text).map_err(|error| error.to_string())?;
-        let sidecar_instance_id = validate_hello_ack(&ack_value, &hello_id)?;
+        let sidecar_instance_id =
+            validate_hello_ack_for_mode(&ack_value, &hello_id, self.mode == "production")?;
         if sidecar_instance_id != bootstrap.sidecar_instance_id {
             return Err("sidecar_instance_id changed during handshake".into());
         }
@@ -280,11 +328,12 @@ impl BackendManager {
 
         let (mut socket_writer, mut socket_reader) = socket.split();
         let (writer, mut messages) = mpsc::channel::<Message>(WRITER_CAPACITY);
-        let epoch;
         let child = Arc::new(Mutex::new(child));
         {
             let mut data = self.inner.lock().await;
-            epoch = data.epoch;
+            if data.epoch != epoch {
+                return Err("STALE_STARTUP".into());
+            }
             data.metrics.bootstrap_to_ready_ms = Some(elapsed_ms(bootstrap_received));
             if let Some(restart_started) = data.restart_started_at.take() {
                 data.metrics.restart_to_ready_ms = Some(elapsed_ms(restart_started));
@@ -294,10 +343,26 @@ impl BackendManager {
             data.writer = Some(writer.clone());
             data.sidecar_instance_id = Some(sidecar_instance_id);
             data.negotiated_chat_input_max_bytes = negotiated_limit;
-            data.state = BackendState::Ready;
+            data.state = if ack_value["payload"]["state"] == "DEGRADED" {
+                BackendState::Degraded
+            } else {
+                BackendState::Ready
+            };
+            data.info.chat_enabled = self.mode == "mock";
+            if data.metrics.desktop_startup_ms == 0.0 {
+                data.metrics.desktop_startup_ms = elapsed_ms(self.desktop_started);
+            }
+            #[cfg(test)]
+            {
+                data.launch_identity = Some((bootstrap.pid, bootstrap.port, token.clone()));
+            }
         }
         self.emit_state().await;
         eprintln!("[aurora-v4] event=sidecar_ready");
+        eprintln!(
+            "[aurora-v4] event=backend_metrics json={}",
+            serde_json::to_string(&self.snapshot().await).unwrap_or_default()
+        );
 
         let writer_manager = self.clone();
         tokio::spawn(async move {
@@ -347,6 +412,9 @@ impl BackendManager {
             let mut data = self.inner.lock().await;
             if data.state != BackendState::Ready {
                 return Err("Backend is not ready.".into());
+            }
+            if !data.info.chat_enabled {
+                return Err("Production chat is not enabled in V4-3A.".into());
             }
             if input.len() > data.negotiated_chat_input_max_bytes {
                 return Err("Message exceeds the negotiated limit.".into());
@@ -429,7 +497,7 @@ impl BackendManager {
     pub async fn crash(&self) -> Result<(), String> {
         let child = {
             let mut data = self.inner.lock().await;
-            if data.state != BackendState::Ready {
+            if !matches!(data.state, BackendState::Ready | BackendState::Degraded) {
                 return Err("Backend is not ready.".into());
             }
             data.crash_requested_at = Some(Instant::now());
@@ -463,6 +531,7 @@ impl BackendManager {
             let child = data.child.take();
             let job = data.job.take();
             data.sidecar_instance_id = None;
+            data.info.chat_enabled = false;
             (writer, child, job, true)
         };
         if should_emit {
@@ -516,6 +585,34 @@ impl BackendManager {
             return Err("STALE_CONNECTION".into());
         }
         match message_type {
+            "health.response" => {
+                let payload = object(&value, "payload")?;
+                let mut data = self.inner.lock().await;
+                if epoch != data.epoch {
+                    return Err("STALE_CONNECTION".into());
+                }
+                if payload.get("sidecar_instance_id").and_then(Value::as_str)
+                    != data.sidecar_instance_id.as_deref()
+                {
+                    return Err("STALE_CONNECTION".into());
+                }
+                let state = match payload.get("state").and_then(Value::as_str) {
+                    Some("READY") => BackendState::Ready,
+                    Some("DEGRADED") => BackendState::Degraded,
+                    _ => return Err("INVALID_HEALTH_STATE".into()),
+                };
+                if self.mode == "production" {
+                    data.info.diagnostics = Some(ProductionDiagnostics::from_wire(
+                        payload
+                            .get("diagnostics")
+                            .cloned()
+                            .ok_or("MISSING_DIAGNOSTICS")?,
+                    )?);
+                }
+                data.state = state;
+                drop(data);
+                self.emit_state().await;
+            }
             "chat.accepted" => {
                 let owner = owner_from(&value)?;
                 self.inner.lock().await.registry.accept(&owner)?;
@@ -638,6 +735,7 @@ impl BackendManager {
                 data.metrics.crash_to_disconnected_ms = Some(elapsed_ms(started));
             }
             data.state = BackendState::Disconnected;
+            data.info.chat_enabled = false;
             data.writer = None;
             data.sidecar_instance_id = None;
             data.registry.backend_lost()
@@ -659,6 +757,7 @@ impl BackendManager {
         self.emit(FrontendEvent::BackendState {
             state: snapshot.state,
             metrics: snapshot.metrics,
+            info: snapshot.info,
         });
     }
 
@@ -689,7 +788,10 @@ async fn drain_stderr(stderr: tokio::process::ChildStderr) {
     }
 }
 
-fn find_sidecar_launch() -> Result<SidecarLaunch, String> {
+fn find_sidecar_launch(mode: &str) -> Result<SidecarLaunch, String> {
+    if !matches!(mode, "mock" | "production") {
+        return Err("INVALID_BACKEND_MODE".into());
+    }
     let sidecar_root = if let Some(path) = std::env::var_os("AURORA_V4_SIDECAR_DIR") {
         PathBuf::from(path)
     } else {
@@ -710,18 +812,54 @@ fn find_sidecar_launch() -> Result<SidecarLaunch, String> {
         .find(|candidate| candidate.join("mock_sidecar").join("server.py").is_file())
         .ok_or_else(|| "Aurora v4 mock sidecar directory was not found".to_string())?
     };
-    let script = sidecar_root.join("mock_sidecar").join("server.py");
-    let venv = sidecar_root.join(".venv");
-    let pyvenv = std::fs::read_to_string(venv.join("pyvenv.cfg"))
-        .map_err(|_| "Prototype sidecar virtual environment is missing".to_string())?;
-    let home = pyvenv
-        .lines()
-        .find_map(|line| line.strip_prefix("home = "))
-        .map(PathBuf::from)
-        .ok_or_else(|| "pyvenv.cfg has no Python home".to_string())?;
-    let python = home.join("python.exe");
-    let python_path = venv.join("Lib").join("site-packages");
-    for required in [&script, &python, &python_path] {
+    let sidecar_root = sidecar_root
+        .canonicalize()
+        .map_err(|_| "SIDECAR_DIRECTORY_MISSING")?;
+    let repo_root = sidecar_root
+        .ancestors()
+        .find(|p| {
+            p.join("modules/app_paths.py").is_file()
+                && p.join("config/default_settings.json").is_file()
+        })
+        .ok_or("AURORA_SOURCE_ROOT_NOT_FOUND")?;
+    let script = sidecar_root
+        .join(format!("{mode}_sidecar"))
+        .join("server.py");
+    let venv = if mode == "production" {
+        repo_root.join(".venv")
+    } else {
+        sidecar_root.join(".venv")
+    };
+    // Launch the actual interpreter, not Windows' venv redirector: the process
+    // assigned to the Job Object must be the process publishing bootstrap PID.
+    let (python, packages) = if let Some(explicit) = std::env::var_os("AURORA_V4_PYTHON") {
+        (PathBuf::from(explicit), None)
+    } else if cfg!(windows) {
+        let config =
+            std::fs::read_to_string(venv.join("pyvenv.cfg")).map_err(|_| "PROJECT_VENV_MISSING")?;
+        let home = config
+            .lines()
+            .find_map(|line| line.strip_prefix("home = "))
+            .ok_or("INVALID_PYVENV_CONFIG")?;
+        (
+            PathBuf::from(home).join("python.exe"),
+            Some(venv.join("Lib/site-packages")),
+        )
+    } else {
+        (venv.join("bin/python"), None)
+    };
+    if !python.is_absolute() {
+        return Err("AURORA_V4_PYTHON_MUST_BE_ABSOLUTE".into());
+    }
+    let mut paths = vec![repo_root.to_owned(), sidecar_root.clone()];
+    if let Some(packages) = packages {
+        if !packages.is_dir() {
+            return Err("PROJECT_VENV_PACKAGES_MISSING".into());
+        }
+        paths.push(packages);
+    }
+    let python_path = std::env::join_paths(paths).map_err(|_| "INVALID_PYTHON_PATH")?;
+    for required in [&script, &python] {
         if !required.exists() {
             return Err(format!(
                 "Required sidecar path is missing: {}",
@@ -852,22 +990,144 @@ mod tests {
 
     #[test]
     fn sidecar_discovery_uses_relative_prototype_paths() {
-        let launch = find_sidecar_launch().unwrap();
+        let launch = find_sidecar_launch("mock").unwrap();
         assert!(
             launch
                 .script
                 .ends_with(std::path::Path::new("mock_sidecar/server.py"))
         );
-        assert!(
-            launch
-                .python_path
-                .ends_with(std::path::Path::new("Lib/site-packages"))
+        assert!(std::env::split_paths(&launch.python_path).count() >= 2);
+        assert!(find_sidecar_launch("unknown").is_err());
+    }
+
+    // Fully offline fixture; this test never consults the user's settings/Ollama.
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn production_gateway_degraded_crash_restart_health_and_ownership() {
+        let directory = std::env::temp_dir().join(format!("aurora-v4-test-{}", Uuid::new_v4()));
+        std::fs::create_dir_all(directory.join("config")).unwrap();
+        // Bound listener without an HTTP handler: never reaches a live Ollama.
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let host = format!("http://{}", listener.local_addr().unwrap());
+        let settings = serde_json::json!({"ollama":{"host":host}, "chat_model":"fixture", "chat_model_mode":"manual"}).to_string();
+        std::fs::write(directory.join("config/settings.json"), &settings).unwrap();
+        let mut manager = BackendManager::with_mode("production".into());
+        manager.test_data_directory = Some(directory.clone());
+        manager.start(false).await.unwrap();
+        let initial = wait_for(&manager, |s| s.info.diagnostics.is_some()).await;
+        assert_eq!(initial.state, BackendState::Degraded);
+        assert!(!initial.info.chat_enabled);
+        assert_eq!(
+            initial.info.diagnostics.as_ref().unwrap().ollama.error_code,
+            "OLLAMA_UNAVAILABLE"
         );
+        assert!(
+            manager
+                .chat_start("must never generate".into())
+                .await
+                .is_err()
+        );
+        let (old_epoch, old_instance, old_identity) = {
+            let data = manager.inner.lock().await;
+            (
+                data.epoch,
+                data.sidecar_instance_id.clone(),
+                data.launch_identity.clone().unwrap(),
+            )
+        };
+        manager.crash().await.unwrap();
+        wait_for(&manager, |s| s.state == BackendState::Disconnected).await;
+        manager.restart().await.unwrap();
+        wait_for(&manager, |s| s.info.diagnostics.is_some()).await;
+        let next_identity = manager.inner.lock().await.launch_identity.clone().unwrap();
+        assert_ne!(old_identity.0, next_identity.0);
+        assert_ne!(old_identity.1, next_identity.1);
+        assert_ne!(old_identity.2, next_identity.2);
+        assert_ne!(old_instance, manager.inner.lock().await.sidecar_instance_id);
+        let stale = serde_json::json!({"protocol":PROTOCOL,"version":VERSION,"type":"health.response","request_id":"old",
+            "payload":{"state":"READY","sidecar_instance_id":old_instance}});
+        assert_eq!(
+            manager
+                .handle_wire(old_epoch, &stale.to_string())
+                .await
+                .unwrap_err(),
+            "STALE_CONNECTION"
+        );
+        assert_eq!(manager.snapshot().await.state, BackendState::Degraded);
+        manager.shutdown().await.unwrap();
+        assert_eq!(manager.snapshot().await.state, BackendState::Stopped);
+        assert!(std::net::TcpStream::connect(("127.0.0.1", next_identity.1)).is_err());
+        assert_eq!(
+            std::fs::read_to_string(directory.join("config/settings.json")).unwrap(),
+            settings
+        );
+        std::fs::remove_file(directory.join("config/settings.json")).unwrap();
+        std::fs::remove_dir(directory.join("config")).unwrap();
+        std::fs::remove_dir(directory).unwrap();
+    }
+
+    #[tokio::test]
+    async fn invalid_backend_mode_is_safe_startup_failure() {
+        let manager = BackendManager::with_mode("invalid".into());
+        let error = manager.start(false).await.unwrap_err();
+        assert_eq!(
+            error,
+            "Backend startup failed; see sidecar stderr diagnostics."
+        );
+        assert_eq!(manager.snapshot().await.state, BackendState::Disconnected);
+        assert_eq!(
+            manager.snapshot().await.info.error_code.as_deref(),
+            Some("BACKEND_START_FAILED")
+        );
+        manager.shutdown().await.unwrap();
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn shutdown_during_startup_cannot_resurrect_an_old_epoch() {
+        let manager = BackendManager::with_mode("mock".into());
+        let starter = manager.clone();
+        let task = tokio::spawn(async move { starter.start(false).await });
+        wait_for(&manager, |s| s.state == BackendState::Starting).await;
+        manager.shutdown().await.unwrap();
+        assert!(task.await.unwrap().is_err());
+        assert_eq!(manager.snapshot().await.state, BackendState::Stopped);
+        assert!(manager.inner.lock().await.child.is_none());
+        manager.start(false).await.unwrap();
+        assert_eq!(manager.snapshot().await.state, BackendState::Ready);
+        manager.shutdown().await.unwrap();
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    #[ignore = "opt-in read-only real settings/Ollama smoke; no generation"]
+    async fn production_real_read_only_smoke() {
+        let manager = BackendManager::with_mode("production".into());
+        manager.start(false).await.unwrap();
+        let initial = wait_for(&manager, |s| s.info.diagnostics.is_some()).await;
+        eprintln!(
+            "PRODUCTION_INITIAL={}",
+            serde_json::to_string(&initial).unwrap()
+        );
+        let identity = manager.inner.lock().await.launch_identity.clone().unwrap();
+        eprintln!("PRODUCTION_PID={}", identity.0);
+        assert!(!initial.info.chat_enabled);
+        manager.crash().await.unwrap();
+        wait_for(&manager, |s| s.state == BackendState::Disconnected).await;
+        manager.restart().await.unwrap();
+        let restarted = wait_for(&manager, |s| s.info.diagnostics.is_some()).await;
+        eprintln!(
+            "PRODUCTION_RESTART={}",
+            serde_json::to_string(&restarted).unwrap()
+        );
+        let next = manager.inner.lock().await.launch_identity.clone().unwrap();
+        assert_ne!(identity.0, next.0);
+        assert_ne!(identity.1, next.1);
+        assert_ne!(identity.2, next.2);
+        manager.shutdown().await.unwrap();
+        assert!(std::net::TcpStream::connect(("127.0.0.1", next.1)).is_err());
     }
 
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
     async fn real_gateway_stream_cancel_crash_restart_and_shutdown() {
-        let manager = BackendManager::new();
+        let manager = BackendManager::with_mode("mock".into());
         manager.start(false).await.unwrap();
         let initial = manager.snapshot().await;
         assert_eq!(initial.state, BackendState::Ready);

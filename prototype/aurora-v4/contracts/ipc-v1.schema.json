@@ -22,6 +22,32 @@
     {"$ref": "#/$defs/error"}
   ],
   "$defs": {
+    "productionDiagnostics": {
+      "type": "object",
+      "required": ["backend_mode", "backend_ready", "settings_status", "ollama_think_mode", "think_payload_value", "ollama_keep_alive", "ollama"],
+      "additionalProperties": false,
+      "properties": {
+        "backend_mode": {"const": "production"},
+        "backend_ready": {"const": true},
+        "settings_status": {"enum": ["loaded", "missing_defaults", "invalid_defaults"]},
+        "ollama_think_mode": {"enum": ["on", "off", "default"]},
+        "think_payload_value": {"type": ["boolean", "null"]},
+        "ollama_keep_alive": {"type": ["string", "null"], "maxLength": 128},
+        "ollama": {
+          "type": "object",
+          "required": ["reachable", "host", "configured_model", "model_available", "error_code", "probe_duration_ms"],
+          "additionalProperties": false,
+          "properties": {
+            "reachable": {"type": "boolean"},
+            "host": {"type": "string", "maxLength": 512, "pattern": "^(https?://[^/@?#]+)?$"},
+            "configured_model": {"type": "string", "maxLength": 200, "pattern": "^[\\w./:@+-]*$"},
+            "model_available": {"type": "boolean"},
+            "error_code": {"enum": ["", "MODEL_NOT_CONFIGURED", "MODEL_UNAVAILABLE", "INVALID_HOST", "INVALID_OLLAMA_RESPONSE", "OLLAMA_UNAVAILABLE"]},
+            "probe_duration_ms": {"type": "number", "minimum": 0}
+          }
+        }
+      }
+    },
     "opaqueId": {
       "type": "string",
       "minLength": 1,
@@ -263,7 +289,8 @@
                 "state": {"$ref": "#/$defs/sidecarState"},
                 "sidecar_instance_id": {"$ref": "#/$defs/opaqueId"},
                 "capabilities": {"$ref": "#/$defs/capabilities"},
-                "limits": {"$ref": "#/$defs/limits"}
+                "limits": {"$ref": "#/$defs/limits"},
+                "diagnostics": {"$ref": "#/$defs/productionDiagnostics"}
               },
               "additionalProperties": false
             }

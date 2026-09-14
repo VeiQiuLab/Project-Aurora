@@ -109,7 +109,7 @@ MESSAGE_RULES: dict[str, MessageRule] = {
         required={"request_id"},
         forbidden=_NO_CONTEXT,
         payload_required={"state", "sidecar_instance_id", "capabilities", "limits"},
-        payload_allowed={"state", "sidecar_instance_id", "capabilities", "limits"},
+        payload_allowed={"state", "sidecar_instance_id", "capabilities", "limits", "diagnostics"},
     ),
     "shutdown.request": _rule(
         required={"request_id"}, forbidden=_NO_CONTEXT
@@ -315,7 +315,51 @@ def validate_message(message: Mapping[str, Any]) -> None:
     _validate_payload(message_type, payload)
 
 
+def validate_diagnostics(value):
+    import math
+    import re
+    from urllib.parse import urlsplit
+
+    fields = {"backend_mode", "backend_ready", "settings_status", "ollama_think_mode",
+              "think_payload_value", "ollama_keep_alive", "ollama"}
+    if not isinstance(value, dict) or set(value) != fields:
+        raise ContractError("invalid diagnostics fields")
+    if value["backend_mode"] != "production" or value["backend_ready"] is not True:
+        raise ContractError("invalid backend diagnostics")
+    if value["settings_status"] not in {"loaded", "missing_defaults", "invalid_defaults"}:
+        raise ContractError("invalid settings status")
+    mode = value["ollama_think_mode"]
+    if mode not in {"on", "off", "default"} or value["think_payload_value"] is not {"on": True, "off": False, "default": None}[mode]:
+        raise ContractError("invalid policy diagnostics")
+    keep_alive = value["ollama_keep_alive"]
+    if keep_alive is not None and (not isinstance(keep_alive, str) or len(keep_alive) > 128):
+        raise ContractError("invalid keep alive")
+    ollama = value["ollama"]
+    fields = {"reachable", "host", "configured_model", "model_available", "error_code", "probe_duration_ms"}
+    if not isinstance(ollama, dict) or set(ollama) != fields:
+        raise ContractError("invalid Ollama diagnostic fields")
+    if type(ollama["reachable"]) is not bool or type(ollama["model_available"]) is not bool:
+        raise ContractError("invalid Ollama booleans")
+    host = ollama["host"]
+    if not isinstance(host, str) or len(host) > 512:
+        raise ContractError("invalid diagnostic host")
+    if host:
+        parsed = urlsplit(host)
+        if parsed.scheme not in {"http", "https"} or not parsed.hostname or parsed.username or parsed.password or parsed.path or parsed.query or parsed.fragment:
+            raise ContractError("unsafe diagnostic host")
+    model = ollama["configured_model"]
+    if not isinstance(model, str) or not re.fullmatch(r"[\w./:@+-]{0,200}", model):
+        raise ContractError("invalid model diagnostic")
+    if ollama["error_code"] not in {"", "MODEL_NOT_CONFIGURED", "MODEL_UNAVAILABLE", "INVALID_HOST", "INVALID_OLLAMA_RESPONSE", "OLLAMA_UNAVAILABLE"}:
+        raise ContractError("invalid probe error")
+    duration = ollama["probe_duration_ms"]
+    if type(duration) not in {int, float} or not math.isfinite(duration) or duration < 0:
+        raise ContractError("invalid probe duration")
+
+
 def _validate_payload(message_type: str, payload: Mapping[str, Any]) -> None:
+    if "diagnostics" in payload:
+        validate_diagnostics(payload["diagnostics"])
     if message_type == "hello":
         if payload["client"] != "aurora-desktop":
             raise ContractError("hello client is invalid")

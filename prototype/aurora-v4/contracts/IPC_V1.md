@@ -155,8 +155,35 @@ generation, and transitions the backend state to `DISCONNECTED`.
 `hello_ack` and `health.response` include the sidecar state, opaque
 `sidecar_instance_id`, capability object, and concrete negotiated limits. The
 meaning of each capability is frozen in `CAPABILITIES.md`. Health is not ready
-merely because a process exists: handshake and required chat capabilities must
-succeed.
+merely because a process exists: handshake, limits and the selected backend
+mode's required capabilities must succeed. Mock requires chat streaming/cancel;
+V4-3A production requires composition/health only and deliberately advertises
+both chat flags as false. Neither READY nor implementation inventory enables RPC.
+
+### V4-3A optional production health diagnostics
+
+`health.response.payload.diagnostics` may contain the strictly typed
+`productionDiagnostics` schema: backend mode/readiness, read-only settings
+status, the existing Ollama policy diagnostics, and Ollama reachability,
+sanitized HTTP origin, configured model/install availability, bounded probe
+duration and a fixed error code. See `ipc-v1.production.examples.json`.
+No IPC port/PID/token, file paths, settings contents or provider response bodies
+belong in this object. Rust validates and maps it to a separate frontend DTO;
+it does not forward a raw health envelope or capabilities object.
+
+READY means composition constructed, settings loaded and configured model
+present in a valid tags response. DEGRADED means composition/IPC still work but
+settings use in-memory defaults, Ollama is unavailable, or the configured model
+is missing/unset. No GPU inference readiness is implied. DISCONNECTED remains
+Rust's actual process/transport loss. A health request re-probes; no background
+poller or model auto-start is installed.
+
+Compatibility: this is an additive *optional* v1 field, with unchanged existing
+message meanings, required fields and legacy examples. Updated validators accept
+old messages without it. However, older strict v1 validators reject unknown
+payload fields: an old gateway is NOT compatible with new production diagnostics.
+Deploy this prototype gateway and sidecar together. Mock omits the extension and
+stays wire-compatible. This is not a claim of arbitrary old-client forward compatibility.
 
 `state.changed` is an unsolicited lifecycle notification. Rust remains the
 authoritative desktop state machine and validates the transition before

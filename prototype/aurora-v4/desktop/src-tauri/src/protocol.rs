@@ -31,6 +31,107 @@ pub struct PrototypeMetrics {
 }
 
 #[derive(Clone, Debug, Serialize)]
+pub struct BackendInfo {
+    pub mode: String,
+    pub chat_enabled: bool,
+    pub diagnostics: Option<ProductionDiagnostics>,
+    pub error_code: Option<String>,
+}
+
+impl Default for BackendInfo {
+    fn default() -> Self {
+        Self {
+            mode: "mock".into(),
+            chat_enabled: false,
+            diagnostics: None,
+            error_code: None,
+        }
+    }
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct ProductionDiagnostics {
+    pub backend_mode: String,
+    pub backend_ready: bool,
+    pub settings_status: String,
+    pub ollama_think_mode: String,
+    pub think_payload_value: Option<bool>,
+    pub ollama_keep_alive: Option<String>,
+    pub ollama: OllamaDiagnostics,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct OllamaDiagnostics {
+    pub reachable: bool,
+    pub host: String,
+    pub configured_model: String,
+    pub model_available: bool,
+    pub error_code: String,
+    pub probe_duration_ms: f64,
+}
+
+impl ProductionDiagnostics {
+    pub fn from_wire(value: Value) -> Result<Self, String> {
+        let result: Self = serde_json::from_value(value).map_err(|_| "INVALID_DIAGNOSTICS")?;
+        let ollama = &result.ollama;
+        if result.backend_mode != "production"
+            || !result.backend_ready
+            || !matches!(
+                result.settings_status.as_str(),
+                "loaded" | "missing_defaults" | "invalid_defaults"
+            )
+            || !matches!(result.ollama_think_mode.as_str(), "on" | "off" | "default")
+            || result.think_payload_value
+                != match result.ollama_think_mode.as_str() {
+                    "on" => Some(true),
+                    "off" => Some(false),
+                    _ => None,
+                }
+            || result.ollama_keep_alive.as_ref().is_some_and(|s| {
+                s.len() > 128
+                    || !s
+                        .chars()
+                        .all(|c| c.is_ascii_alphanumeric() || ".µμ".contains(c))
+            })
+            || ollama.host.len() > 512
+            || ollama.configured_model.len() > 200
+            || !ollama
+                .configured_model
+                .chars()
+                .all(|c| c.is_alphanumeric() || "_./:@+-".contains(c))
+            || !matches!(
+                ollama.error_code.as_str(),
+                "" | "MODEL_NOT_CONFIGURED"
+                    | "MODEL_UNAVAILABLE"
+                    | "INVALID_HOST"
+                    | "INVALID_OLLAMA_RESPONSE"
+                    | "OLLAMA_UNAVAILABLE"
+            )
+            || !ollama.probe_duration_ms.is_finite()
+            || ollama.probe_duration_ms < 0.0
+        {
+            return Err("INVALID_DIAGNOSTICS".into());
+        }
+        if !ollama.host.is_empty() {
+            let url = tauri::Url::parse(&ollama.host).map_err(|_| "INVALID_DIAGNOSTICS")?;
+            if !matches!(url.scheme(), "http" | "https")
+                || url.host_str().is_none()
+                || !url.username().is_empty()
+                || url.password().is_some()
+                || url.query().is_some()
+                || url.fragment().is_some()
+                || url.path() != "/"
+            {
+                return Err("UNSAFE_DIAGNOSTICS".into());
+            }
+        }
+        Ok(result)
+    }
+}
+
+#[derive(Clone, Debug, Serialize)]
 #[serde(
     tag = "type",
     rename_all = "snake_case",
@@ -40,6 +141,7 @@ pub enum FrontendEvent {
     BackendState {
         state: BackendState,
         metrics: PrototypeMetrics,
+        info: BackendInfo,
     },
     ChatAccepted {
         request_id: String,
@@ -71,6 +173,7 @@ pub enum FrontendEvent {
 pub struct BackendSnapshot {
     pub state: BackendState,
     pub metrics: PrototypeMetrics,
+    pub info: BackendInfo,
 }
 
 #[derive(Clone, Debug, Serialize)]
@@ -171,7 +274,16 @@ pub fn chat_cancel(cancel_request_id: &str, target: &CancelTarget) -> Value {
     })
 }
 
+#[cfg(test)]
 pub fn validate_hello_ack(value: &Value, hello_request_id: &str) -> Result<String, String> {
+    validate_hello_ack_for_mode(value, hello_request_id, false)
+}
+
+pub fn validate_hello_ack_for_mode(
+    value: &Value,
+    hello_request_id: &str,
+    production: bool,
+) -> Result<String, String> {
     validate_base(value, "hello_ack")?;
     require_string(value, "request_id", Some(hello_request_id))?;
     let payload = object(value, "payload")?;
@@ -193,8 +305,8 @@ pub fn validate_hello_ack(value: &Value, hello_request_id: &str) -> Result<Strin
         .get("capabilities")
         .and_then(Value::as_object)
         .ok_or_else(|| "missing capabilities".to_string())?;
-    if capabilities.get("chat_streaming").and_then(Value::as_bool) != Some(true)
-        || capabilities.get("chat_cancel").and_then(Value::as_bool) != Some(true)
+    if capabilities.get("chat_streaming").and_then(Value::as_bool) != Some(!production)
+        || capabilities.get("chat_cancel").and_then(Value::as_bool) != Some(!production)
     {
         return Err("required chat capabilities unavailable".into());
     }
@@ -358,6 +470,52 @@ mod tests {
         let mut invalid = ack.clone();
         invalid["payload"]["capabilities"]["voice"]["streaming_pcm"] = json!(true);
         assert!(validate_hello_ack(&invalid, "hello-1").is_err());
+        let mut production = ack.clone();
+        production["payload"]["capabilities"]["chat_streaming"] = json!(false);
+        production["payload"]["capabilities"]["chat_cancel"] = json!(false);
+        production["payload"]["state"] = json!("DEGRADED");
+        assert!(validate_hello_ack_for_mode(&production, "hello-1", true).is_ok());
+        assert!(validate_hello_ack(&production, "hello-1").is_err());
+        assert!(validate_hello_ack_for_mode(&ack, "hello-1", true).is_err());
+    }
+
+    #[test]
+    fn diagnostics_are_typed_and_never_forward_private_fields() {
+        let examples: Value = serde_json::from_str(include_str!(
+            "../../../contracts/ipc-v1.production.examples.json"
+        ))
+        .unwrap();
+        let diagnostic = examples[0]["payload"]["diagnostics"].clone();
+        let parsed = ProductionDiagnostics::from_wire(diagnostic.clone()).unwrap();
+        assert_eq!(parsed.ollama_think_mode, "off");
+        for field in ["pid", "port", "token", "settings_path"] {
+            let mut invalid = diagnostic.clone();
+            invalid[field] = json!("private");
+            assert!(ProductionDiagnostics::from_wire(invalid).is_err());
+        }
+        let mut invalid = diagnostic.clone();
+        invalid["ollama"]["host"] = json!("http://user:password@localhost:1234");
+        assert!(ProductionDiagnostics::from_wire(invalid).is_err());
+        let event = FrontendEvent::BackendState {
+            state: BackendState::Ready,
+            metrics: PrototypeMetrics::default(),
+            info: BackendInfo {
+                mode: "production".into(),
+                chat_enabled: false,
+                diagnostics: Some(parsed),
+                error_code: None,
+            },
+        };
+        let wire = serde_json::to_string(&event).unwrap();
+        for field in [
+            "\"pid\"",
+            "\"port\"",
+            "token",
+            "sidecar_instance_id",
+            "settings_path",
+        ] {
+            assert!(!wire.contains(field));
+        }
     }
 
     #[test]

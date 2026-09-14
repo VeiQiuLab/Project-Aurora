@@ -30,6 +30,38 @@ def test_schema_and_all_examples_are_valid_json_and_contract_shapes():
     assert contract.validate_files() == 19
 
 
+def test_production_health_optional_extension_and_legacy_examples():
+    import jsonschema
+    schema = json.loads((CONTRACT_DIR / "ipc-v1.schema.json").read_text(encoding="utf-8"))
+    production = contract.load_examples(CONTRACT_DIR / "ipc-v1.production.examples.json")
+    for message in contract.load_examples() + production:
+        contract.validate_message(message)
+        jsonschema.Draft202012Validator(schema).validate(message)
+    legacy = copy.deepcopy(production[0])
+    del legacy["payload"]["diagnostics"]
+    contract.validate_message(legacy)
+    jsonschema.validate(legacy, schema)
+
+
+@pytest.mark.parametrize("field", ["token", "pid", "port", "settings_path"])
+def test_production_diagnostics_reject_private_fields(field):
+    import jsonschema
+    schema = json.loads((CONTRACT_DIR / "ipc-v1.schema.json").read_text(encoding="utf-8"))
+    message = contract.load_examples(CONTRACT_DIR / "ipc-v1.production.examples.json")[0]
+    message["payload"]["diagnostics"][field] = "must-not-cross"
+    with pytest.raises(contract.ContractError):
+        contract.validate_message(message)
+    with pytest.raises(jsonschema.ValidationError):
+        jsonschema.validate(message, schema)
+
+
+def test_production_diagnostics_reject_credentials():
+    message = contract.load_examples(CONTRACT_DIR / "ipc-v1.production.examples.json")[0]
+    message["payload"]["diagnostics"]["ollama"]["host"] = "http://user:password@localhost"
+    with pytest.raises(contract.ContractError):
+        contract.validate_message(message)
+
+
 def test_schema_covers_every_executable_message_rule():
     schema = json.loads((CONTRACT_DIR / "ipc-v1.schema.json").read_text(encoding="utf-8"))
     definition_names = {
