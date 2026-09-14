@@ -243,6 +243,22 @@ pub enum FrontendEvent {
     ProtocolWarning {
         code: String,
     },
+    ConversationList {
+        request_id: String,
+        conversations: Vec<ConversationSummary>,
+    },
+    ConversationLoaded {
+        request_id: String,
+        conversation: ConversationDetail,
+    },
+    ConversationCreated {
+        request_id: String,
+        conversation: ConversationSummary,
+    },
+    ConversationError {
+        request_id: String,
+        code: String,
+    },
 }
 
 #[derive(Clone, Debug, Serialize)]
@@ -261,6 +277,73 @@ pub struct ChatStartResult {
     pub generation_id: String,
     pub rust_received_unix_ms: f64,
     pub rust_queued_unix_ms: f64,
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize)]
+#[serde(rename_all = "snake_case", deny_unknown_fields)]
+pub struct ConversationSummary {
+    pub conversation_id: String,
+    pub title: String,
+    pub created_at: String,
+    pub updated_at: String,
+    pub message_count: u64,
+    pub model: String,
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize)]
+#[serde(rename_all = "snake_case", deny_unknown_fields)]
+pub struct ConversationMessage {
+    pub role: String,
+    pub content: String,
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize)]
+#[serde(rename_all = "snake_case", deny_unknown_fields)]
+pub struct ConversationDetail {
+    pub conversation_id: String,
+    pub title: String,
+    pub created_at: String,
+    pub updated_at: String,
+    pub message_count: u64,
+    pub model: String,
+    pub messages: Vec<ConversationMessage>,
+}
+
+fn valid_conversation_id(value: &str) -> bool {
+    !value.is_empty() && value.len() <= 128
+        && value.chars().all(|c| c.is_ascii_alphanumeric() || c == '_' || c == '-')
+}
+
+impl ConversationSummary {
+    pub fn validate(&self) -> Result<(), String> {
+        if !valid_conversation_id(&self.conversation_id)
+            || self.title.len() > 4096 || self.created_at.len() > 4096
+            || self.updated_at.len() > 4096 || self.model.len() > 4096
+        {
+            return Err("INVALID_CONVERSATION".into());
+        }
+        Ok(())
+    }
+}
+
+impl ConversationDetail {
+    pub fn validate(&self) -> Result<(), String> {
+        let summary = ConversationSummary {
+            conversation_id: self.conversation_id.clone(), title: self.title.clone(),
+            created_at: self.created_at.clone(), updated_at: self.updated_at.clone(),
+            message_count: self.message_count, model: self.model.clone(),
+        };
+        summary.validate()?;
+        if self.message_count != self.messages.len() as u64
+            || self.messages.iter().any(|message| {
+                !matches!(message.role.as_str(), "system" | "user" | "assistant")
+                    || message.content.len() > 262_144
+            })
+        {
+            return Err("INVALID_CONVERSATION".into());
+        }
+        Ok(())
+    }
 }
 
 #[derive(Clone, Debug, Deserialize)]
@@ -339,6 +422,21 @@ pub fn chat_request(request_id: &str, session_id: &str, generation_id: &str, inp
         "generation_id": generation_id,
         "payload": {"conversation_id": Value::Null, "input": input}
     })
+}
+
+pub fn conversation_list(request_id: &str) -> Value {
+    json!({"protocol": PROTOCOL, "version": VERSION, "type": "conversation.list.request",
+           "request_id": request_id, "payload": {}})
+}
+
+pub fn conversation_get(request_id: &str, conversation_id: &str) -> Value {
+    json!({"protocol": PROTOCOL, "version": VERSION, "type": "conversation.get.request",
+           "request_id": request_id, "payload": {"conversation_id": conversation_id}})
+}
+
+pub fn conversation_create(request_id: &str) -> Value {
+    json!({"protocol": PROTOCOL, "version": VERSION, "type": "conversation.create.request",
+           "request_id": request_id, "payload": {}})
 }
 
 pub fn chat_cancel(cancel_request_id: &str, target: &CancelTarget) -> Value {
@@ -427,6 +525,9 @@ pub fn validate_sidecar_event(value: &Value) -> Result<&str, String> {
         "chat.delta",
         "chat.completed",
         "chat.cancel.ack",
+        "conversation.list.response",
+        "conversation.get.response",
+        "conversation.create.response",
         "shutdown.ack",
         "state.changed",
         "backend.warning",
@@ -440,6 +541,9 @@ pub fn validate_sidecar_event(value: &Value) -> Result<&str, String> {
         require_string(value, "request_id", None)?;
         require_string(value, "session_id", None)?;
         require_string(value, "generation_id", None)?;
+    }
+    if matches!(message_type, "conversation.list.response" | "conversation.get.response" | "conversation.create.response") {
+        require_string(value, "request_id", None)?;
     }
     if message_type == "chat.delta" {
         value
@@ -685,5 +789,40 @@ mod tests {
         assert_eq!(event["generationId"], "generation-1");
         assert_eq!(event["seq"], 4);
         assert_eq!(event["delta"], "token");
+    }
+
+    #[test]
+    fn conversation_events_and_ids_are_validated_at_gateway_boundary() {
+        let list = json!({
+            "protocol": PROTOCOL,
+            "version": 1,
+            "type": "conversation.list.response",
+            "request_id": "conversation-list-1",
+            "payload": {"conversations": [{
+                "conversation_id": "conversation-1",
+                "title": "Synthetic",
+                "created_at": "2026-09-15T00:00:00Z",
+                "updated_at": "2026-09-15T00:01:00Z",
+                "message_count": 2,
+                "model": "qwen3.5:9b"
+            }]}
+        });
+        assert_eq!(validate_sidecar_event(&list).unwrap(), "conversation.list.response");
+        let detail = ConversationDetail {
+            conversation_id: "conversation-1".into(),
+            title: "Synthetic".into(),
+            created_at: "2026-09-15T00:00:00Z".into(),
+            updated_at: "2026-09-15T00:01:00Z".into(),
+            message_count: 1,
+            model: "qwen3.5:9b".into(),
+            messages: vec![ConversationMessage { role: "user".into(), content: "hi".into() }],
+        };
+        detail.validate().unwrap();
+        let mut unsafe_detail = detail.clone();
+        unsafe_detail.conversation_id = "..\\outside".into();
+        assert!(unsafe_detail.validate().is_err());
+        unsafe_detail = detail;
+        unsafe_detail.message_count = 2;
+        assert!(unsafe_detail.validate().is_err());
     }
 }

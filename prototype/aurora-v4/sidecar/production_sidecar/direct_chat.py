@@ -16,6 +16,8 @@ class ChatRequest:
     session_id: str
     generation_id: str
     text: str = field(repr=False)
+    conversation_id: str | None = None
+    history: tuple[dict[str, str], ...] = field(default_factory=tuple, repr=False)
 
 
 def load_chat_boundary(root: Path, settings):
@@ -49,10 +51,14 @@ class DirectChatAdapter:
     def new_handle(self, stop_event, diagnostics):
         return self.api["StreamingRequestHandle"](stop_event, diagnostics)
 
-    def prepare_context(self):
-        # V4-4 context boundary. This request has no history/system/context.
+    def prepare_context(self, history=()):
+        # V4-3C context boundary: only validated conversation history.  Memory,
+        # persona, knowledge, RAG, and intelligence remain outside this path.
         session = self.api["ChatSession"]()
-        session.messages = []
+        if history:
+            session.replace(history)
+        else:
+            session.messages = []
         return session
 
     def stream(self, request, model, handle, on_chunk):
@@ -62,13 +68,14 @@ class DirectChatAdapter:
             nonlocal done_seen
             done_seen = done_seen or record["done"]
 
+        session = self.prepare_context(request.history)
         result = self.api["stream_chat"](
-            model, request.text, self.prepare_context(), on_chunk, handle.stop_event,
+            model, request.text, session, on_chunk, handle.stop_event,
             request_handle=handle, collect_memory_candidates=False, raw_line_observer=observe,
         )
         if not handle.cancelled and not done_seen:
             raise self.api["ChatError"]("Incomplete production stream.", category="invalid_response")
-        return result
+        return result, session.snapshot()
 
     @staticmethod
     def error_code(error):
@@ -77,4 +84,7 @@ class DirectChatAdapter:
             "model_unavailable": "MODEL_UNAVAILABLE",
             "model_capability": "MODEL_UNAVAILABLE",
             "timeout": "REQUEST_TIMEOUT",
+            "not_found": "NOT_FOUND",
+            "invalid_conversation": "INVALID_CONVERSATION",
+            "persistence_failed": "PERSISTENCE_FAILED",
         }.get(getattr(error, "category", None), "INTERNAL_ERROR")

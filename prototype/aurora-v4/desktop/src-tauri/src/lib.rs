@@ -63,8 +63,27 @@ async fn backend_snapshot(
 async fn chat_start(
     manager: tauri::State<'_, BackendManager>,
     input: String,
+    conversation_id: Option<String>,
 ) -> Result<ChatStartResult, String> {
-    manager.chat_start(input).await
+    manager.chat_start_for_conversation(input, conversation_id).await
+}
+
+#[tauri::command]
+async fn conversation_list(manager: tauri::State<'_, BackendManager>) -> Result<(), String> {
+    manager.conversation_list().await
+}
+
+#[tauri::command]
+async fn conversation_get(
+    manager: tauri::State<'_, BackendManager>,
+    conversation_id: String,
+) -> Result<(), String> {
+    manager.conversation_get(conversation_id).await
+}
+
+#[tauri::command]
+async fn conversation_create(manager: tauri::State<'_, BackendManager>) -> Result<(), String> {
+    manager.conversation_create().await
 }
 
 #[tauri::command]
@@ -104,6 +123,9 @@ pub fn run() {
             backend_subscribe,
             backend_snapshot,
             chat_start,
+            conversation_list,
+            conversation_get,
+            conversation_create,
             chat_cancel,
             crash_backend,
             restart_backend,

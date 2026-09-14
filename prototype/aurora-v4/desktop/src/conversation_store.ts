@@ -32,8 +32,12 @@ export class ConversationStore {
 
   get active(): ConversationRecord {
     const conversation = this.find(this.activeId);
-    if (!conversation) throw new Error("Active conversation is missing");
-    return conversation;
+    return conversation ?? {
+      id: "",
+      title: "新对话",
+      preview: "尚无消息",
+      messages: [],
+    };
   }
 
   create(id: string): ConversationRecord {
@@ -53,6 +57,23 @@ export class ConversationStore {
     if (!this.find(id)) return false;
     this.activeId = id;
     return true;
+  }
+
+  replace(records: ConversationRecord[], activeId = ""): void {
+    this.conversations.splice(0, this.conversations.length, ...records.map(cloneConversation));
+    this.activeId = activeId && this.find(activeId) ? activeId : "";
+  }
+
+  upsert(record: ConversationRecord): void {
+    const index = this.conversations.findIndex((item) => item.id === record.id);
+    if (index >= 0) this.conversations[index] = cloneConversation(record);
+    else this.conversations.unshift(cloneConversation(record));
+    this.activeId = record.id;
+  }
+
+  setMessages(conversationId: string, messages: ConversationMessage[]): void {
+    const conversation = this.require(conversationId);
+    conversation.messages = messages.map((message) => ({ ...message }));
   }
 
   addMessage(conversationId: string, message: ConversationMessage): void {

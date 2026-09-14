@@ -32,6 +32,11 @@ backend remains mock; production is selected only with
 `AURORA_V4_BACKEND=production`. V4-3B does not add persistence, context
 systems, voice, or UI settings.
 
+Stage V4-3C adds Python-owned conversation list/get/create and completed-turn
+persistence while preserving the existing `%APPDATA%\\Aurora\\conversations`
+store. See `V4_3C_VALIDATION.md`; the default backend and Stable entry point
+remain unchanged.
+
 ## Validation
 
 From the repository root:
@@ -41,5 +46,5 @@ From the repository root:
 .\.venv\Scripts\python.exe -m pytest prototype\aurora-v4\contracts\test_ipc_v1_contract.py -q
 ```
 
-The prototype still has no persisted conversation or Voice/PCM IPC. V4-3B's
-production adapter is opt-in and leaves the Stable entry point unchanged.
+The prototype's production adapter is opt-in and leaves the Stable entry point
+unchanged. Voice/PCM IPC remains disabled.

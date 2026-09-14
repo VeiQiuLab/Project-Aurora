@@ -28,6 +28,9 @@ export const chatErrorLabel = (state: string, code: string | null): string => {
     MODEL_UNAVAILABLE: "配置的模型未安装。",
     REQUEST_TIMEOUT: "请求超时，请稍后重试。",
     BACKEND_NOT_READY: "后端正在忙，请稍后重试。",
+    NOT_FOUND: "会话不存在。",
+    INVALID_CONVERSATION: "会话数据不可用。",
+    PERSISTENCE_FAILED: "会话保存失败，请稍后重试。",
   } as Record<string, string>)[code ?? ""] ?? "生成失败，请稍后重试。";
 };
 

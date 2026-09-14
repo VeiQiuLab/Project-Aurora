@@ -27,9 +27,11 @@ use uuid::Uuid;
 use crate::{
     protocol::{
         BOOTSTRAP_MAX_BYTES, BackendInfo, BackendSnapshot, BackendState, BootstrapReady,
-        CancelTarget, ChatDiagnostics, ChatStartResult, FrontendEvent, PROTOCOL,
+        CancelTarget, ChatDiagnostics, ChatStartResult, ConversationDetail, ConversationSummary,
+        FrontendEvent, PROTOCOL,
         ProductionDiagnostics, PrototypeMetrics, VERSION, chat_cancel, chat_request, health, hello,
-        object, require_string, shutdown, validate_hello_ack_for_mode, validate_sidecar_event,
+        conversation_create, conversation_get, conversation_list, object, require_string,
+        shutdown, validate_hello_ack_for_mode, validate_sidecar_event,
     },
     registry::{RequestOwner, RequestRegistry},
 };
@@ -405,7 +407,18 @@ impl BackendManager {
     }
 
     pub async fn chat_start(&self, input: String) -> Result<ChatStartResult, String> {
+        self.chat_start_for_conversation(input, None).await
+    }
+
+    pub async fn chat_start_for_conversation(&self, input: String, conversation_id: Option<String>) -> Result<ChatStartResult, String> {
         let received = unix_ms();
+        if let Some(id) = conversation_id.as_deref() {
+            if id.is_empty() || id.len() > 128
+                || !id.chars().all(|c| c.is_ascii_alphanumeric() || c == '_' || c == '-')
+            {
+                return Err("Invalid conversation ID.".into());
+            }
+        }
         if input.trim().is_empty() {
             return Err("Message cannot be empty.".into());
         }
@@ -451,6 +464,8 @@ impl BackendManager {
             &result.generation_id,
             &input,
         );
+        let mut message = message;
+        message["payload"]["conversation_id"] = conversation_id.map(Value::String).unwrap_or(Value::Null);
         writer
             .send(Message::Text(message.to_string().into()))
             .await
@@ -461,6 +476,22 @@ impl BackendManager {
             short_id(&result.generation_id)
         );
         Ok(result)
+    }
+
+    pub async fn conversation_list(&self) -> Result<(), String> {
+        self.send_value(conversation_list(&format!("conversation-list-{}", Uuid::new_v4().simple()))).await
+    }
+
+    pub async fn conversation_get(&self, conversation_id: String) -> Result<(), String> {
+        if conversation_id.is_empty() || conversation_id.len() > 128 ||
+            !conversation_id.chars().all(|c| c.is_ascii_alphanumeric() || c == '_' || c == '-') {
+            return Err("Invalid conversation ID.".into());
+        }
+        self.send_value(conversation_get(&format!("conversation-get-{}", Uuid::new_v4().simple()), &conversation_id)).await
+    }
+
+    pub async fn conversation_create(&self) -> Result<(), String> {
+        self.send_value(conversation_create(&format!("conversation-create-{}", Uuid::new_v4().simple()))).await
     }
 
     pub async fn chat_cancel(&self, target: CancelTarget) -> Result<bool, String> {
@@ -589,6 +620,35 @@ impl BackendManager {
             return Err("STALE_CONNECTION".into());
         }
         match message_type {
+            "conversation.list.response" => {
+                let request_id = require_string(&value, "request_id", None)?.to_owned();
+                let conversations: Vec<ConversationSummary> = serde_json::from_value(
+                    object(&value, "payload")?.get("conversations").cloned()
+                        .ok_or_else(|| "INVALID_CONVERSATION_LIST".to_string())?,
+                ).map_err(|_| "INVALID_CONVERSATION_LIST".to_string())?;
+                for conversation in &conversations {
+                    conversation.validate()?;
+                }
+                self.emit(FrontendEvent::ConversationList { request_id, conversations });
+            }
+            "conversation.get.response" => {
+                let request_id = require_string(&value, "request_id", None)?.to_owned();
+                let conversation: ConversationDetail = serde_json::from_value(
+                    object(&value, "payload")?.get("conversation").cloned()
+                        .ok_or_else(|| "INVALID_CONVERSATION".to_string())?,
+                ).map_err(|_| "INVALID_CONVERSATION".to_string())?;
+                conversation.validate()?;
+                self.emit(FrontendEvent::ConversationLoaded { request_id, conversation });
+            }
+            "conversation.create.response" => {
+                let request_id = require_string(&value, "request_id", None)?.to_owned();
+                let conversation: ConversationSummary = serde_json::from_value(
+                    object(&value, "payload")?.get("conversation").cloned()
+                        .ok_or_else(|| "INVALID_CONVERSATION".to_string())?,
+                ).map_err(|_| "INVALID_CONVERSATION".to_string())?;
+                conversation.validate()?;
+                self.emit(FrontendEvent::ConversationCreated { request_id, conversation });
+            }
             "health.response" => {
                 let payload = object(&value, "payload")?;
                 let mut data = self.inner.lock().await;
@@ -728,7 +788,16 @@ impl BackendManager {
                     .and_then(Value::as_str)
                     .unwrap_or("BACKEND_WARNING")
                     .to_owned();
-                self.emit(FrontendEvent::ProtocolWarning { code });
+                if message_type == "error"
+                    && matches!(code.as_str(), "NOT_FOUND" | "INVALID_CONVERSATION" | "PERSISTENCE_FAILED")
+                    && value.get("request_id").is_some()
+                    && value.get("session_id").is_none()
+                {
+                    let request_id = require_string(&value, "request_id", None)?.to_owned();
+                    self.emit(FrontendEvent::ConversationError { request_id, code });
+                } else {
+                    self.emit(FrontendEvent::ProtocolWarning { code });
+                }
             }
             _ => {}
         }

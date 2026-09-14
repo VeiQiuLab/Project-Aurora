@@ -16,6 +16,7 @@ sys.path[:0] = [str(SIDECAR_ROOT), str(REPO_ROOT)]
 from mock_sidecar.server import MockSidecar, _required_environment, serve_sidecar
 from production_sidecar.composition import ProductionComposition
 from production_sidecar.chat_execution import ChatExecution
+from production_sidecar.conversations import ConversationError
 
 LOGGER = logging.getLogger("aurora-v4-production")
 
@@ -43,6 +44,52 @@ class ProductionSidecar(MockSidecar):
 
     async def cancel_chat(self, connection, message):
         await self.chat.cancel(connection, message)
+
+    async def conversation_list(self, connection, message):
+        try:
+            conversations = await asyncio.to_thread(self.composition.conversations.list_metadata)
+            await self.send(connection, {
+                "protocol": "aurora-ipc", "version": 1,
+                "type": "conversation.list.response", "request_id": message["request_id"],
+                "payload": {"conversations": conversations},
+            })
+        except Exception:
+            await self.send_error(connection, code="INTERNAL_ERROR",
+                                  message="Conversation list failed.", retryable=True,
+                                  envelope=message)
+
+    async def conversation_get(self, connection, message):
+        try:
+            conversation = await asyncio.to_thread(
+                self.composition.conversations.get,
+                message["payload"]["conversation_id"],
+            )
+            await self.send(connection, {
+                "protocol": "aurora-ipc", "version": 1,
+                "type": "conversation.get.response", "request_id": message["request_id"],
+                "payload": {"conversation": conversation},
+            })
+        except ConversationError as error:
+            await self.send_error(connection, code=error.code,
+                                  message=str(error), retryable=error.code == "NOT_FOUND",
+                                  envelope=message)
+        except Exception:
+            await self.send_error(connection, code="INTERNAL_ERROR",
+                                  message="Conversation load failed.", retryable=True,
+                                  envelope=message)
+
+    async def conversation_create(self, connection, message):
+        try:
+            conversation = await asyncio.to_thread(self.composition.conversations.create)
+            await self.send(connection, {
+                "protocol": "aurora-ipc", "version": 1,
+                "type": "conversation.create.response", "request_id": message["request_id"],
+                "payload": {"conversation": conversation},
+            })
+        except Exception:
+            await self.send_error(connection, code="INTERNAL_ERROR",
+                                  message="Conversation creation failed.", retryable=True,
+                                  envelope=message)
 
     async def cancel_all(self):
         await self.chat.close()

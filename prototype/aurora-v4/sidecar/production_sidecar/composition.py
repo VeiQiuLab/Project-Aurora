@@ -79,19 +79,33 @@ class OllamaHealth:
 
 
 class ProductionComposition:
-    def __init__(self, root: Path | None = None, config_file: Path | None = None):
+    def __init__(self, root: Path | None = None, config_file: Path | None = None,
+                 conversation_root: Path | None = None):
         self.root = root or app_paths.PROGRAM_ROOT
         self.settings = ReadOnlySettings(self.root, config_file)
         self.ollama = OllamaHealth(self.settings)
+        self._conversation_root = conversation_root
+        self._conversations = None
         self.diagnostics = {}
         self.state = "DEGRADED"
         self.closed = False
         self._refresh_lock = asyncio.Lock()
 
+    @property
+    def conversations(self):
+        """Lazily expose the existing Aurora conversation store."""
+
+        if self._conversations is None:
+            from production_sidecar.conversations import ConversationPersistence
+
+            self._conversations = ConversationPersistence(self._conversation_root)
+        return self._conversations
+
     def capabilities(self):
         exists = lambda path: (self.root / path).is_file()
         return {
             "chat_streaming": True, "chat_cancel": True,
+            "conversation": {"list": True, "get": True, "create": True, "save": True},
             "memory": False, "knowledge": False, "rag": False,
             "voice": {"ipc": False,
                       "edge_tts": exists("modules/experience/voice/providers/edge_tts.py"),

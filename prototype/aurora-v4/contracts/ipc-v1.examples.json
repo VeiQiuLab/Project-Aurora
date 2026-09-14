@@ -245,5 +245,80 @@
         "retryable": true
       }
     }
+  },
+  {
+    "protocol": "aurora-ipc",
+    "version": 1,
+    "type": "conversation.list.request",
+    "request_id": "req-conversation-list-001",
+    "payload": {}
+  },
+  {
+    "protocol": "aurora-ipc",
+    "version": 1,
+    "type": "conversation.list.response",
+    "request_id": "req-conversation-list-001",
+    "payload": {
+      "conversations": [
+        {
+          "conversation_id": "conversation-demo-001",
+          "title": "Desktop architecture",
+          "created_at": "2026-09-15T00:00:00+00:00",
+          "updated_at": "2026-09-15T00:01:00+00:00",
+          "message_count": 2,
+          "model": "qwen3.5:9b"
+        }
+      ]
+    }
+  },
+  {
+    "protocol": "aurora-ipc",
+    "version": 1,
+    "type": "conversation.get.request",
+    "request_id": "req-conversation-get-001",
+    "payload": {"conversation_id": "conversation-demo-001"}
+  },
+  {
+    "protocol": "aurora-ipc",
+    "version": 1,
+    "type": "conversation.get.response",
+    "request_id": "req-conversation-get-001",
+    "payload": {
+      "conversation": {
+        "conversation_id": "conversation-demo-001",
+        "title": "Desktop architecture",
+        "created_at": "2026-09-15T00:00:00+00:00",
+        "updated_at": "2026-09-15T00:01:00+00:00",
+        "message_count": 2,
+        "model": "qwen3.5:9b",
+        "messages": [
+          {"role": "user", "content": "Synthetic user message."},
+          {"role": "assistant", "content": "Synthetic assistant message."}
+        ]
+      }
+    }
+  },
+  {
+    "protocol": "aurora-ipc",
+    "version": 1,
+    "type": "conversation.create.request",
+    "request_id": "req-conversation-create-001",
+    "payload": {}
+  },
+  {
+    "protocol": "aurora-ipc",
+    "version": 1,
+    "type": "conversation.create.response",
+    "request_id": "req-conversation-create-001",
+    "payload": {
+      "conversation": {
+        "conversation_id": "conversation-new-001",
+        "title": "New Conversation",
+        "created_at": "2026-09-15T00:02:00+00:00",
+        "updated_at": "2026-09-15T00:02:00+00:00",
+        "message_count": 0,
+        "model": ""
+      }
+    }
   }
 ]

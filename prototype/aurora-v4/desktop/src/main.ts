@@ -3,6 +3,8 @@ import { getCurrentWindow } from "@tauri-apps/api/window";
 import {
   ConversationStore,
   initialConversations,
+  type ConversationRecord,
+  type ConversationMessage,
   type MessageRole,
   type MessageState,
 } from "./conversation_store";
@@ -78,6 +80,44 @@ type GatewayEvent =
       diagnostics: Record<string, number | boolean | string | null> | null;
     }
   | { type: "cancel_ack"; generationId: string; outcome: string }
+  | {
+      type: "conversation_list";
+      requestId: string;
+      conversations: Array<{
+        conversation_id: string;
+        title: string;
+        created_at: string;
+        updated_at: string;
+        message_count: number;
+        model: string;
+      }>;
+    }
+  | {
+      type: "conversation_loaded";
+      requestId: string;
+      conversation: {
+        conversation_id: string;
+        title: string;
+        created_at: string;
+        updated_at: string;
+        message_count: number;
+        model: string;
+        messages: Array<{ role: string; content: string }>;
+      };
+    }
+  | {
+      type: "conversation_created";
+      requestId: string;
+      conversation: {
+        conversation_id: string;
+        title: string;
+        created_at: string;
+        updated_at: string;
+        message_count: number;
+        model: string;
+      };
+    }
+  | { type: "conversation_error"; requestId: string; code: string }
   | { type: "protocol_warning"; code: string };
 
 interface ActiveGeneration extends ChatStartResult {
@@ -125,8 +165,31 @@ let bufferedStartEvents: GatewayEvent[] = [];
 let localConversationIndex = 0;
 let localMessageIndex = 0;
 let lastChatSummary = "";
+let productionConversationMode = false;
+let conversationListRequested = false;
+let creatingConversation = false;
+let loadingConversationId: string | null = null;
 
 const conversations = new ConversationStore(initialConversations());
+
+const productionRecord = (item: {
+  conversation_id: string;
+  title: string;
+  message_count: number;
+}): ConversationRecord => ({
+  id: item.conversation_id,
+  title: item.title === "New Conversation" ? "新对话" : item.title,
+  preview: item.message_count ? `${item.message_count} 条消息` : "尚无消息",
+  messages: [],
+});
+
+const requestProductionConversationList = (): void => {
+  if (!productionConversationMode || conversationListRequested) return;
+  conversationListRequested = true;
+  void invoke("conversation_list").catch(() => {
+    conversationListRequested = false;
+  });
+};
 
 const nextLocalId = (kind: "conversation" | "message"): string => {
   if (kind === "conversation") {
@@ -311,11 +374,68 @@ const ownsActiveGeneration = (
 ): boolean =>
   ownsChatEvent(activeGeneration, event);
 
+const mapLoadedMessages = (items: Array<{ role: string; content: string }>): ConversationMessage[] =>
+  items
+    .filter((item): item is { role: "user" | "assistant"; content: string } =>
+      (item.role === "user" || item.role === "assistant") && typeof item.content === "string")
+    .map((item, index) => ({
+      id: `persisted-message-${index + 1}`,
+      role: item.role,
+      content: item.content,
+      state: "normal" as const,
+    }));
+
+const applyConversationEvent = (event: GatewayEvent): boolean => {
+  if (event.type === "conversation_list") {
+    if (!productionConversationMode) return true;
+    conversations.replace(event.conversations.map(productionRecord));
+    conversationListRequested = true;
+    renderConversation();
+    return true;
+  }
+  if (event.type === "conversation_created") {
+    creatingConversation = false;
+    const record = productionRecord(event.conversation);
+    conversations.upsert(record);
+    loadingConversationId = null;
+    renderConversation();
+    promptInput.focus();
+    updateControls();
+    return true;
+  }
+  if (event.type === "conversation_loaded") {
+    if (loadingConversationId !== event.conversation.conversation_id) return true;
+    const id = event.conversation.conversation_id;
+    if (!conversations.select(id)) return true;
+    conversations.updateSummary(id, event.conversation.title === "New Conversation" ? "新对话" : event.conversation.title,
+      event.conversation.message_count ? `${event.conversation.message_count} 条消息` : "尚无消息");
+    conversations.setMessages(id, mapLoadedMessages(event.conversation.messages));
+    loadingConversationId = null;
+    renderConversation();
+    promptInput.focus();
+    return true;
+  }
+  if (event.type === "conversation_error") {
+    creatingConversation = false;
+    loadingConversationId = null;
+    getElement("backend-diagnostics").textContent = `会话操作失败：${event.code}`;
+    updateControls();
+    return true;
+  }
+  return false;
+};
+
 const applyGatewayEvent = (event: GatewayEvent): void => {
+  if (applyConversationEvent(event)) return;
   if (event.type === "backend_state") {
+    productionConversationMode = event.info.mode === "production";
+    if (!productionConversationMode) conversationListRequested = false;
     updateBackendInfo(event.info);
     updateBackendState(event.state);
     updateMetrics(event.metrics);
+    if (productionConversationMode && ["READY", "DEGRADED"].includes(event.state)) {
+      requestProductionConversationList();
+    }
     return;
   }
   if (
@@ -390,6 +510,10 @@ const applyGatewayEvent = (event: GatewayEvent): void => {
     renderConversationList();
     updateControls();
     promptInput.focus();
+    if (productionConversationMode && event.terminalState === "completed") {
+      conversationListRequested = false;
+      requestProductionConversationList();
+    }
     return;
   }
   if (event.type === "cancel_ack") {
@@ -408,6 +532,7 @@ const sendPrompt = async (): Promise<void> => {
   const input = promptInput.value.trim();
   if (!input || !["READY", "DEGRADED"].includes(backendState) || !backendInfo.chat_enabled) return;
   const conversationId = conversations.activeId;
+  if (!conversationId) return;
   const conversation = conversations.active;
   const title = conversation.title === "新对话" ? summarize(input, 14) : null;
   conversations.updateSummary(conversationId, title, summarize(input));
@@ -425,7 +550,7 @@ const sendPrompt = async (): Promise<void> => {
   for (const name of ["aurora-send", "aurora-first-frontend-delta", "aurora-terminal"]) performance.clearMarks(name);
   performance.mark("aurora-send");
   try {
-    const result = await invoke<ChatStartResult>("chat_start", { input });
+    const result = await invoke<ChatStartResult>("chat_start", { input, conversation_id: conversationId });
     activeGeneration = {
       ...result,
       expectedSeq: 0,
@@ -515,6 +640,16 @@ reducedEffects.addEventListener("change", () => {
 });
 
 newConversationButton.addEventListener("click", () => {
+  if (productionConversationMode) {
+    if (creatingConversation || activeGeneration !== null) return;
+    creatingConversation = true;
+    updateControls();
+    void invoke("conversation_create").catch(() => {
+      creatingConversation = false;
+      updateControls();
+    });
+    return;
+  }
   conversations.create(nextLocalId("conversation"));
   renderConversation();
   promptInput.focus();
@@ -525,9 +660,15 @@ conversationList.addEventListener("click", (event) => {
   if (!(target instanceof Element)) return;
   const button = target.closest<HTMLButtonElement>("[data-conversation-id]");
   const id = button?.dataset.conversationId;
-  if (!id || !conversations.select(id)) return;
+  if (!id || activeGeneration !== null || !conversations.select(id)) return;
   renderConversation();
   promptInput.focus();
+  if (productionConversationMode) {
+    loadingConversationId = id;
+    void invoke("conversation_get", { conversation_id: id }).catch(() => {
+      loadingConversationId = null;
+    });
+  }
 });
 
 promptInput.addEventListener("input", () => {
@@ -588,6 +729,10 @@ const initialize = async (): Promise<void> => {
   updateBackendInfo(snapshot.info);
   updateBackendState(snapshot.state);
   updateMetrics(snapshot.metrics);
+  productionConversationMode = snapshot.info.mode === "production";
+  if (productionConversationMode && ["READY", "DEGRADED"].includes(snapshot.state)) {
+    requestProductionConversationList();
+  }
 };
 
 void initialize().catch(() => {

@@ -27,7 +27,7 @@ def _example(message_type: str, *, occurrence: int = 0):
 def test_schema_and_all_examples_are_valid_json_and_contract_shapes():
     schema = json.loads((CONTRACT_DIR / "ipc-v1.schema.json").read_text(encoding="utf-8"))
     assert schema["$schema"] == "https://json-schema.org/draft/2020-12/schema"
-    assert contract.validate_files() == 19
+    assert contract.validate_files() == 25
 
 
 def test_direct_chat_optional_observations_validate_in_both_validators():
@@ -258,3 +258,18 @@ def test_bootstrap_is_bounded_machine_data_without_token():
         "supported_versions",
         "sidecar_instance_id",
     }
+
+
+def test_conversation_contract_rejects_path_ids_and_inconsistent_detail_counts():
+    import jsonschema
+    schema = json.loads((CONTRACT_DIR / "ipc-v1.schema.json").read_text(encoding="utf-8"))
+    detail = _example("conversation.get.response")
+    detail["payload"]["conversation"]["conversation_id"] = "..\\outside"
+    with pytest.raises(contract.ContractError):
+        contract.validate_message(detail)
+    with pytest.raises(jsonschema.ValidationError):
+        jsonschema.validate(detail, schema)
+    detail = _example("conversation.get.response")
+    detail["payload"]["conversation"]["message_count"] = 3
+    with pytest.raises(contract.ContractError):
+        contract.validate_message(detail)

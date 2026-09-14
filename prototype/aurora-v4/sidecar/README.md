@@ -1,11 +1,19 @@
 # Python sidecar lifecycle contract
 
+V4-3C adds Python-owned conversation list/get/create and completed-turn
+persistence on top of the V4-3B direct-chat RPC. History is loaded lazily from
+the existing `modules.app_paths` conversation directory; cancelled, failed,
+and disconnected generations never write partial assistant content. The
+legacy title, intelligence, and memory schedulers are not called.
+
 V4-3B adds an opt-in direct-chat RPC on top of the V4-3A production
 composition. It reuses the headless-safe Stable `modules.chat.stream_chat()`
 boundary and runs its blocking Ollama stream in a worker thread. It does not
 enable persistence, context systems, voice, or PCM IPC. See
 [V4_3B_REAL_CHAT.md](../V4_3B_REAL_CHAT.md) and
-[V4_3B_VALIDATION.md](../V4_3B_VALIDATION.md) for the boundary and evidence.
+[V4_3B_VALIDATION.md](../V4_3B_VALIDATION.md) for the boundary and evidence;
+the additive conversation message contract is documented in
+`../contracts/IPC_V1.md`.
 Default is mock; `AURORA_V4_BACKEND=production` selects production.
 
 V4-1 defined this lifecycle without an implementation. V4-2 adds an isolated

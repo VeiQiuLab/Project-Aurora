@@ -8,6 +8,7 @@ provider name or from files on disk.
 {
   "chat_streaming": true,
   "chat_cancel": true,
+  "conversation": {"list": true, "get": true, "create": true, "save": true},
   "memory": true,
   "knowledge": true,
   "rag": true,
@@ -60,3 +61,7 @@ source presence separately (not dependency readiness or callability). Python
 performs discovery; Rust never infers RPC availability from filenames.
 Edge/Remote voice inventory remains true when their implementation files exist;
 voice.ipc, voice.streaming_pcm and voice.cosyvoice_local remain false.
+
+V4-3C production reports the additive `conversation` capability object. Its
+`list`, `get`, `create`, and `save` members gate the Python-owned conversation
+RPCs; mock mode keeps its deterministic in-memory presentation store.

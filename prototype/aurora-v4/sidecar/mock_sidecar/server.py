@@ -280,6 +280,12 @@ class MockSidecar:
             await self.start_chat(connection, message)
         elif message_type == "chat.cancel.request":
             await self.cancel_chat(connection, message)
+        elif message_type == "conversation.list.request":
+            await self.conversation_list(connection, message)
+        elif message_type == "conversation.get.request":
+            await self.conversation_get(connection, message)
+        elif message_type == "conversation.create.request":
+            await self.conversation_create(connection, message)
         elif message_type == "shutdown.request":
             await self.send(
                 connection,
@@ -300,6 +306,21 @@ class MockSidecar:
                 retryable=False,
                 envelope=message,
             )
+
+    async def conversation_list(self, connection: ServerConnection, message: dict[str, Any]) -> None:
+        await self.send_error(connection, code="INVALID_REQUEST",
+                              message="Conversation persistence is unavailable in mock mode.",
+                              retryable=False, envelope=message)
+
+    async def conversation_get(self, connection: ServerConnection, message: dict[str, Any]) -> None:
+        await self.send_error(connection, code="INVALID_REQUEST",
+                              message="Conversation persistence is unavailable in mock mode.",
+                              retryable=False, envelope=message)
+
+    async def conversation_create(self, connection: ServerConnection, message: dict[str, Any]) -> None:
+        await self.send_error(connection, code="INVALID_REQUEST",
+                              message="Conversation persistence is unavailable in mock mode.",
+                              retryable=False, envelope=message)
 
     async def start_chat(self, connection: ServerConnection, message: dict[str, Any]) -> None:
         if len(message["payload"]["input"].encode("utf-8")) > CHAT_INPUT_MAX_BYTES:

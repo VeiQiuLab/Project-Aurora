@@ -43,6 +43,7 @@ Every WebSocket JSON frame requires `protocol`, `version`, `type`, and
 | `chat.request`, `chat.accepted`, `chat.completed` | required | required | required | forbidden |
 | `chat.delta` | required | required | required | required |
 | `chat.cancel.request`, `chat.cancel.ack` | required | required | required | forbidden |
+| `conversation.*` | required | forbidden | forbidden | forbidden |
 | `state.changed` | forbidden | forbidden | forbidden | forbidden |
 | `backend.warning` | optional | optional | optional | forbidden |
 | `error` | optional | optional | optional | forbidden |
@@ -92,6 +93,23 @@ only. Reasoning text is neither emitted nor retained by this contract.
 `chat.accepted` means Python registered ownership; it does not mean generation
 completed successfully. A rejected request receives an `error` and, if it was
 already accepted, one `chat.completed` with `terminal_state: rejected`.
+
+### V4-3C conversation persistence extension
+
+Production Python is the sole owner of the existing Aurora conversation store
+resolved through `modules.app_paths`. `conversation.list.request` returns
+metadata only; `conversation.get.request` lazily returns one validated history;
+and `conversation.create.request` allocates an opaque identity without writing
+an empty file. A completed `chat.request` writes the full user/assistant turn
+through the same Python boundary. Cancelled, failed, and `backend_lost` turns
+never persist a partial assistant response. Mock mode keeps its in-memory
+presentation seed and does not expose these production RPCs.
+
+Conversation payloads contain only `conversation_id`, title/timestamps, model,
+message count, and (for `get`) ordered `{role, content}` messages. System,
+user, and assistant roles are accepted; unsupported roles are ignored at the
+history boundary. IDs are opaque and path-like values are rejected. Listing or
+loading never rewrites existing JSON, and malformed files are isolated.
 
 ## Ordering
 

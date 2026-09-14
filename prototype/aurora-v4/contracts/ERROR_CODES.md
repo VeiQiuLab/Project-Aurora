@@ -19,6 +19,9 @@ automatically.
 | `REQUEST_TIMEOUT` | The operation exceeded its deadline | Yes |
 | `REQUEST_CANCELLED` | Explicit cancellation won the terminal race | No |
 | `INTERNAL_ERROR` | Unexpected backend failure, safely summarized | Possibly |
+| `NOT_FOUND` | The requested conversation ID does not exist | No |
+| `INVALID_CONVERSATION` | Conversation JSON is malformed or has unsupported data | No |
+| `PERSISTENCE_FAILED` | A completed conversation turn could not be saved | Yes |
 
 ## Error delivery
 

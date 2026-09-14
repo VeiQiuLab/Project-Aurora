@@ -50,6 +50,9 @@ ERROR_CODES = {
     "REQUEST_TIMEOUT",
     "REQUEST_CANCELLED",
     "INTERNAL_ERROR",
+    "NOT_FOUND",
+    "INVALID_CONVERSATION",
+    "PERSISTENCE_FAILED",
 }
 
 
@@ -156,6 +159,28 @@ MESSAGE_RULES: dict[str, MessageRule] = {
         payload_required={"target_request_id", "outcome"},
         payload_allowed={"target_request_id", "outcome"},
     ),
+    "conversation.list.request": _rule(
+        required={"request_id"}, forbidden=_NO_CONTEXT,
+    ),
+    "conversation.list.response": _rule(
+        required={"request_id"}, forbidden=_NO_CONTEXT,
+        payload_required={"conversations"}, payload_allowed={"conversations"},
+    ),
+    "conversation.get.request": _rule(
+        required={"request_id"}, forbidden=_NO_CONTEXT,
+        payload_required={"conversation_id"}, payload_allowed={"conversation_id"},
+    ),
+    "conversation.get.response": _rule(
+        required={"request_id"}, forbidden=_NO_CONTEXT,
+        payload_required={"conversation"}, payload_allowed={"conversation"},
+    ),
+    "conversation.create.request": _rule(
+        required={"request_id"}, forbidden=_NO_CONTEXT,
+    ),
+    "conversation.create.response": _rule(
+        required={"request_id"}, forbidden=_NO_CONTEXT,
+        payload_required={"conversation"}, payload_allowed={"conversation"},
+    ),
     "state.changed": _rule(
         forbidden={"request_id", "session_id", "generation_id", "seq"},
         payload_required={"state"},
@@ -242,6 +267,39 @@ def _validate_error(value: Any) -> None:
         raise ContractError("error message must be a bounded safe summary")
     if not isinstance(value["retryable"], bool):
         raise ContractError("error retryable must be boolean")
+
+
+def _validate_conversation_metadata(value: Any, *, detail: bool) -> None:
+    if not isinstance(value, dict):
+        raise ContractError("conversation must be an object")
+    required = {"conversation_id", "title", "created_at", "updated_at", "message_count", "model"}
+    if detail:
+        required.add("messages")
+    if set(value) != required:
+        raise ContractError("conversation fields are invalid")
+    _require_opaque_id(value["conversation_id"], "conversation_id")
+    import re
+    if not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9_-]{0,127}", value["conversation_id"]):
+        raise ContractError("conversation_id is not a safe opaque ID")
+    for name in ("title", "created_at", "updated_at", "model"):
+        if not isinstance(value[name], str) or len(value[name]) > 4096:
+            raise ContractError("conversation metadata is invalid")
+    count = value["message_count"]
+    if not isinstance(count, int) or isinstance(count, bool) or count < 0:
+        raise ContractError("conversation message_count is invalid")
+    if detail:
+        messages = value["messages"]
+        if not isinstance(messages, list):
+            raise ContractError("conversation messages are invalid")
+        if count != len(messages):
+            raise ContractError("conversation message_count is inconsistent")
+        for message in messages:
+            if not isinstance(message, dict) or set(message) != {"role", "content"}:
+                raise ContractError("conversation message is invalid")
+            if message["role"] not in {"system", "user", "assistant"}:
+                raise ContractError("conversation role is invalid")
+            if not isinstance(message["content"], str) or len(message["content"]) > 262144:
+                raise ContractError("conversation content is invalid")
 
 
 def validate_bootstrap(message: Mapping[str, Any]) -> None:
@@ -409,8 +467,26 @@ def _validate_payload(message_type: str, payload: Mapping[str, Any]) -> None:
         conversation_id = payload["conversation_id"]
         if conversation_id is not None:
             _require_opaque_id(conversation_id, "conversation_id")
+            import re
+            if not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9_-]{0,127}", conversation_id):
+                raise ContractError("conversation_id is not a safe opaque ID")
         if not isinstance(payload["input"], str) or not payload["input"]:
             raise ContractError("chat input must be non-empty text")
+    elif message_type == "conversation.get.request":
+        _require_opaque_id(payload["conversation_id"], "conversation_id")
+        import re
+        if not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9_-]{0,127}", payload["conversation_id"]):
+            raise ContractError("conversation_id is not a safe opaque ID")
+    elif message_type in {"conversation.list.response"}:
+        conversations = payload["conversations"]
+        if not isinstance(conversations, list):
+            raise ContractError("conversation list must be an array")
+        for item in conversations:
+            _validate_conversation_metadata(item, detail=False)
+    elif message_type == "conversation.get.response":
+        _validate_conversation_metadata(payload["conversation"], detail=True)
+    elif message_type == "conversation.create.response":
+        _validate_conversation_metadata(payload["conversation"], detail=False)
     elif message_type == "chat.accepted" and payload["status"] != "accepted":
         raise ContractError("chat acceptance status is invalid")
     elif message_type == "chat.delta":
