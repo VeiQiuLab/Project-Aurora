@@ -72,6 +72,79 @@ pub struct OllamaDiagnostics {
     pub probe_duration_ms: f64,
 }
 
+/// Deliberately typed: never forward arbitrary sidecar diagnostics to WebView.
+#[derive(Clone, Debug, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct ChatDiagnostics {
+    pub request_to_headers_ms: Option<f64>,
+    pub request_to_first_model_output_ms: Option<f64>,
+    pub request_to_first_content_ms: Option<f64>,
+    pub first_raw_to_first_content_ms: Option<f64>,
+    pub load_duration_ms: Option<f64>,
+    pub prompt_eval_duration_ms: Option<f64>,
+    pub eval_duration_ms: Option<f64>,
+    pub total_duration_ms: Option<f64>,
+    pub stream_total_ms: Option<f64>,
+    pub cancel_transport_latency_ms: Option<f64>,
+    pub prompt_eval_count: Option<f64>,
+    pub eval_count: Option<f64>,
+    pub reasoning_chars: Option<f64>,
+    pub ipc_to_stream_start_ms: Option<f64>,
+    pub ipc_to_first_delta_ms: Option<f64>,
+    pub ipc_to_terminal_ms: Option<f64>,
+    pub cancel_to_terminal_ms: Option<f64>,
+    pub active_response: bool,
+    pub worker_exited: bool,
+    pub ollama_think_mode: String,
+    pub think_payload_value: Option<bool>,
+    pub ollama_keep_alive: Option<String>,
+}
+
+impl ChatDiagnostics {
+    pub fn from_wire(value: Value) -> Result<Self, String> {
+        let result: Self = serde_json::from_value(value).map_err(|_| "INVALID_CHAT_DIAGNOSTICS")?;
+        if [
+            result.request_to_headers_ms,
+            result.request_to_first_model_output_ms,
+            result.request_to_first_content_ms,
+            result.first_raw_to_first_content_ms,
+            result.load_duration_ms,
+            result.prompt_eval_duration_ms,
+            result.eval_duration_ms,
+            result.total_duration_ms,
+            result.stream_total_ms,
+            result.cancel_transport_latency_ms,
+            result.prompt_eval_count,
+            result.eval_count,
+            result.reasoning_chars,
+            result.ipc_to_stream_start_ms,
+            result.ipc_to_first_delta_ms,
+            result.ipc_to_terminal_ms,
+            result.cancel_to_terminal_ms,
+        ]
+        .iter()
+        .flatten()
+        .any(|n| !n.is_finite() || *n < 0.0)
+            || !matches!(result.ollama_think_mode.as_str(), "on" | "off" | "default")
+            || result.think_payload_value
+                != match result.ollama_think_mode.as_str() {
+                    "on" => Some(true),
+                    "off" => Some(false),
+                    _ => None,
+                }
+            || result.ollama_keep_alive.as_ref().is_some_and(|s| {
+                s.len() > 128
+                    || !s
+                        .chars()
+                        .all(|c| c.is_ascii_alphanumeric() || ".µμ".contains(c))
+            })
+        {
+            return Err("INVALID_CHAT_DIAGNOSTICS".into());
+        }
+        Ok(result)
+    }
+}
+
 impl ProductionDiagnostics {
     pub fn from_wire(value: Value) -> Result<Self, String> {
         let result: Self = serde_json::from_value(value).map_err(|_| "INVALID_DIAGNOSTICS")?;
@@ -146,18 +219,22 @@ pub enum FrontendEvent {
     ChatAccepted {
         request_id: String,
         generation_id: String,
+        ipc_received_unix_ms: Option<f64>,
     },
     ChatDelta {
         request_id: String,
         generation_id: String,
         seq: u64,
         delta: String,
+        python_sent_unix_ms: Option<f64>,
+        rust_received_unix_ms: f64,
     },
     ChatTerminal {
         request_id: String,
         generation_id: String,
         terminal_state: String,
         error_code: Option<String>,
+        diagnostics: Option<ChatDiagnostics>,
     },
     CancelAck {
         generation_id: String,
@@ -182,6 +259,8 @@ pub struct ChatStartResult {
     pub request_id: String,
     pub session_id: String,
     pub generation_id: String,
+    pub rust_received_unix_ms: f64,
+    pub rust_queued_unix_ms: f64,
 }
 
 #[derive(Clone, Debug, Deserialize)]
@@ -282,7 +361,7 @@ pub fn validate_hello_ack(value: &Value, hello_request_id: &str) -> Result<Strin
 pub fn validate_hello_ack_for_mode(
     value: &Value,
     hello_request_id: &str,
-    production: bool,
+    _production: bool,
 ) -> Result<String, String> {
     validate_base(value, "hello_ack")?;
     require_string(value, "request_id", Some(hello_request_id))?;
@@ -305,8 +384,8 @@ pub fn validate_hello_ack_for_mode(
         .get("capabilities")
         .and_then(Value::as_object)
         .ok_or_else(|| "missing capabilities".to_string())?;
-    if capabilities.get("chat_streaming").and_then(Value::as_bool) != Some(!production)
-        || capabilities.get("chat_cancel").and_then(Value::as_bool) != Some(!production)
+    if capabilities.get("chat_streaming").and_then(Value::as_bool) != Some(true)
+        || capabilities.get("chat_cancel").and_then(Value::as_bool) != Some(true)
     {
         return Err("required chat capabilities unavailable".into());
     }
@@ -373,6 +452,38 @@ pub fn validate_sidecar_event(value: &Value) -> Result<&str, String> {
             .and_then(Value::as_str)
             .filter(|delta| !delta.is_empty())
             .ok_or_else(|| "chat.delta has empty content".to_string())?;
+    }
+    let payload = object(value, "payload")?;
+    for key in ["ipc_received_unix_ms", "python_sent_unix_ms"] {
+        if payload.contains_key(key)
+            && payload
+                .get(key)
+                .and_then(Value::as_f64)
+                .is_none_or(|n| !n.is_finite() || n < 0.0)
+        {
+            return Err("INVALID_CHAT_TIMESTAMP".into());
+        }
+    }
+    if message_type == "chat.completed" {
+        let terminal = payload.get("terminal_state").and_then(Value::as_str);
+        if !matches!(
+            terminal,
+            Some("completed" | "cancelled" | "failed" | "rejected" | "backend_lost")
+        ) {
+            return Err("INVALID_TERMINAL_STATE".into());
+        }
+        if matches!(terminal, Some("failed" | "rejected" | "backend_lost"))
+            && payload
+                .get("error")
+                .and_then(|e| e.get("code"))
+                .and_then(Value::as_str)
+                .is_none()
+        {
+            return Err("MISSING_TERMINAL_ERROR".into());
+        }
+        if let Some(diagnostics) = payload.get("diagnostics") {
+            ChatDiagnostics::from_wire(diagnostics.clone())?;
+        }
     }
     Ok(message_type)
 }
@@ -474,9 +585,9 @@ mod tests {
         production["payload"]["capabilities"]["chat_streaming"] = json!(false);
         production["payload"]["capabilities"]["chat_cancel"] = json!(false);
         production["payload"]["state"] = json!("DEGRADED");
-        assert!(validate_hello_ack_for_mode(&production, "hello-1", true).is_ok());
+        assert!(validate_hello_ack_for_mode(&production, "hello-1", true).is_err());
         assert!(validate_hello_ack(&production, "hello-1").is_err());
-        assert!(validate_hello_ack_for_mode(&ack, "hello-1", true).is_err());
+        assert!(validate_hello_ack_for_mode(&ack, "hello-1", true).is_ok());
     }
 
     #[test]
@@ -537,12 +648,36 @@ mod tests {
     }
 
     #[test]
+    fn production_chat_examples_and_private_diagnostics_validation() {
+        let examples: Vec<Value> =
+            serde_json::from_str(include_str!("../../../contracts/ipc-v1.chat.examples.json"))
+                .unwrap();
+        for event in &examples {
+            validate_sidecar_event(event).unwrap();
+        }
+        let mut event = examples[2].clone();
+        event["payload"]["diagnostics"]["reasoning_text"] = json!("private");
+        assert!(validate_sidecar_event(&event).is_err());
+        event = examples[2].clone();
+        event["payload"]["terminal_state"] = json!("invented");
+        assert!(validate_sidecar_event(&event).is_err());
+        event = examples[2].clone();
+        event["payload"]["terminal_state"] = json!("failed");
+        assert!(validate_sidecar_event(&event).is_err());
+        event = examples[1].clone();
+        event["payload"]["python_sent_unix_ms"] = json!(-1);
+        assert!(validate_sidecar_event(&event).is_err());
+    }
+
+    #[test]
     fn frontend_channel_shape_matches_typescript_contract() {
         let event = serde_json::to_value(FrontendEvent::ChatDelta {
             request_id: "request-1".into(),
             generation_id: "generation-1".into(),
             seq: 4,
             delta: "token".into(),
+            python_sent_unix_ms: None,
+            rust_received_unix_ms: 0.0,
         })
         .unwrap();
         assert_eq!(event["type"], "chat_delta");

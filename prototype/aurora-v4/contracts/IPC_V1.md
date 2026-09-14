@@ -157,8 +157,8 @@ generation, and transitions the backend state to `DISCONNECTED`.
 meaning of each capability is frozen in `CAPABILITIES.md`. Health is not ready
 merely because a process exists: handshake, limits and the selected backend
 mode's required capabilities must succeed. Mock requires chat streaming/cancel;
-V4-3A production requires composition/health only and deliberately advertises
-both chat flags as false. Neither READY nor implementation inventory enables RPC.
+V4-3B production additionally enables direct chat streaming/cancel. Neither
+READY nor implementation inventory enables an unrelated RPC.
 
 ### V4-3A optional production health diagnostics
 
@@ -178,12 +178,34 @@ is missing/unset. No GPU inference readiness is implied. DISCONNECTED remains
 Rust's actual process/transport loss. A health request re-probes; no background
 poller or model auto-start is installed.
 
+### V4-3B direct chat extension
+
+V4-3B enables `chat_streaming` and `chat_cancel` for the production sidecar.
+The sidecar constructs a one-message direct request and reuses Stable
+`modules.chat.stream_chat()`; it does not invoke Memory, Persona, Knowledge,
+RAG, persistence, or title generation. The blocking HTTP stream runs outside
+the asyncio loop and forwards visible deltas through a bounded queue. Only one
+generation is active per connection; a second request is rejected until the
+first reaches its terminal state.
+
+`chat.accepted.payload.ipc_received_unix_ms` and
+`chat.delta.payload.python_sent_unix_ms` are optional non-negative wall-clock
+observations. `chat.completed.payload.diagnostics`, when present, is the
+strictly typed `chatDiagnostics` object in the schema. It contains durations,
+counts, policy values, and worker/response lifecycle booleans only. Reasoning,
+user text, assistant text, credentials, ports, PIDs, and paths are excluded.
+Wall-clock bridge values are estimates; monotonic production timings remain
+the authoritative durations.
+
 Compatibility: this is an additive *optional* v1 field, with unchanged existing
 message meanings, required fields and legacy examples. Updated validators accept
 old messages without it. However, older strict v1 validators reject unknown
 payload fields: an old gateway is NOT compatible with new production diagnostics.
 Deploy this prototype gateway and sidecar together. Mock omits the extension and
-stays wire-compatible. This is not a claim of arbitrary old-client forward compatibility.
+stays wire-compatible. The V4-3B extension follows the same compatibility rule:
+older strict validators reject unknown optional chat fields, so the matching
+Rust/Python prototype pair must be deployed together. This is not a claim of
+arbitrary old-client forward compatibility.
 
 `state.changed` is an unsolicited lifecycle notification. Rust remains the
 authoritative desktop state machine and validates the transition before

@@ -25,6 +25,13 @@ Stage V4-2 implements the isolated prototype against that contract:
 - `V4_2_VALIDATION.md` records the Windows prototype evidence and explicit
   verification boundary.
 
+Stage V4-3B adds the opt-in production direct-chat path. See
+`V4_3B_REAL_CHAT.md` for the adapter and ownership boundary and
+`V4_3B_VALIDATION.md` for the automated and Windows evidence. The default
+backend remains mock; production is selected only with
+`AURORA_V4_BACKEND=production`. V4-3B does not add persistence, context
+systems, voice, or UI settings.
+
 ## Validation
 
 From the repository root:
@@ -34,5 +41,5 @@ From the repository root:
 .\.venv\Scripts\python.exe -m pytest prototype\aurora-v4\contracts\test_ipc_v1_contract.py -q
 ```
 
-V4-2 still contains no production Python adapter, real model request, voice
-transport, persisted conversation, or Stable entry-point change.
+The prototype still has no persisted conversation or Voice/PCM IPC. V4-3B's
+production adapter is opt-in and leaves the Stable entry point unchanged.

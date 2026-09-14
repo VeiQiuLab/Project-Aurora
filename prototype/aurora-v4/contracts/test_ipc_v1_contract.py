@@ -30,6 +30,27 @@ def test_schema_and_all_examples_are_valid_json_and_contract_shapes():
     assert contract.validate_files() == 19
 
 
+def test_direct_chat_optional_observations_validate_in_both_validators():
+    import jsonschema
+    schema = json.loads((CONTRACT_DIR / "ipc-v1.schema.json").read_text(encoding="utf-8"))
+    examples = contract.load_examples(CONTRACT_DIR / "ipc-v1.chat.examples.json")
+    for message in examples:
+        contract.validate_message(message)
+        jsonschema.validate(message, schema)
+    for field in ("token", "prompt", "reasoning_text", "pid"):
+        invalid = copy.deepcopy(examples[-1])
+        invalid["payload"]["diagnostics"][field] = "private"
+        with pytest.raises(contract.ContractError):
+            contract.validate_message(invalid)
+        with pytest.raises(jsonschema.ValidationError):
+            jsonschema.validate(invalid, schema)
+    for number in (-1, True, "1"):
+        invalid = copy.deepcopy(examples[1])
+        invalid["payload"]["python_sent_unix_ms"] = number
+        with pytest.raises(contract.ContractError):
+            contract.validate_message(invalid)
+
+
 def test_production_health_optional_extension_and_legacy_examples():
     import jsonschema
     schema = json.loads((CONTRACT_DIR / "ipc-v1.schema.json").read_text(encoding="utf-8"))

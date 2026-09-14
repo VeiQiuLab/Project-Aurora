@@ -7,6 +7,7 @@ Runtime implementations should generate or validate types from the JSON Schema.
 from __future__ import annotations
 
 import json
+import math
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Iterable, Mapping
@@ -130,18 +131,18 @@ MESSAGE_RULES: dict[str, MessageRule] = {
         required=_CHAT_IDS,
         forbidden={"seq"},
         payload_required={"status"},
-        payload_allowed={"status"},
+        payload_allowed={"status", "ipc_received_unix_ms"},
     ),
     "chat.delta": _rule(
         required=_CHAT_IDS | {"seq"},
         payload_required={"delta"},
-        payload_allowed={"delta"},
+        payload_allowed={"delta", "python_sent_unix_ms"},
     ),
     "chat.completed": _rule(
         required=_CHAT_IDS,
         forbidden={"seq"},
         payload_required={"terminal_state"},
-        payload_allowed={"terminal_state", "output_chars", "duration_ms", "error"},
+        payload_allowed={"terminal_state", "output_chars", "duration_ms", "error", "diagnostics"},
     ),
     "chat.cancel.request": _rule(
         required=_CHAT_IDS,
@@ -357,9 +358,35 @@ def validate_diagnostics(value):
         raise ContractError("invalid probe duration")
 
 
+def validate_chat_diagnostics(value):
+    import math
+    numeric = ["request_to_headers_ms","request_to_first_model_output_ms","request_to_first_content_ms","first_raw_to_first_content_ms","load_duration_ms","prompt_eval_duration_ms","eval_duration_ms","total_duration_ms","stream_total_ms","cancel_transport_latency_ms","prompt_eval_count","eval_count","reasoning_chars","ipc_to_stream_start_ms","ipc_to_first_delta_ms","ipc_to_terminal_ms","cancel_to_terminal_ms"]
+    other = {"active_response", "worker_exited", "ollama_think_mode", "think_payload_value", "ollama_keep_alive"}
+    if not isinstance(value, dict) or set(value) != set(numeric) | other:
+        raise ContractError("invalid chat diagnostic fields")
+    for name in numeric:
+        number = value[name]
+        if number is not None and (type(number) not in {int, float} or not math.isfinite(number) or number < 0):
+            raise ContractError("invalid chat metric")
+    if type(value["active_response"]) is not bool or type(value["worker_exited"]) is not bool:
+        raise ContractError("invalid worker diagnostic")
+    if value["ollama_think_mode"] not in {"off", "on", "default"}:
+        raise ContractError("invalid chat policy")
+    if value["think_payload_value"] is not {"off": False, "on": True, "default": None}[value["ollama_think_mode"]]:
+        raise ContractError("invalid chat think value")
+    if value["ollama_keep_alive"] is not None and (not isinstance(value["ollama_keep_alive"], str) or len(value["ollama_keep_alive"]) > 128):
+        raise ContractError("invalid chat keep alive")
+
+
 def _validate_payload(message_type: str, payload: Mapping[str, Any]) -> None:
-    if "diagnostics" in payload:
+    for key in ("ipc_received_unix_ms", "python_sent_unix_ms"):
+        if key in payload and (isinstance(payload[key], bool) or not isinstance(payload[key], (float, int))
+                               or not math.isfinite(payload[key]) or payload[key] < 0):
+            raise ContractError("invalid wall clock observation")
+    if "diagnostics" in payload and message_type == "health.response":
         validate_diagnostics(payload["diagnostics"])
+    elif "diagnostics" in payload:
+        validate_chat_diagnostics(payload["diagnostics"])
     if message_type == "hello":
         if payload["client"] != "aurora-desktop":
             raise ContractError("hello client is invalid")

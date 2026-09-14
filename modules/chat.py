@@ -654,6 +654,7 @@ def stream_chat(
     diagnostics=None,
     raw_line_observer=None,
     thinking_mode=None,
+    collect_memory_candidates=True,
 ):
     """Stream one Ollama response while preserving the session context."""
 
@@ -844,9 +845,10 @@ def stream_chat(
     assistant_response = "".join(assistant_parts)
     if assistant_response and not handle.cancelled:
         session.add_assistant(assistant_response)
-        try:
-            from modules.memory import MemoryStore
-            MemoryStore().queue_candidates(session.snapshot(), source="chat")
-        except Exception:
-            pass
+        if collect_memory_candidates:
+            try:
+                from modules.memory import MemoryStore
+                MemoryStore().queue_candidates(session.snapshot(), source="chat")
+            except Exception:
+                pass
     return "stopped" if handle.cancelled else "completed"

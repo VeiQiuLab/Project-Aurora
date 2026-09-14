@@ -22,6 +22,181 @@
     {"$ref": "#/$defs/error"}
   ],
   "$defs": {
+    "chatDiagnostics": {
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "request_to_headers_ms",
+    "request_to_first_model_output_ms",
+    "request_to_first_content_ms",
+    "first_raw_to_first_content_ms",
+    "load_duration_ms",
+    "prompt_eval_duration_ms",
+    "eval_duration_ms",
+    "total_duration_ms",
+    "stream_total_ms",
+    "cancel_transport_latency_ms",
+    "prompt_eval_count",
+    "eval_count",
+    "reasoning_chars",
+    "ipc_to_stream_start_ms",
+    "ipc_to_first_delta_ms",
+    "ipc_to_terminal_ms",
+    "cancel_to_terminal_ms",
+    "active_response",
+    "worker_exited",
+    "ollama_think_mode",
+    "think_payload_value",
+    "ollama_keep_alive"
+  ],
+  "properties": {
+    "request_to_headers_ms": {
+      "type": [
+        "number",
+        "null"
+      ],
+      "minimum": 0
+    },
+    "request_to_first_model_output_ms": {
+      "type": [
+        "number",
+        "null"
+      ],
+      "minimum": 0
+    },
+    "request_to_first_content_ms": {
+      "type": [
+        "number",
+        "null"
+      ],
+      "minimum": 0
+    },
+    "first_raw_to_first_content_ms": {
+      "type": [
+        "number",
+        "null"
+      ],
+      "minimum": 0
+    },
+    "load_duration_ms": {
+      "type": [
+        "number",
+        "null"
+      ],
+      "minimum": 0
+    },
+    "prompt_eval_duration_ms": {
+      "type": [
+        "number",
+        "null"
+      ],
+      "minimum": 0
+    },
+    "eval_duration_ms": {
+      "type": [
+        "number",
+        "null"
+      ],
+      "minimum": 0
+    },
+    "total_duration_ms": {
+      "type": [
+        "number",
+        "null"
+      ],
+      "minimum": 0
+    },
+    "stream_total_ms": {
+      "type": [
+        "number",
+        "null"
+      ],
+      "minimum": 0
+    },
+    "cancel_transport_latency_ms": {
+      "type": [
+        "number",
+        "null"
+      ],
+      "minimum": 0
+    },
+    "prompt_eval_count": {
+      "type": [
+        "number",
+        "null"
+      ],
+      "minimum": 0
+    },
+    "eval_count": {
+      "type": [
+        "number",
+        "null"
+      ],
+      "minimum": 0
+    },
+    "reasoning_chars": {
+      "type": [
+        "number",
+        "null"
+      ],
+      "minimum": 0
+    },
+    "ipc_to_stream_start_ms": {
+      "type": [
+        "number",
+        "null"
+      ],
+      "minimum": 0
+    },
+    "ipc_to_first_delta_ms": {
+      "type": [
+        "number",
+        "null"
+      ],
+      "minimum": 0
+    },
+    "ipc_to_terminal_ms": {
+      "type": [
+        "number",
+        "null"
+      ],
+      "minimum": 0
+    },
+    "cancel_to_terminal_ms": {
+      "type": [
+        "number",
+        "null"
+      ],
+      "minimum": 0
+    },
+    "active_response": {
+      "type": "boolean"
+    },
+    "worker_exited": {
+      "type": "boolean"
+    },
+    "ollama_think_mode": {
+      "enum": [
+        "off",
+        "on",
+        "default"
+      ]
+    },
+    "think_payload_value": {
+      "type": [
+        "boolean",
+        "null"
+      ]
+    },
+    "ollama_keep_alive": {
+      "type": [
+        "string",
+        "null"
+      ],
+      "maxLength": 128
+    }
+  }
+},
     "productionDiagnostics": {
       "type": "object",
       "required": ["backend_mode", "backend_ready", "settings_status", "ollama_think_mode", "think_payload_value", "ollama_keep_alive", "ollama"],
@@ -366,7 +541,7 @@
             "payload": {
               "type": "object",
               "required": ["status"],
-              "properties": {"status": {"const": "accepted"}},
+              "properties": {"status": {"const": "accepted"}, "ipc_received_unix_ms": {"type": "number", "minimum": 0}},
               "additionalProperties": false
             }
           }
@@ -383,7 +558,7 @@
             "payload": {
               "type": "object",
               "required": ["delta"],
-              "properties": {"delta": {"type": "string", "minLength": 1}},
+              "properties": {"delta": {"type": "string", "minLength": 1}, "python_sent_unix_ms": {"type": "number", "minimum": 0}},
               "additionalProperties": false
             }
           }
@@ -405,6 +580,7 @@
                 "terminal_state": {"$ref": "#/$defs/terminalState"},
                 "output_chars": {"type": "integer", "minimum": 0},
                 "duration_ms": {"type": "number", "minimum": 0},
+                "diagnostics": {"$ref": "#/$defs/chatDiagnostics"},
                 "error": {"$ref": "#/$defs/errorDetail"}
               },
               "additionalProperties": false,

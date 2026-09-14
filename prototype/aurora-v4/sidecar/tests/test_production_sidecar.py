@@ -259,7 +259,8 @@ class CompositionTests(unittest.IsolatedAsyncioTestCase):
             self.assertTrue(all(caps["implementation"].values()))
             self.assertTrue(caps["voice"]["edge_tts"])
             self.assertTrue(caps["voice"]["cosyvoice_remote"])
-            self.assertFalse(any(caps[k] for k in ("chat_streaming", "chat_cancel", "memory", "knowledge", "rag")))
+            self.assertTrue(caps["chat_streaming"] and caps["chat_cancel"])
+            self.assertFalse(any(caps[k] for k in ("memory", "knowledge", "rag")))
             self.assertFalse(any(caps["voice"][k] for k in ("ipc", "streaming_pcm", "cosyvoice_local")))
 
 
@@ -276,19 +277,11 @@ class ProcessTests(unittest.IsolatedAsyncioTestCase):
                 ack = json.loads(await ws.recv())
                 validate_message(ack)
                 self.assertEqual(ack["payload"]["state"], expected_state)
-                self.assertFalse(ack["payload"]["capabilities"]["chat_streaming"])
+                self.assertTrue(ack["payload"]["capabilities"]["chat_streaming"])
                 await ws.send(json.dumps(envelope("health.request")))
                 health = json.loads(await ws.recv())
                 validate_message(health)
                 self.assertEqual(health["payload"]["state"], expected_state)
-                for kind, payload in (("chat.request", {"input": "must not generate", "conversation_id": None}),
-                                      ("chat.cancel.request", {"target_request_id": "test"})):
-                    command = envelope(kind, **payload)
-                    command.update(session_id="s", generation_id="g")
-                    await ws.send(json.dumps(command))
-                    error = json.loads(await ws.recv())
-                    self.assertEqual(error["type"], "error")
-                    self.assertEqual(error["payload"]["code"], "BACKEND_NOT_READY")
                 await ws.send(json.dumps(envelope("shutdown.request")))
                 self.assertEqual(json.loads(await ws.recv())["type"], "shutdown.ack")
             await asyncio.wait_for(process.wait(), 4)

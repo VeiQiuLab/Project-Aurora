@@ -91,7 +91,7 @@ class ProductionComposition:
     def capabilities(self):
         exists = lambda path: (self.root / path).is_file()
         return {
-            "chat_streaming": False, "chat_cancel": False,
+            "chat_streaming": True, "chat_cancel": True,
             "memory": False, "knowledge": False, "rag": False,
             "voice": {"ipc": False,
                       "edge_tts": exists("modules/experience/voice/providers/edge_tts.py"),

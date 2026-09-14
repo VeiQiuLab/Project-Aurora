@@ -2,7 +2,7 @@ use std::{
     path::PathBuf,
     process::Stdio,
     sync::{Arc, Mutex as StdMutex},
-    time::Instant,
+    time::{Instant, SystemTime, UNIX_EPOCH},
 };
 
 use futures_util::{SinkExt, StreamExt};
@@ -27,9 +27,9 @@ use uuid::Uuid;
 use crate::{
     protocol::{
         BOOTSTRAP_MAX_BYTES, BackendInfo, BackendSnapshot, BackendState, BootstrapReady,
-        CancelTarget, ChatStartResult, FrontendEvent, PROTOCOL, ProductionDiagnostics,
-        PrototypeMetrics, VERSION, chat_cancel, chat_request, health, hello, object,
-        require_string, shutdown, validate_hello_ack_for_mode, validate_sidecar_event,
+        CancelTarget, ChatDiagnostics, ChatStartResult, FrontendEvent, PROTOCOL,
+        ProductionDiagnostics, PrototypeMetrics, VERSION, chat_cancel, chat_request, health, hello,
+        object, require_string, shutdown, validate_hello_ack_for_mode, validate_sidecar_event,
     },
     registry::{RequestOwner, RequestRegistry},
 };
@@ -348,7 +348,7 @@ impl BackendManager {
             } else {
                 BackendState::Ready
             };
-            data.info.chat_enabled = self.mode == "mock";
+            data.info.chat_enabled = true;
             if data.metrics.desktop_startup_ms == 0.0 {
                 data.metrics.desktop_startup_ms = elapsed_ms(self.desktop_started);
             }
@@ -405,16 +405,17 @@ impl BackendManager {
     }
 
     pub async fn chat_start(&self, input: String) -> Result<ChatStartResult, String> {
+        let received = unix_ms();
         if input.trim().is_empty() {
             return Err("Message cannot be empty.".into());
         }
         let (result, writer) = {
             let mut data = self.inner.lock().await;
-            if data.state != BackendState::Ready {
+            if !matches!(data.state, BackendState::Ready | BackendState::Degraded) {
                 return Err("Backend is not ready.".into());
             }
             if !data.info.chat_enabled {
-                return Err("Production chat is not enabled in V4-3A.".into());
+                return Err("Chat capability is unavailable.".into());
             }
             if input.len() > data.negotiated_chat_input_max_bytes {
                 return Err("Message exceeds the negotiated limit.".into());
@@ -423,6 +424,8 @@ impl BackendManager {
                 request_id: format!("request-{}", Uuid::new_v4().simple()),
                 session_id: data.session_id.clone(),
                 generation_id: format!("generation-{}", Uuid::new_v4().simple()),
+                rust_received_unix_ms: received,
+                rust_queued_unix_ms: unix_ms(),
             };
             let owner = RequestOwner {
                 request_id: result.request_id.clone(),
@@ -435,6 +438,7 @@ impl BackendManager {
                 Instant::now(),
             );
             data.metrics.command_to_first_delta_ms = None;
+            data.metrics.cancel_to_terminal_ms = None;
             let writer = data
                 .writer
                 .clone()
@@ -619,9 +623,11 @@ impl BackendManager {
                 self.emit(FrontendEvent::ChatAccepted {
                     request_id: owner.request_id,
                     generation_id: owner.generation_id,
+                    ipc_received_unix_ms: value["payload"]["ipc_received_unix_ms"].as_f64(),
                 });
             }
             "chat.delta" => {
+                let received = unix_ms();
                 let owner = owner_from(&value)?;
                 let seq = value
                     .get("seq")
@@ -647,6 +653,8 @@ impl BackendManager {
                     generation_id: owner.generation_id,
                     seq,
                     delta,
+                    python_sent_unix_ms: value["payload"]["python_sent_unix_ms"].as_f64(),
+                    rust_received_unix_ms: received,
                 });
             }
             "chat.completed" => {
@@ -663,16 +671,22 @@ impl BackendManager {
                     .and_then(|error| error.get("code"))
                     .and_then(Value::as_str)
                     .map(str::to_owned);
+                let diagnostics = payload
+                    .get("diagnostics")
+                    .cloned()
+                    .map(ChatDiagnostics::from_wire)
+                    .transpose()?;
                 let mut data = self.inner.lock().await;
                 if !data.registry.terminal(&owner, &terminal_state)? {
                     return Err("DUPLICATE_TERMINAL".into());
                 }
-                if terminal_state == "cancelled"
-                    && let Some(started) = data
-                        .cancel_started
-                        .remove(&(owner.session_id.clone(), owner.generation_id.clone()))
+                if let Some(started) = data
+                    .cancel_started
+                    .remove(&(owner.session_id.clone(), owner.generation_id.clone()))
                 {
-                    data.metrics.cancel_to_terminal_ms = Some(elapsed_ms(started));
+                    if terminal_state == "cancelled" {
+                        data.metrics.cancel_to_terminal_ms = Some(elapsed_ms(started));
+                    }
                 }
                 data.request_started
                     .remove(&(owner.session_id.clone(), owner.generation_id.clone()));
@@ -692,6 +706,7 @@ impl BackendManager {
                     generation_id: owner.generation_id,
                     terminal_state,
                     error_code,
+                    diagnostics,
                 });
                 self.emit_state().await;
             }
@@ -738,6 +753,8 @@ impl BackendManager {
             data.info.chat_enabled = false;
             data.writer = None;
             data.sidecar_instance_id = None;
+            data.request_started.clear();
+            data.cancel_started.clear();
             data.registry.backend_lost()
         };
         for owner in terminal_events {
@@ -746,6 +763,7 @@ impl BackendManager {
                 generation_id: owner.generation_id,
                 terminal_state: "backend_lost".into(),
                 error_code: Some("BACKEND_LOST".into()),
+                diagnostics: None,
             });
         }
         self.emit_state().await;
@@ -877,6 +895,14 @@ fn find_sidecar_launch(mode: &str) -> Result<SidecarLaunch, String> {
 
 fn elapsed_ms(started: Instant) -> f64 {
     started.elapsed().as_secs_f64() * 1000.0
+}
+
+fn unix_ms() -> f64 {
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_secs_f64()
+        * 1000.0
 }
 
 fn short_id(value: &str) -> &str {
@@ -1015,7 +1041,7 @@ mod tests {
         manager.start(false).await.unwrap();
         let initial = wait_for(&manager, |s| s.info.diagnostics.is_some()).await;
         assert_eq!(initial.state, BackendState::Degraded);
-        assert!(!initial.info.chat_enabled);
+        assert!(initial.info.chat_enabled);
         assert_eq!(
             initial.info.diagnostics.as_ref().unwrap().ollama.error_code,
             "OLLAMA_UNAVAILABLE"
@@ -1024,7 +1050,7 @@ mod tests {
             manager
                 .chat_start("must never generate".into())
                 .await
-                .is_err()
+                .is_ok()
         );
         let (old_epoch, old_instance, old_identity) = {
             let data = manager.inner.lock().await;
@@ -1108,7 +1134,7 @@ mod tests {
         );
         let identity = manager.inner.lock().await.launch_identity.clone().unwrap();
         eprintln!("PRODUCTION_PID={}", identity.0);
-        assert!(!initial.info.chat_enabled);
+        assert!(initial.info.chat_enabled);
         manager.crash().await.unwrap();
         wait_for(&manager, |s| s.state == BackendState::Disconnected).await;
         manager.restart().await.unwrap();

@@ -137,6 +137,20 @@ def run_stream(monkeypatch, response, *, stop_event=None, diagnostics=None, on_c
     return result, session, chunks
 
 
+@pytest.mark.parametrize("memory_option,expected_calls", [(None, 1), (True, 1), (False, 0)])
+def test_direct_chat_memory_opt_out_preserves_default_behavior(monkeypatch, memory_option, expected_calls):
+    collector = Mock()
+    monkeypatch.setattr("modules.memory.MemoryStore.queue_candidates", collector)
+    response = ListResponse([ollama_line("reply"), ollama_line(done=True)])
+    monkeypatch.setattr(chat.urllib.request, "urlopen", Mock(return_value=response))
+    session = ChatSession()
+    kwargs = {} if memory_option is None else {"collect_memory_candidates": memory_option}
+    assert chat.stream_chat(MODEL, "hello", session, lambda _: None, threading.Event(), **kwargs) == "completed"
+    assert collector.call_count == expected_calls
+    assert session.snapshot()[-1] == {"role": "assistant", "content": "reply"}
+    assert response.close_calls == 1
+
+
 def test_normal_streaming_multiple_chunks_and_cleanup(monkeypatch):
     response = ListResponse([
         ollama_line("hello "),

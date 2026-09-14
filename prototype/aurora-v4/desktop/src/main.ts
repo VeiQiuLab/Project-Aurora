@@ -8,6 +8,7 @@ import {
 } from "./conversation_store";
 import { decideComposerAction } from "./input_policy";
 import { captionLabel, composerPresentation } from "./presentation_policy";
+import { ownsChatEvent, consumeDelta, chatErrorLabel, chatDiagnosticLabel } from "./chat_event_policy";
 import "./styles.css";
 
 type BackendState =
@@ -52,17 +53,21 @@ interface ChatStartResult {
   requestId: string;
   sessionId: string;
   generationId: string;
+  rustReceivedUnixMs: number;
+  rustQueuedUnixMs: number;
 }
 
 type GatewayEvent =
   | { type: "backend_state"; state: BackendState; metrics: PrototypeMetrics; info: BackendInfo }
-  | { type: "chat_accepted"; requestId: string; generationId: string }
+  | { type: "chat_accepted"; requestId: string; generationId: string; ipcReceivedUnixMs: number | null }
   | {
       type: "chat_delta";
       requestId: string;
       generationId: string;
       seq: number;
       delta: string;
+      pythonSentUnixMs: number | null;
+      rustReceivedUnixMs: number;
     }
   | {
       type: "chat_terminal";
@@ -70,6 +75,7 @@ type GatewayEvent =
       generationId: string;
       terminalState: string;
       errorCode: string | null;
+      diagnostics: Record<string, number | boolean | string | null> | null;
     }
   | { type: "cancel_ack"; generationId: string; outcome: string }
   | { type: "protocol_warning"; code: string };
@@ -81,6 +87,9 @@ interface ActiveGeneration extends ChatStartResult {
   conversationId: string;
   messageId: string;
   content: string;
+  sendAt: number;
+  cancelAt: number | null;
+  timings: Record<string, number | null>;
 }
 
 type WindowAction = "minimize" | "toggle_maximize" | "close";
@@ -115,6 +124,7 @@ let compositionActive = false;
 let bufferedStartEvents: GatewayEvent[] = [];
 let localConversationIndex = 0;
 let localMessageIndex = 0;
+let lastChatSummary = "";
 
 const conversations = new ConversationStore(initialConversations());
 
@@ -169,13 +179,14 @@ const updateBackendInfo = (info: BackendInfo): void => {
     lines.push(`Ollama ${diagnostics.ollama.reachable ? "已连接" : "不可用"}`);
     lines.push(`模型 ${diagnostics.ollama.configured_model || "未配置"} · ${diagnostics.ollama.model_available ? "已安装" : "不可用"}`);
     lines.push(`Thinking ${diagnostics.ollama_think_mode} · Keep Alive ${diagnostics.ollama_keep_alive ?? "默认"}`);
-    lines.push(`探测 ${diagnostics.ollama.probe_duration_ms.toFixed(1)}ms · Chat 尚未开放`);
+    lines.push(`探测 ${diagnostics.ollama.probe_duration_ms.toFixed(1)}ms · Direct Chat`);
   }
+  if (lastChatSummary) lines.push(lastChatSummary);
   getElement("backend-diagnostics").textContent = lines.join("\n");
 };
 
 const updateControls = (): void => {
-  const ready = backendState === "READY" && backendInfo.chat_enabled;
+  const ready = ["READY", "DEGRADED"].includes(backendState) && backendInfo.chat_enabled;
   const active = activeGeneration !== null && !activeGeneration.terminal;
   const presentation = composerPresentation({
     ready, active, starting: startingGeneration,
@@ -298,10 +309,7 @@ const updateMessage = (
 const ownsActiveGeneration = (
   event: Extract<GatewayEvent, { requestId: string; generationId: string }>,
 ): boolean =>
-  activeGeneration !== null &&
-  !activeGeneration.terminal &&
-  activeGeneration.requestId === event.requestId &&
-  activeGeneration.generationId === event.generationId;
+  ownsChatEvent(activeGeneration, event);
 
 const applyGatewayEvent = (event: GatewayEvent): void => {
   if (event.type === "backend_state") {
@@ -319,13 +327,25 @@ const applyGatewayEvent = (event: GatewayEvent): void => {
     return;
   }
   if (event.type === "chat_accepted") {
-    if (!ownsActiveGeneration(event)) return;
+    if (!ownsActiveGeneration(event) || !activeGeneration) return;
+    activeGeneration.timings.rust_to_python_wall_estimate_ms = event.ipcReceivedUnixMs === null ? null :
+      event.ipcReceivedUnixMs - activeGeneration.rustQueuedUnixMs;
     return;
   }
   if (event.type === "chat_delta") {
-    if (!ownsActiveGeneration(event) || activeGeneration === null) return;
-    if (event.seq !== activeGeneration.expectedSeq) return;
-    activeGeneration.expectedSeq += 1;
+    if (!consumeDelta(activeGeneration, event) || activeGeneration === null) return;
+    if (activeGeneration.timings.send_to_first_frontend_delta_ms === undefined) {
+      const frontendAt = performance.now();
+      const frontendWall = Date.now();
+      Object.assign(activeGeneration.timings, {
+        send_to_first_frontend_delta_ms: frontendAt - activeGeneration.sendAt,
+        python_to_rust_wall_estimate_ms: event.pythonSentUnixMs === null ? null :
+          event.rustReceivedUnixMs - event.pythonSentUnixMs,
+        rust_to_frontend_wall_estimate_ms: frontendWall - event.rustReceivedUnixMs,
+      });
+      performance.mark("aurora-first-frontend-delta", { detail: { generationId: event.generationId,
+        ...activeGeneration.timings } });
+    }
     activeGeneration.content += event.delta;
     updateMessage(
       activeGeneration.conversationId,
@@ -337,15 +357,22 @@ const applyGatewayEvent = (event: GatewayEvent): void => {
   if (event.type === "chat_terminal") {
     if (!ownsActiveGeneration(event) || activeGeneration === null) return;
     activeGeneration.terminal = true;
+    const summary = {
+      generationId: event.generationId, status: event.terminalState, errorCode: event.errorCode,
+      delta_count: activeGeneration.expectedSeq,
+      ...activeGeneration.timings,
+      send_to_terminal_ms: performance.now() - activeGeneration.sendAt,
+      ui_cancel_to_terminal_ms: activeGeneration.cancelAt === null ? null : performance.now() - activeGeneration.cancelAt,
+      production: event.diagnostics,
+    };
+    performance.mark("aurora-terminal", { detail: summary });
+    lastChatSummary = chatDiagnosticLabel(summary);
+    updateBackendInfo(backendInfo);
     let finalContent = activeGeneration.content;
     let finalState: MessageState = "normal";
     if (event.terminalState !== "completed") {
-      const terminalLabels: Record<string, string> = {
-        cancelled: "已取消",
-        backend_lost: "后端连接已中断",
-      };
-      const label = terminalLabels[event.terminalState] ?? "生成失败";
-      finalContent = `${activeGeneration.content}${activeGeneration.content ? "\n\n" : ""}[${label}${event.errorCode ? ` · ${event.errorCode}` : ""}]`;
+      const label = chatErrorLabel(event.terminalState, event.errorCode);
+      finalContent = `${activeGeneration.content}${activeGeneration.content ? "\n\n" : ""}[${label}]`;
       finalState = event.terminalState === "cancelled" ? "normal" : "failed";
     }
     updateMessage(
@@ -379,7 +406,7 @@ const applyGatewayEvent = (event: GatewayEvent): void => {
 const sendPrompt = async (): Promise<void> => {
   if (compositionActive || startingGeneration || activeGeneration !== null) return;
   const input = promptInput.value.trim();
-  if (!input || backendState !== "READY" || !backendInfo.chat_enabled) return;
+  if (!input || !["READY", "DEGRADED"].includes(backendState) || !backendInfo.chat_enabled) return;
   const conversationId = conversations.activeId;
   const conversation = conversations.active;
   const title = conversation.title === "新对话" ? summarize(input, 14) : null;
@@ -392,6 +419,11 @@ const sendPrompt = async (): Promise<void> => {
   startingGeneration = true;
   bufferedStartEvents = [];
   updateControls();
+  const sendAt = performance.now();
+  const sendWall = Date.now();
+  // Bounded, text-free developer measurements; handler receipt is not a paint timestamp.
+  for (const name of ["aurora-send", "aurora-first-frontend-delta", "aurora-terminal"]) performance.clearMarks(name);
+  performance.mark("aurora-send");
   try {
     const result = await invoke<ChatStartResult>("chat_start", { input });
     activeGeneration = {
@@ -402,6 +434,12 @@ const sendPrompt = async (): Promise<void> => {
       conversationId,
       messageId,
       content: "",
+      sendAt,
+      cancelAt: null,
+      timings: {
+        ui_command_roundtrip_ms: performance.now() - sendAt,
+        ui_to_rust_wall_estimate_ms: result.rustReceivedUnixMs - sendWall,
+      },
     };
     startingGeneration = false;
     const events = bufferedStartEvents;
@@ -409,7 +447,7 @@ const sendPrompt = async (): Promise<void> => {
     events.forEach(applyGatewayEvent);
   } catch (error) {
     startingGeneration = false;
-    updateMessage(conversationId, messageId, `[请求失败：${String(error)}]`, "failed");
+    updateMessage(conversationId, messageId, "[请求未能发送，请检查后端连接或输入长度。]", "failed");
   }
   updateControls();
 };
@@ -420,6 +458,7 @@ const cancelActive = async (): Promise<void> => {
   }
   const generation = activeGeneration;
   generation.cancelRequested = true;
+  generation.cancelAt = performance.now();
   updateControls();
   try {
     await invoke<boolean>("chat_cancel", {
@@ -431,7 +470,7 @@ const cancelActive = async (): Promise<void> => {
     });
   } catch (error) {
     if (activeGeneration !== generation || generation.terminal) return;
-    activeGeneration.content += `\n\n[取消失败：${String(error)}]`;
+    activeGeneration.content += "\n\n[未能停止，请检查后端连接。]";
     updateMessage(
       activeGeneration.conversationId,
       activeGeneration.messageId,
@@ -551,7 +590,7 @@ const initialize = async (): Promise<void> => {
   updateMetrics(snapshot.metrics);
 };
 
-void initialize().catch((error) => {
+void initialize().catch(() => {
   updateBackendState("DISCONNECTED");
-  backendStatusText.textContent = `桌面网关不可用：${String(error)}`;
+  backendStatusText.textContent = "桌面网关暂不可用。";
 });
