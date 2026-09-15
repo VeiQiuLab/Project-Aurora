@@ -11,6 +11,7 @@ import argparse
 import asyncio
 import json
 import os
+import shutil
 import socket
 import subprocess
 import tempfile
@@ -23,6 +24,7 @@ import psutil
 from websockets.asyncio.client import connect
 from websockets.exceptions import ConnectionClosed
 from smoke_production_sidecar import ProductionComposition, hash_file, read_api
+from smoke_production_context import source_fingerprint
 
 
 def get_json(url):
@@ -75,11 +77,24 @@ async def observe(args):
     with socket.socket() as reserved:
         reserved.bind(("127.0.0.1", 0))
         port = reserved.getsockname()[1]
+    source_root = composition.context_root
+    context_before = source_fingerprint(source_root) if args.isolate_context else None
     with tempfile.TemporaryDirectory(prefix="aurora-v4-webview-smoke-") as webview_data:
         env = {**os.environ, "AURORA_V4_BACKEND": "production",
                "WEBVIEW2_USER_DATA_FOLDER": webview_data,
                "WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS":
                    f"--remote-debugging-port={port} --remote-debugging-address=127.0.0.1"}
+        isolated_data = Path(webview_data) / "context-data"
+        if args.isolate_context:
+            # Snapshot real read-only sources outside the repository. Never copy
+            # conversation history; all UI writes belong to this disposable root.
+            (isolated_data / "config").mkdir(parents=True)
+            shutil.copy2(composition.settings.config_file, isolated_data / "config" / "settings.json")
+            for name in ("memory", "persona", "knowledge"):
+                if (source_root / name).exists():
+                    shutil.copytree(source_root / name, isolated_data / name)
+            isolated_before = source_fingerprint(isolated_data)
+            env["AURORA_USER_DATA_DIR"] = str(isolated_data)
         startup = subprocess.STARTUPINFO()
         startup.dwFlags |= subprocess.STARTF_USESHOWWINDOW
         startup.wShowWindow = 1  # user-operated, explicitly interactive acceptance window
@@ -168,6 +183,17 @@ async def observe(args):
             report["desktop_exit_code"] = process.returncode
             report["models_after"] = read_api(host, "/api/ps")
             report["settings_unchanged"] = before_hash == hash_file(composition.settings.config_file)
+            if args.isolate_context:
+                report["original_context_unchanged"] = context_before == source_fingerprint(source_root)
+                report["snapshot_context_unchanged"] = isolated_before == source_fingerprint(isolated_data)
+                # Content-free proof of completed persistence in the disposable store.
+                histories = []
+                for file in (isolated_data / "conversations").glob("*.json"):
+                    data = json.loads(file.read_text(encoding="utf-8"))
+                    messages = data.get("messages", [])
+                    histories.append({"user_turns": sum(m.get("role") == "user" for m in messages),
+                                      "assistant_turns": sum(m.get("role") == "assistant" for m in messages)})
+                report["isolated_histories"] = histories
             composition.close()
             save()
             print(json.dumps({"observer": "finished", "orphan_python_pids": report["orphan_python_pids"],
@@ -179,6 +205,8 @@ def main():
     parser.add_argument("--desktop-exe", type=Path, required=True)
     parser.add_argument("--report", type=Path, required=True)
     parser.add_argument("--duration", type=float, default=1800, help="maximum observation seconds")
+    parser.add_argument("--isolate-context", action="store_true",
+                        help="snapshot real settings/context to disposable data; never read/write real conversations")
     args = parser.parse_args()
     asyncio.run(observe(args))
 

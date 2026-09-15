@@ -273,3 +273,30 @@ def test_conversation_contract_rejects_path_ids_and_inconsistent_detail_counts()
     detail["payload"]["conversation"]["message_count"] = 3
     with pytest.raises(contract.ContractError):
         contract.validate_message(detail)
+
+
+def test_context_diagnostics_extension_is_optional_and_schema_validated():
+    import jsonschema
+
+    schema = json.loads((CONTRACT_DIR / "ipc-v1.schema.json").read_text(encoding="utf-8"))
+    message = next(message for message in contract.load_examples(CONTRACT_DIR / "ipc-v1.chat.examples.json")
+                    if message["type"] == "chat.completed")
+    message["payload"]["diagnostics"].update({
+        "context_total_ms": 12.5,
+        "memory_ms": 1.0,
+        "persona_ms": None,
+        "knowledge_ms": 2.0,
+        "rag_ms": None,
+        "prompt_assembly_ms": 0.5,
+        "history_message_count": 2,
+        "memory_item_count": 1,
+        "knowledge_item_count": 0,
+        "rag_result_count": 0,
+        "memory_enabled": True,
+        "persona_enabled": False,
+        "knowledge_enabled": True,
+        "rag_enabled": False,
+        "context_error_stage": None,
+    })
+    contract.validate_message(message)
+    jsonschema.validate(message, schema)

@@ -4,9 +4,6 @@ import json
 import urllib.error
 import urllib.request
 
-from modules.settings import settings
-
-
 DEFAULT_EMBEDDING_TIMEOUT = 60
 
 
@@ -17,9 +14,14 @@ class EmbeddingError(Exception):
 class OllamaEmbeddingProvider:
     """Generate embeddings through the configured Ollama endpoint."""
 
-    def __init__(self, model=None, host=None, timeout=DEFAULT_EMBEDDING_TIMEOUT):
-        self.model = str(model or settings.get("embedding_model", "nomic-embed-text:latest") or "").strip()
-        self.host = str(host or settings.get("ollama.host", "http://127.0.0.1:11434") or "").strip().rstrip("/")
+    def __init__(self, model=None, host=None, timeout=DEFAULT_EMBEDDING_TIMEOUT, *, settings_store=None):
+        if not model or not host:
+            if settings_store is None:
+                from modules.settings import settings as settings_store
+            model = model or settings_store.get("embedding_model", "nomic-embed-text:latest")
+            host = host or settings_store.get("ollama.host", "http://127.0.0.1:11434")
+        self.model = str(model or "").strip()
+        self.host = str(host or "").strip().rstrip("/")
         self.timeout = timeout
 
     def embed_text(self, text):

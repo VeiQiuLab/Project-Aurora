@@ -10,6 +10,7 @@ import sys
 import subprocess
 from contextlib import contextmanager
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+from pathlib import Path
 from unittest.mock import patch
 
 from test_production_sidecar import ROOT, ProductionComposition, write_settings, envelope, validate_message
@@ -83,7 +84,12 @@ class BridgeTests(unittest.IsolatedAsyncioTestCase):
     async def setup_bridge(self, host, directory):
         self.events = []
         self.connection = object()
-        c = ProductionComposition(ROOT, write_settings(directory, host))
+        root = Path(directory)
+        c = ProductionComposition(ROOT, write_settings(directory, host,
+                                  persona={"enabled": False}, knowledge={"enabled": False},
+                                  rag={"pipeline_enabled": False}),
+                                  conversation_root=root / "conversations",
+                                  context_root=root)
         self.sidecar = ProductionSidecar("test-token", c)
 
         async def send(connection, event):
@@ -103,9 +109,9 @@ class BridgeTests(unittest.IsolatedAsyncioTestCase):
             original_import = builtins.__import__
 
             def guarded(name, *args, **kwargs):
-                if name.startswith(("modules.memory", "widgets", "tkinter", "modules.persona",
-                                    "modules.knowledge", "modules.conversation")):
-                    raise AssertionError("context/title/persistence must not be imported")
+                if name.startswith(("widgets", "tkinter", "modules.memory_intelligence",
+                                    "modules.conversation_intelligence")):
+                    raise AssertionError("UI/post-turn intelligence must not be imported")
                 return original_import(name, *args, **kwargs)
             with patch("builtins.__import__", side_effect=guarded):
                 await bridge.start(self.connection, request())
@@ -219,7 +225,7 @@ class BridgeTests(unittest.IsolatedAsyncioTestCase):
                     await release_send.wait()
                 await original_send(connection, event)
 
-            def fast_producer(request, model, handle, forward):
+            def fast_producer(request, model, handle, forward, context_snapshot):
                 try:
                     for i in range(1000):
                         if i == 17:
@@ -252,7 +258,7 @@ class BridgeTests(unittest.IsolatedAsyncioTestCase):
                 error = bridge.adapter.api["ChatError"]("private path/token", category=category)
                 self.assertEqual(bridge.adapter.error_code(error), expected)
             entered = threading.Event()
-            def broken_after_cancel(request, model, handle, forward):
+            def broken_after_cancel(request, model, handle, forward, context_snapshot):
                 entered.set()
                 handle.stop_event.wait(3)
                 raise ConnectionResetError("private socket detail")

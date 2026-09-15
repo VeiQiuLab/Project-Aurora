@@ -122,14 +122,16 @@ class MemoryExtractor:
 class MemoryStore:
     """Manage manually curated memories without automatic chat analysis."""
 
-    def __init__(self, file_path=None):
+    def __init__(self, file_path=None, *, read_only=False):
         if file_path:
             candidate = Path(file_path)
             self.file_path = candidate / "memories.json" if candidate.suffix.lower() != ".json" else candidate
         else:
             self.file_path = MEMORY_DIR / "memories.json"
         self.candidates_file = self.file_path.parent / "memory_candidates.json"
-        self.file_path.parent.mkdir(parents=True, exist_ok=True)
+        self.read_only = bool(read_only)
+        if not self.read_only:
+            self.file_path.parent.mkdir(parents=True, exist_ok=True)
         self._lock = threading.Lock()
 
     @staticmethod
@@ -345,7 +347,7 @@ class MemoryStore:
         if source == "corrupt":
             return []
         normalized = [self._normalize(item) for item in data]
-        if source == "backup" or normalized != data:
+        if not self.read_only and (source == "backup" or normalized != data):
             self._write(normalized)
         return normalized
 

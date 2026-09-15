@@ -420,7 +420,12 @@ def validate_chat_diagnostics(value):
     import math
     numeric = ["request_to_headers_ms","request_to_first_model_output_ms","request_to_first_content_ms","first_raw_to_first_content_ms","load_duration_ms","prompt_eval_duration_ms","eval_duration_ms","total_duration_ms","stream_total_ms","cancel_transport_latency_ms","prompt_eval_count","eval_count","reasoning_chars","ipc_to_stream_start_ms","ipc_to_first_delta_ms","ipc_to_terminal_ms","cancel_to_terminal_ms"]
     other = {"active_response", "worker_exited", "ollama_think_mode", "think_payload_value", "ollama_keep_alive"}
-    if not isinstance(value, dict) or set(value) != set(numeric) | other:
+    context_numeric = {"context_total_ms", "memory_ms", "persona_ms", "knowledge_ms", "rag_ms", "prompt_assembly_ms",
+                       "history_message_count", "memory_item_count", "knowledge_item_count", "rag_result_count"}
+    context_other = {"memory_enabled", "persona_enabled", "knowledge_enabled", "rag_enabled", "context_error_stage"}
+    base_fields = set(numeric) | other
+    context_fields = context_numeric | context_other
+    if not isinstance(value, dict) or not base_fields <= set(value) <= base_fields | context_fields:
         raise ContractError("invalid chat diagnostic fields")
     for name in numeric:
         number = value[name]
@@ -434,6 +439,17 @@ def validate_chat_diagnostics(value):
         raise ContractError("invalid chat think value")
     if value["ollama_keep_alive"] is not None and (not isinstance(value["ollama_keep_alive"], str) or len(value["ollama_keep_alive"]) > 128):
         raise ContractError("invalid chat keep alive")
+    if set(value) == base_fields:
+        return
+    for name in context_numeric:
+        number = value.get(name)
+        if number is not None and (type(number) not in {int, float} or not math.isfinite(number) or number < 0):
+            raise ContractError("invalid context metric")
+    for name in ("memory_enabled", "persona_enabled", "knowledge_enabled", "rag_enabled"):
+        if name in value and type(value[name]) is not bool:
+            raise ContractError("invalid context enabled flag")
+    if value.get("context_error_stage") not in {None, "memory", "persona", "knowledge", "rag", "prompt_assembly"}:
+        raise ContractError("invalid context error stage")
 
 
 def _validate_payload(message_type: str, payload: Mapping[str, Any]) -> None:

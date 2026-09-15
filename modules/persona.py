@@ -26,15 +26,17 @@ def _now():
 class PersonaStore:
     """Load, save, update, and reset the local Persona configuration."""
 
-    def __init__(self, file_path=None):
+    def __init__(self, file_path=None, *, read_only=False):
         if file_path:
             self.file_path = Path(file_path)
             self.directory = self.file_path.parent
         else:
             self.directory = PERSONA_DIR
             self.file_path = self.directory / "persona.json"
-        self.directory.mkdir(parents=True, exist_ok=True)
-        if not self.file_path.exists():
+        self.read_only = bool(read_only)
+        if not self.read_only:
+            self.directory.mkdir(parents=True, exist_ok=True)
+        if not self.read_only and not self.file_path.exists():
             self.reset()
 
     def _normalize(self, data):
@@ -75,7 +77,8 @@ class PersonaStore:
         persona = self._normalize(data)
         if update_timestamp:
             persona["last_loaded_time"] = _now()
-        self.save(persona, update_timestamp=False)
+        if not self.read_only:
+            self.save(persona, update_timestamp=False)
         return persona
 
     def save(self, persona, update_timestamp=True):

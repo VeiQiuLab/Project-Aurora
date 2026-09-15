@@ -80,12 +80,15 @@ class OllamaHealth:
 
 class ProductionComposition:
     def __init__(self, root: Path | None = None, config_file: Path | None = None,
-                 conversation_root: Path | None = None):
+                 conversation_root: Path | None = None,
+                 context_root: Path | None = None):
         self.root = root or app_paths.PROGRAM_ROOT
         self.settings = ReadOnlySettings(self.root, config_file)
         self.ollama = OllamaHealth(self.settings)
         self._conversation_root = conversation_root
+        self._context_root = context_root
         self._conversations = None
+        self._context = None
         self.diagnostics = {}
         self.state = "DEGRADED"
         self.closed = False
@@ -100,6 +103,24 @@ class ProductionComposition:
 
             self._conversations = ConversationPersistence(self._conversation_root)
         return self._conversations
+
+    @property
+    def context_root(self):
+        if self._context_root is not None:
+            return self._context_root
+        if self._conversation_root is not None:
+            return Path(self._conversation_root).parent
+        return app_paths.USER_DATA_DIR
+
+    @property
+    def context(self):
+        """Lazily expose the headless production context adapter."""
+
+        if self._context is None:
+            from production_sidecar.context import ProductionContextAdapter
+
+            self._context = ProductionContextAdapter(self, self.context_root)
+        return self._context
 
     def capabilities(self):
         exists = lambda path: (self.root / path).is_file()

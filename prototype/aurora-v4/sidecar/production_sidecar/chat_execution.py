@@ -12,6 +12,7 @@ from time import monotonic, time
 from websockets.exceptions import ConnectionClosed
 from production_sidecar.direct_chat import ChatRequest, DirectChatAdapter
 from production_sidecar.conversations import ConversationError
+from production_sidecar.context import ContextCancelled, ContextPreparationError
 
 LOGGER = logging.getLogger("aurora-v4-chat")
 TIMING_KEYS = (
@@ -20,6 +21,12 @@ TIMING_KEYS = (
     "eval_duration_ms", "total_duration_ms", "stream_total_ms", "cancel_transport_latency_ms",
     "prompt_eval_count", "eval_count", "reasoning_chars",
 )
+CONTEXT_DIAGNOSTIC_KEYS = {
+    "context_total_ms", "memory_ms", "persona_ms", "knowledge_ms", "rag_ms",
+    "prompt_assembly_ms", "history_message_count", "memory_item_count",
+    "knowledge_item_count", "rag_result_count", "memory_enabled",
+    "persona_enabled", "knowledge_enabled", "rag_enabled", "context_error_stage",
+}
 
 
 @dataclass
@@ -85,6 +92,8 @@ class ChatExecution:
 
     async def execute(self, run):
         worker = None
+        context_worker = None
+        context_snapshot = None
         status, code = "completed", None
         try:
             health = await self.sidecar.composition.refresh()
@@ -110,61 +119,85 @@ class ChatExecution:
                 elif run.handle.stop_event.is_set():
                     status = "cancelled"
                 else:
-                    loop = asyncio.get_running_loop()
-                    run.started_at = monotonic()
-
-                    def forward(chunk):
-                        # Each event stays well under the IPC byte limit, even UTF-8.
-                        for offset in range(0, len(chunk), 4096):
-                            if run.handle.stop_event.is_set():
-                                raise InterruptedError("Generation cancelled during forwarding")
-                            future = asyncio.run_coroutine_threadsafe(run.queue.put(chunk[offset:offset + 4096]), loop)
-                            while not run.handle.stop_event.is_set():
-                                try:
-                                    future.result(timeout=0.02)
-                                    break
-                                except concurrent.futures.TimeoutError:
-                                    continue
-                            else:
-                                future.cancel()
-                                raise InterruptedError("Generation cancelled during backpressure")
+                    try:
+                        context_worker = asyncio.create_task(asyncio.to_thread(
+                            self.sidecar.composition.context.prepare,
+                            run.request.text,
+                            history,
+                            run.handle.stop_event,
+                            conversation_id=run.request.conversation_id,
+                            generation_id=run.request.generation_id,
+                        ))
+                        # Cancelling the asyncio task must NOT detach the real
+                        # blocking context worker or release ownership early.
+                        context_snapshot = await asyncio.shield(context_worker)
+                    except ContextCancelled as error:
+                        run.handle.update_diagnostics(error.diagnostics or {})
+                        status = "cancelled"
+                    except ContextPreparationError as error:
+                        status, code = "failed", "INTERNAL_ERROR"
+                        run.handle.update_diagnostics(error.diagnostics or {"context_error_stage": error.stage})
+                    else:
+                        run.handle.update_diagnostics(context_snapshot.diagnostics)
                         if run.handle.stop_event.is_set():
-                            raise InterruptedError("Generation cancelled during forwarding")
+                            status = "cancelled"
+                        else:
+                            loop = asyncio.get_running_loop()
+                            run.started_at = monotonic()
 
-                    worker = asyncio.create_task(asyncio.to_thread(
-                        self.adapter.stream, run.request, probe["configured_model"], run.handle, forward))
-                    while not worker.done() or not run.queue.empty():
-                        try:
-                            delta = await asyncio.wait_for(run.queue.get(), 0.02)
-                        except asyncio.TimeoutError:
-                            continue
-                        if run.handle.stop_event.is_set() or self.active is not run:
-                            continue
-                        run.first_delta_at = run.first_delta_at or monotonic()
-                        await self.send(run, "chat.delta", {"delta": delta, "python_sent_unix_ms": time() * 1000}, seq=run.seq)
-                        run.seq += 1
-                        run.output_chars += len(delta)
-                    outcome = await worker  # rethrow real transport errors after draining accepted deltas
-                    if isinstance(outcome, tuple) and len(outcome) == 2:
-                        run.session_messages = outcome[1]
-                    if status == "completed" and run.request.conversation_id and run.session_messages:
-                        # Cancellation and persistence share one event-loop lock:
-                        # a cancel which wins before the save starts prevents a
-                        # completed assistant from being written, while a save
-                        # which has already committed wins as completed.
-                        async with run.persistence_lock:
-                            if run.cancel_at is None and not run.handle.stop_event.is_set():
+                            def forward(chunk):
+                                # Each event stays well under the IPC byte limit, even UTF-8.
+                                for offset in range(0, len(chunk), 4096):
+                                    if run.handle.stop_event.is_set():
+                                        raise InterruptedError("Generation cancelled during forwarding")
+                                    future = asyncio.run_coroutine_threadsafe(run.queue.put(chunk[offset:offset + 4096]), loop)
+                                    while not run.handle.stop_event.is_set():
+                                        try:
+                                            future.result(timeout=0.02)
+                                            break
+                                        except concurrent.futures.TimeoutError:
+                                            continue
+                                    else:
+                                        future.cancel()
+                                        raise InterruptedError("Generation cancelled during backpressure")
+                                if run.handle.stop_event.is_set():
+                                    raise InterruptedError("Generation cancelled during forwarding")
+
+                            worker = asyncio.create_task(asyncio.to_thread(
+                                self.adapter.stream, run.request, probe["configured_model"], run.handle, forward,
+                                context_snapshot))
+                            while not worker.done() or not run.queue.empty():
                                 try:
-                                    await asyncio.to_thread(
-                                        self.sidecar.composition.conversations.save_completed,
-                                        run.request.conversation_id,
-                                        probe["configured_model"],
-                                        run.session_messages,
-                                    )
-                                except ConversationError as error:
-                                    status, code = "failed", error.code
-                                else:
-                                    run.completion_committed = True
+                                    delta = await asyncio.wait_for(run.queue.get(), 0.02)
+                                except asyncio.TimeoutError:
+                                    continue
+                                if run.handle.stop_event.is_set() or self.active is not run:
+                                    continue
+                                run.first_delta_at = run.first_delta_at or monotonic()
+                                await self.send(run, "chat.delta", {"delta": delta, "python_sent_unix_ms": time() * 1000}, seq=run.seq)
+                                run.seq += 1
+                                run.output_chars += len(delta)
+                            outcome = await asyncio.shield(worker)  # rethrow errors without detaching the real thread
+                            if isinstance(outcome, tuple) and len(outcome) == 2:
+                                run.session_messages = outcome[1]
+                            if status == "completed" and run.request.conversation_id and run.session_messages:
+                                # Cancellation and persistence share one event-loop lock:
+                                # a cancel which wins before the save starts prevents a
+                                # completed assistant from being written, while a save
+                                # which has already committed wins as completed.
+                                async with run.persistence_lock:
+                                    if run.cancel_at is None and not run.handle.stop_event.is_set():
+                                        try:
+                                            await asyncio.to_thread(
+                                                self.sidecar.composition.conversations.save_completed,
+                                                run.request.conversation_id,
+                                                probe["configured_model"],
+                                                run.session_messages,
+                                            )
+                                        except ConversationError as error:
+                                            status, code = "failed", error.code
+                                        else:
+                                            run.completion_committed = True
         except asyncio.CancelledError:
             run.cancel_at = run.cancel_at or monotonic()
             run.handle.stop_event.set()
@@ -177,6 +210,12 @@ class ChatExecution:
             # No terminal/reuse until the actual blocking worker has exited.
             if run.handle.stop_event.is_set():
                 await asyncio.to_thread(run.handle.cancel)
+            if context_worker is not None:
+                outcome = (await asyncio.gather(context_worker, return_exceptions=True))[0]
+                if isinstance(outcome, (ContextCancelled, ContextPreparationError)):
+                    run.handle.update_diagnostics(outcome.diagnostics or {})
+                elif not isinstance(outcome, BaseException):
+                    run.handle.update_diagnostics(outcome.diagnostics)
             if worker is not None:
                 await asyncio.gather(worker, return_exceptions=True)
             await asyncio.to_thread(run.handle.close)
@@ -192,13 +231,15 @@ class ChatExecution:
                 self.last = run
             now = monotonic()
             diagnostics = {key: run.handle.diagnostics.get(key) for key in TIMING_KEYS}
+            diagnostics.update({key: run.handle.diagnostics[key] for key in CONTEXT_DIAGNOSTIC_KEYS
+                                if key in run.handle.diagnostics})
             diagnostics.update({
                 "ipc_to_stream_start_ms": (run.started_at - run.received_at) * 1000 if run.started_at else None,
                 "ipc_to_first_delta_ms": (run.first_delta_at - run.received_at) * 1000 if run.first_delta_at else None,
                 "ipc_to_terminal_ms": (now - run.received_at) * 1000,
                 "cancel_to_terminal_ms": (now - run.cancel_at) * 1000 if run.cancel_at else None,
                 "active_response": run.handle.active_response is not None,
-                "worker_exited": worker is None or worker.done(),
+                "worker_exited": (worker is None or worker.done()) and (context_worker is None or context_worker.done()),
                 **self.sidecar.composition.settings.policy.diagnostics(),
             })
             payload = {"terminal_state": status, "output_chars": run.output_chars,

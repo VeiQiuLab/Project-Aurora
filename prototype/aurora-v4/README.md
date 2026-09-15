@@ -37,6 +37,10 @@ persistence while preserving the existing `%APPDATA%\\Aurora\\conversations`
 store. See `V4_3C_VALIDATION.md`; the default backend and Stable entry point
 remain unchanged.
 
+Stage V4-4A adds read-only production Memory, Persona, Knowledge, and optional
+RAG context preparation before the existing streaming chat boundary. See
+`V4_4A_CONTEXT.md`; no post-turn intelligence, voice, or UI changes are made.
+
 ## Validation
 
 From the repository root:

@@ -200,7 +200,22 @@
         "null"
       ],
       "maxLength": 128
-    }
+    },
+    "context_total_ms": {"type": ["number", "null"], "minimum": 0},
+    "memory_ms": {"type": ["number", "null"], "minimum": 0},
+    "persona_ms": {"type": ["number", "null"], "minimum": 0},
+    "knowledge_ms": {"type": ["number", "null"], "minimum": 0},
+    "rag_ms": {"type": ["number", "null"], "minimum": 0},
+    "prompt_assembly_ms": {"type": ["number", "null"], "minimum": 0},
+    "history_message_count": {"type": ["number", "null"], "minimum": 0},
+    "memory_item_count": {"type": ["number", "null"], "minimum": 0},
+    "knowledge_item_count": {"type": ["number", "null"], "minimum": 0},
+    "rag_result_count": {"type": ["number", "null"], "minimum": 0},
+    "memory_enabled": {"type": "boolean"},
+    "persona_enabled": {"type": "boolean"},
+    "knowledge_enabled": {"type": "boolean"},
+    "rag_enabled": {"type": "boolean"},
+    "context_error_stage": {"type": ["string", "null"], "enum": [null, "memory", "persona", "knowledge", "rag", "prompt_assembly"]}
   }
 },
     "productionDiagnostics": {

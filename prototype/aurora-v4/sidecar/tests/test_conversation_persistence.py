@@ -143,7 +143,9 @@ class RpcTests(unittest.IsolatedAsyncioTestCase):
                 {"role": "user", "content": "previous"},
                 {"role": "assistant", "content": "answer"},
             ])
-            composition = ProductionComposition(ROOT, write_settings(root, host), conversation_root=conversation_root)
+            composition = ProductionComposition(ROOT, write_settings(root, host,
+                persona={"enabled": False}, knowledge={"enabled": False}, rag={"pipeline_enabled": False}),
+                conversation_root=conversation_root)
             sidecar = ProductionSidecar("token", composition)
             events = []
 

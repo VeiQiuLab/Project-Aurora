@@ -98,6 +98,36 @@ pub struct ChatDiagnostics {
     pub ollama_think_mode: String,
     pub think_payload_value: Option<bool>,
     pub ollama_keep_alive: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub context_total_ms: Option<f64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub memory_ms: Option<f64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub persona_ms: Option<f64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub knowledge_ms: Option<f64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub rag_ms: Option<f64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub prompt_assembly_ms: Option<f64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub history_message_count: Option<f64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub memory_item_count: Option<f64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub knowledge_item_count: Option<f64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub rag_result_count: Option<f64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub memory_enabled: Option<bool>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub persona_enabled: Option<bool>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub knowledge_enabled: Option<bool>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub rag_enabled: Option<bool>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub context_error_stage: Option<String>,
 }
 
 impl ChatDiagnostics {
@@ -121,10 +151,23 @@ impl ChatDiagnostics {
             result.ipc_to_first_delta_ms,
             result.ipc_to_terminal_ms,
             result.cancel_to_terminal_ms,
+            result.context_total_ms,
+            result.memory_ms,
+            result.persona_ms,
+            result.knowledge_ms,
+            result.rag_ms,
+            result.prompt_assembly_ms,
+            result.history_message_count,
+            result.memory_item_count,
+            result.knowledge_item_count,
+            result.rag_result_count,
         ]
         .iter()
         .flatten()
         .any(|n| !n.is_finite() || *n < 0.0)
+            || result.context_error_stage.as_ref().is_some_and(|s| !matches!(
+                s.as_str(), "memory" | "persona" | "knowledge" | "rag" | "prompt_assembly"
+            ))
             || !matches!(result.ollama_think_mode.as_str(), "on" | "off" | "default")
             || result.think_payload_value
                 != match result.ollama_think_mode.as_str() {
@@ -771,6 +814,30 @@ mod tests {
         event = examples[1].clone();
         event["payload"]["python_sent_unix_ms"] = json!(-1);
         assert!(validate_sidecar_event(&event).is_err());
+    }
+
+    #[test]
+    fn context_diagnostics_extend_v1_without_exposing_context_content() {
+        let examples: Vec<Value> = serde_json::from_str(include_str!("../../../contracts/ipc-v1.chat.examples.json")).unwrap();
+        let mut event = examples[2].clone();
+        let diagnostics = &mut event["payload"]["diagnostics"];
+        for name in ["context_total_ms", "memory_ms", "persona_ms", "knowledge_ms", "rag_ms", "prompt_assembly_ms",
+                     "history_message_count", "memory_item_count", "knowledge_item_count", "rag_result_count"] {
+            diagnostics[name] = json!(0.25);
+        }
+        for name in ["memory_enabled", "persona_enabled", "knowledge_enabled", "rag_enabled"] {
+            diagnostics[name] = json!(true);
+        }
+        diagnostics["context_error_stage"] = Value::Null;
+        validate_sidecar_event(&event).unwrap();
+        let safe = ChatDiagnostics::from_wire(event["payload"]["diagnostics"].clone()).unwrap();
+        assert_eq!(safe.context_total_ms, Some(0.25));
+        for (field, value) in [("context_total_ms", json!(-1)), ("rag_enabled", json!("yes")),
+                                ("context_error_stage", json!("private path")), ("persona_context", json!("private"))] {
+            let mut invalid = event.clone();
+            invalid["payload"]["diagnostics"][field] = value;
+            assert!(validate_sidecar_event(&invalid).is_err());
+        }
     }
 
     #[test]

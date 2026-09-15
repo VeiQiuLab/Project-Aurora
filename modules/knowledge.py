@@ -24,14 +24,16 @@ VECTOR_INDEX_FORMAT = "Project Aurora Knowledge Vector Index"
 class KnowledgeStore:
     """Manage local knowledge files and metadata for keyword retrieval."""
 
-    def __init__(self, base_path=None):
+    def __init__(self, base_path=None, *, read_only=False):
         self.base_path = Path(base_path) if base_path else KNOWLEDGE_DIR
         self.files_path = self.base_path / "files"
         self.metadata_file = self.base_path / "metadata.json"
         self.vector_index_file = self.base_path / "vector_index.json"
-        self.base_path.mkdir(parents=True, exist_ok=True)
-        self.files_path.mkdir(parents=True, exist_ok=True)
-        if not self.metadata_file.exists():
+        self.read_only = bool(read_only)
+        if not self.read_only:
+            self.base_path.mkdir(parents=True, exist_ok=True)
+            self.files_path.mkdir(parents=True, exist_ok=True)
+        if not self.read_only and not self.metadata_file.exists():
             self._write([])
 
     @staticmethod
@@ -139,7 +141,8 @@ class KnowledgeStore:
 
     def list_items(self):
         records = [self._normalize(item) for item in self._read_metadata()]
-        self._write(records)
+        if not self.read_only:
+            self._write(records)
         return records
 
     def add_file(self, source_path):
@@ -449,7 +452,8 @@ class KnowledgeStore:
             enriched=enriched,
         )
 
-    def retrieve(self, prompt, max_results=3, enabled_only=True, prefer_vector=True, enriched=False):
+    def retrieve(self, prompt, max_results=3, enabled_only=True, prefer_vector=True, enriched=False,
+                 embedding_provider=None):
         """Retrieve Knowledge records with vector search and keyword fallback."""
 
         text = str(prompt or "").strip()
@@ -468,6 +472,7 @@ class KnowledgeStore:
                     raise ValueError("Vector index is empty.")
                 vector_results = self.vector_search(
                     text,
+                    **({"provider": embedding_provider} if embedding_provider is not None else {}),
                     top_k=limit,
                     enabled_only=enabled_only,
                     enriched=enriched,

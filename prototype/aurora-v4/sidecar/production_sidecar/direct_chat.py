@@ -51,31 +51,43 @@ class DirectChatAdapter:
     def new_handle(self, stop_event, diagnostics):
         return self.api["StreamingRequestHandle"](stop_event, diagnostics)
 
-    def prepare_context(self, history=()):
-        # V4-3C context boundary: only validated conversation history.  Memory,
-        # persona, knowledge, RAG, and intelligence remain outside this path.
-        session = self.api["ChatSession"]()
+    def prepare_context(self, history=(), context_snapshot=None):
+        # Context is prepared by the headless production adapter.  Keep
+        # conversation history as structured messages so it is never duplicated
+        # inside the system prompt.
+        system_context = getattr(context_snapshot, "system_context", None)
+        if system_context is None and isinstance(context_snapshot, dict):
+            system_context = context_snapshot.get("system_context")
+        session = self.api["ChatSession"](system_context=system_context) if system_context else self.api["ChatSession"]()
         if history:
             session.replace(history)
         else:
             session.messages = []
+        if system_context:
+            session.set_system_context(system_context)
         return session
 
-    def stream(self, request, model, handle, on_chunk):
+    def stream(self, request, model, handle, on_chunk, context_snapshot=None):
         done_seen = False
 
         def observe(record):
             nonlocal done_seen
             done_seen = done_seen or record["done"]
 
-        session = self.prepare_context(request.history)
+        history = tuple(request.history)
+        # Text equality is not turn identity: preserve repeated historical turns.
+        persisted_history = self.prepare_context(history).snapshot()
+        session = self.prepare_context(history, context_snapshot)
+        history_length = len(session.snapshot())
         result = self.api["stream_chat"](
             model, request.text, session, on_chunk, handle.stop_event,
             request_handle=handle, collect_memory_candidates=False, raw_line_observer=observe,
         )
         if not handle.cancelled and not done_seen:
             raise self.api["ChatError"]("Incomplete production stream.", category="invalid_response")
-        return result, session.snapshot()
+        # Retrieved context is ephemeral model input. Never persist it in the
+        # system message exposed by conversation.get to Rust/WebView.
+        return result, persisted_history + session.snapshot()[history_length:]
 
     @staticmethod
     def error_code(error):
