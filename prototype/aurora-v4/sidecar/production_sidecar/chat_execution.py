@@ -83,10 +83,15 @@ class ChatExecution:
                 "error": {"code": "BACKEND_NOT_READY", "message": "Another generation is active.", "retryable": True}})
             return
         self.active = run  # ownership before first await
+        post_turn = self.sidecar.composition.post_turn
+        if post_turn is not None:
+            post_turn.foreground_started(request.generation_id)
         try:
             await self.send(run, "chat.accepted", {"status": "accepted", "ipc_received_unix_ms": run.received_unix_ms})
         except BaseException:
             self.active = None
+            if post_turn is not None:
+                post_turn.foreground_finished(request.generation_id)
             raise
         run.task = asyncio.create_task(self.execute(run), name="production-generation")
 
@@ -252,6 +257,17 @@ class ChatExecution:
                 await self.send(run, "chat.completed", payload)
             except ConnectionClosed:
                 pass
+            finally:
+                post_turn = self.sidecar.composition.post_turn
+                if post_turn is not None:
+                    try:
+                        if status == "completed" and run.completion_committed:
+                            post_turn.schedule(run.request.conversation_id, run.request.generation_id,
+                                               run.session_messages, probe["configured_model"])
+                    except Exception as error:
+                        LOGGER.warning("event=post_turn_schedule_failed error_code=%s", type(error).__name__)
+                    finally:
+                        post_turn.foreground_finished(run.request.generation_id)
 
     async def cancel(self, connection, message):
         candidate = self.active or self.last

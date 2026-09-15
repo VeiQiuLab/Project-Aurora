@@ -117,6 +117,10 @@ type GatewayEvent =
         model: string;
       };
     }
+  | { type: "conversation_changed"; conversation: {
+      conversation_id: string; title: string; created_at: string; updated_at: string;
+      message_count: number; model: string;
+    } }
   | { type: "conversation_error"; requestId: string; code: string }
   | { type: "protocol_warning"; code: string };
 
@@ -386,6 +390,19 @@ const mapLoadedMessages = (items: Array<{ role: string; content: string }>): Con
     }));
 
 const applyConversationEvent = (event: GatewayEvent): boolean => {
+  if (event.type === "conversation_changed") {
+    if (!productionConversationMode) return true;
+    if (!conversations.conversations.some(item => item.id === event.conversation.conversation_id)) {
+      conversationListRequested = false;
+      requestProductionConversationList();
+      return true;
+    }
+    conversations.updateSummary(event.conversation.conversation_id,
+      event.conversation.title === "New Conversation" ? "新对话" : event.conversation.title,
+      `${event.conversation.message_count} 条消息`);
+    renderConversationList();
+    return true;
+  }
   if (event.type === "conversation_list") {
     if (!productionConversationMode) return true;
     conversations.replace(event.conversations.map(productionRecord));

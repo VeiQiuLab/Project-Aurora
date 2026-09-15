@@ -620,6 +620,14 @@ impl BackendManager {
             return Err("STALE_CONNECTION".into());
         }
         match message_type {
+            "conversation.changed" => {
+                let conversation: ConversationSummary = serde_json::from_value(
+                    object(&value, "payload")?.get("conversation").cloned()
+                        .ok_or_else(|| "INVALID_CONVERSATION".to_string())?,
+                ).map_err(|_| "INVALID_CONVERSATION".to_string())?;
+                conversation.validate()?;
+                self.emit(FrontendEvent::ConversationChanged { conversation });
+            }
             "conversation.list.response" => {
                 let request_id = require_string(&value, "request_id", None)?.to_owned();
                 let conversations: Vec<ConversationSummary> = serde_json::from_value(

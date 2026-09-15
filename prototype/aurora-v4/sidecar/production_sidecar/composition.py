@@ -89,6 +89,7 @@ class ProductionComposition:
         self._context_root = context_root
         self._conversations = None
         self._context = None
+        self.post_turn = None
         self.diagnostics = {}
         self.state = "DEGRADED"
         self.closed = False
@@ -156,3 +157,5 @@ class ProductionComposition:
 
     def close(self):
         self.closed = True
+        if self.post_turn is not None:
+            self.post_turn.close()

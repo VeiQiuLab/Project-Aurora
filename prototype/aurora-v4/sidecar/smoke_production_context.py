@@ -132,6 +132,9 @@ async def main_async(args):
             context_root=data_root,
         )
         sidecar = ProductionSidecar("context-smoke", composition)
+        # This pre-LLM-only smoke reads real context; post-turn writes belong
+        # exclusively to smoke_post_turn's isolated roots.
+        composition.post_turn.close()
         health = await composition.refresh()
         report = {
             "health_state": composition.state,

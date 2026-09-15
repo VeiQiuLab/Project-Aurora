@@ -23,6 +23,7 @@
     {"$ref": "#/$defs/conversationGetResponse"},
     {"$ref": "#/$defs/conversationCreateRequest"},
     {"$ref": "#/$defs/conversationCreateResponse"},
+    {"$ref": "#/$defs/conversationChanged"},
     {"$ref": "#/$defs/stateChanged"},
     {"$ref": "#/$defs/backendWarning"},
     {"$ref": "#/$defs/error"}
@@ -742,6 +743,13 @@
         {"$ref": "#/$defs/baseEnvelope"},
         {"$ref": "#/$defs/noRequestContext"},
         {"required": ["request_id"], "properties": {"type": {"const": "conversation.create.request"}, "payload": {"type": "object", "maxProperties": 0}}}
+      ]
+    },
+    "conversationChanged": {
+      "allOf": [
+        {"$ref": "#/$defs/baseEnvelope"},
+        {"not": {"anyOf": [{"required": ["request_id"]}, {"required": ["session_id"]}, {"required": ["generation_id"]}, {"required": ["seq"]}]}},
+        {"properties": {"type": {"const": "conversation.changed"}, "payload": {"type": "object", "required": ["conversation"], "properties": {"conversation": {"$ref": "#/$defs/conversationMetadata"}}, "additionalProperties": false}}}
       ]
     },
     "conversationCreateResponse": {

@@ -233,6 +233,12 @@ class MemoryStore:
         return data, None
 
     def _load_json_list(self, path):
+        # Windows readers may prevent os.replace while their file handle is
+        # open. Share the existing writer lock, including backup reads.
+        with self._lock:
+            return self._load_json_list_locked(path)
+
+    def _load_json_list_locked(self, path):
         if not path.exists():
             return [], "missing"
         data, error = self._read_json_list(path)

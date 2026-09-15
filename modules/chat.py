@@ -469,6 +469,7 @@ def chat_with_messages(
     *,
     thinking_mode=None,
     num_predict=None,
+    diagnostics=None,
 ):
     """Send prepared chat messages to Ollama and return the assistant response."""
 
@@ -578,6 +579,9 @@ def chat_with_messages(
         raise ChatError(error_message, category="chat_generation_failed", stage="ollama_response")
 
     message = data.get("message", {})
+    if diagnostics is not None:
+        diagnostics.update(_ollama_metrics(data))
+        diagnostics["reasoning_chars"] = len(str(message.get("thinking") or "")) if isinstance(message, dict) else 0
     content = message.get("content") if isinstance(message, dict) else None
     if not content:
         raise ChatError("Ollama returned an empty response.", category="invalid_response", stage="ollama_response")

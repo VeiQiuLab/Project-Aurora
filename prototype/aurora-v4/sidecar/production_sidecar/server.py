@@ -17,6 +17,7 @@ from mock_sidecar.server import MockSidecar, _required_environment, serve_sideca
 from production_sidecar.composition import ProductionComposition
 from production_sidecar.chat_execution import ChatExecution
 from production_sidecar.conversations import ConversationError
+from production_sidecar.post_turn import PostTurnCoordinator
 
 LOGGER = logging.getLogger("aurora-v4-production")
 
@@ -28,6 +29,23 @@ class ProductionSidecar(MockSidecar):
         super().__init__(token, 0)
         self.composition = composition
         self.chat = ChatExecution(self)
+        self._metadata_connections = set()
+        self._event_loop = None
+        self.composition.post_turn = PostTurnCoordinator(composition, self.chat.adapter.api, self.metadata_changed)
+
+    def metadata_changed(self, metadata):
+        if self._event_loop is not None and not self._event_loop.is_closed():
+            self._event_loop.call_soon_threadsafe(lambda: asyncio.create_task(self._send_metadata(metadata)))
+
+    async def _send_metadata(self, metadata):
+        if self.composition.post_turn.closed:
+            return
+        for connection in tuple(self._metadata_connections):
+            try:
+                await self.send(connection, {"protocol": "aurora-ipc", "version": 1,
+                    "type": "conversation.changed", "payload": {"conversation": metadata}})
+            except Exception:
+                self._metadata_connections.discard(connection)
 
     def capabilities(self):
         return self.composition.capabilities()
@@ -40,12 +58,16 @@ class ProductionSidecar(MockSidecar):
         return {**await super().health_payload(), "diagnostics": diagnostics}
 
     async def start_chat(self, connection, message):
+        self._event_loop = asyncio.get_running_loop()
+        self._metadata_connections.add(connection)
         await self.chat.start(connection, message)
 
     async def cancel_chat(self, connection, message):
         await self.chat.cancel(connection, message)
 
     async def conversation_list(self, connection, message):
+        self._event_loop = asyncio.get_running_loop()
+        self._metadata_connections.add(connection)
         try:
             conversations = await asyncio.to_thread(self.composition.conversations.list_metadata)
             await self.send(connection, {
@@ -92,12 +114,14 @@ class ProductionSidecar(MockSidecar):
                                   envelope=message)
 
     async def cancel_all(self):
+        self.composition.post_turn.close()
         await self.chat.close()
 
     async def handle_connection(self, connection):
         try:
             await super().handle_connection(connection)
         finally:
+            self._metadata_connections.discard(connection)
             await self.chat.close(connection)
 
 

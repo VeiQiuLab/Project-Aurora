@@ -1,14 +1,15 @@
 """Headless conversation persistence boundary for the v4 production sidecar.
 
-The sidecar is the only production owner of conversation JSON.  This module
-deliberately calls only the primitive ``ConversationManager`` list/load/save
-methods; it never enters the legacy UI's title, intelligence, or memory
-pipelines.
+The sidecar is the only production owner of conversation JSON. Foreground saves
+and background metadata read/modify/write share per-conversation transactions.
+The underlying production save implementation is deliberately unchanged.
 """
 from __future__ import annotations
 
 import re
 import uuid
+import threading
+from functools import wraps
 from pathlib import Path
 
 from modules.app_paths import CONVERSATIONS_DIR
@@ -16,6 +17,14 @@ from modules.app_paths import CONVERSATIONS_DIR
 
 CONVERSATION_ID_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_-]{0,127}$")
 ALLOWED_ROLES = {"system", "user", "assistant"}
+
+
+def serialized(function):
+    @wraps(function)
+    def run(self, conversation_id, *args, **kwargs):
+        with self.transaction(conversation_id):
+            return function(self, conversation_id, *args, **kwargs)
+    return run
 
 
 class ConversationError(ValueError):
@@ -38,6 +47,8 @@ class ConversationPersistence:
     def __init__(self, base_path: Path | None = None):
         self.directory = Path(base_path) if base_path is not None else CONVERSATIONS_DIR
         self._manager = None
+        self._locks_guard = threading.RLock()
+        self._locks = {}
         # ``create`` follows the legacy materialize-on-first-save behavior:
         # the identity exists for this sidecar lifetime before a JSON file is
         # written.  Keep that distinction so a genuinely missing ID still
@@ -47,6 +58,15 @@ class ConversationPersistence:
 
     @property
     def manager(self):
+        with self._locks_guard:
+            return self._get_manager()
+
+    def transaction(self, conversation_id):
+        conversation_id = validate_conversation_id(conversation_id)
+        with self._locks_guard:
+            return self._locks.setdefault(conversation_id, threading.RLock())
+
+    def _get_manager(self):
         if self._manager is None:
             # Importing ConversationManager is intentionally deferred until a
             # conversation RPC/chat actually needs persistence.  Its existing
@@ -94,15 +114,15 @@ class ConversationPersistence:
             if not CONVERSATION_ID_RE.fullmatch(conversation_id):
                 continue
             try:
-                data = self.manager.load(conversation_id)
-                messages = self._messages(data)
-                records.append(self._metadata(data, conversation_id, len(messages)))
+                detail = self.get(conversation_id)
+                records.append({key: value for key, value in detail.items() if key != "messages"})
             except (OSError, UnicodeError, ValueError, TypeError):
                 # One damaged history file is isolated from the rest of the
                 # list.  The filename and body are intentionally not logged.
                 continue
         return sorted(records, key=lambda item: item["updated_at"], reverse=True)
 
+    @serialized
     def get(self, conversation_id: object) -> dict:
         conversation_id = validate_conversation_id(conversation_id)
         try:
@@ -143,6 +163,7 @@ class ConversationPersistence:
             "model": "",
         }
 
+    @serialized
     def save_completed(
         self,
         conversation_id: object,

@@ -298,6 +298,9 @@ pub enum FrontendEvent {
         request_id: String,
         conversation: ConversationSummary,
     },
+    ConversationChanged {
+        conversation: ConversationSummary,
+    },
     ConversationError {
         request_id: String,
         code: String,
@@ -571,6 +574,7 @@ pub fn validate_sidecar_event(value: &Value) -> Result<&str, String> {
         "conversation.list.response",
         "conversation.get.response",
         "conversation.create.response",
+        "conversation.changed",
         "shutdown.ack",
         "state.changed",
         "backend.warning",
@@ -601,6 +605,16 @@ pub fn validate_sidecar_event(value: &Value) -> Result<&str, String> {
             .ok_or_else(|| "chat.delta has empty content".to_string())?;
     }
     let payload = object(value, "payload")?;
+    if message_type == "conversation.changed" {
+        if ["request_id", "session_id", "generation_id", "seq"].iter().any(|key| value.get(key).is_some())
+            || payload.len() != 1 {
+            return Err("INVALID_CONVERSATION_CHANGED".into());
+        }
+        let conversation: ConversationSummary = serde_json::from_value(
+            payload.get("conversation").cloned().ok_or("INVALID_CONVERSATION_CHANGED")?
+        ).map_err(|_| "INVALID_CONVERSATION_CHANGED")?;
+        conversation.validate()?;
+    }
     for key in ["ipc_received_unix_ms", "python_sent_unix_ms"] {
         if payload.contains_key(key)
             && payload
@@ -875,6 +889,15 @@ mod tests {
             }]}
         });
         assert_eq!(validate_sidecar_event(&list).unwrap(), "conversation.list.response");
+        let changed = json!({"protocol": PROTOCOL, "version": VERSION, "type": "conversation.changed",
+            "payload": {"conversation": list["payload"]["conversations"][0].clone()}});
+        assert_eq!(validate_sidecar_event(&changed).unwrap(), "conversation.changed");
+        let mut bad_changed = changed.clone();
+        bad_changed["generation_id"] = json!("stale-generation");
+        assert!(validate_sidecar_event(&bad_changed).is_err());
+        let mut bad_changed = changed;
+        bad_changed["payload"]["conversation"]["summary"] = json!("private");
+        assert!(validate_sidecar_event(&bad_changed).is_err());
         let detail = ConversationDetail {
             conversation_id: "conversation-1".into(),
             title: "Synthetic".into(),

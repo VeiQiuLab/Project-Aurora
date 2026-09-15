@@ -181,6 +181,10 @@ MESSAGE_RULES: dict[str, MessageRule] = {
         required={"request_id"}, forbidden=_NO_CONTEXT,
         payload_required={"conversation"}, payload_allowed={"conversation"},
     ),
+    "conversation.changed": _rule(
+        forbidden={"request_id", "session_id", "generation_id", "seq"},
+        payload_required={"conversation"}, payload_allowed={"conversation"},
+    ),
     "state.changed": _rule(
         forbidden={"request_id", "session_id", "generation_id", "seq"},
         payload_required={"state"},
@@ -501,7 +505,7 @@ def _validate_payload(message_type: str, payload: Mapping[str, Any]) -> None:
             _validate_conversation_metadata(item, detail=False)
     elif message_type == "conversation.get.response":
         _validate_conversation_metadata(payload["conversation"], detail=True)
-    elif message_type == "conversation.create.response":
+    elif message_type in {"conversation.create.response", "conversation.changed"}:
         _validate_conversation_metadata(payload["conversation"], detail=False)
     elif message_type == "chat.accepted" and payload["status"] != "accepted":
         raise ContractError("chat acceptance status is invalid")

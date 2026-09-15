@@ -1,5 +1,18 @@
 # Aurora IPC v1
 
+## V4-4B optional metadata notification
+
+`conversation.changed` is a sidecar-originated, authenticated, backward-compatible
+v1 event. Payload: `{ "conversation": ConversationMetadata }`, with the same six
+safe fields as `conversation.create.response`. It has **no** request_id, session_id,
+generation_id or seq. It never carries messages, summary, signals or Memory bodies.
+Python emits after persisted background metadata updates; Rust validates the DTO
+and active connection epoch before forwarding `conversation_changed`. The frontend
+updates the sidebar record even when it is not selected; an unknown record triggers
+the existing list request. It does not replace message history or active generation.
+No new command, task queue RPC, capability or protocol version is introduced.
+Notifications are best-effort; list/get remain the persistent source of truth.
+
 This is the normative contract between the Rust Desktop Core and Python AI
 Sidecar. The transport is an authenticated WebSocket bound only to loopback.
 JSON text frames use the schema in `ipc-v1.schema.json`.

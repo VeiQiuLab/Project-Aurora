@@ -27,7 +27,27 @@ def _example(message_type: str, *, occurrence: int = 0):
 def test_schema_and_all_examples_are_valid_json_and_contract_shapes():
     schema = json.loads((CONTRACT_DIR / "ipc-v1.schema.json").read_text(encoding="utf-8"))
     assert schema["$schema"] == "https://json-schema.org/draft/2020-12/schema"
-    assert contract.validate_files() == 25
+    assert contract.validate_files() == 26
+
+
+def test_background_metadata_event_has_no_content_or_generation_owner():
+    import jsonschema
+    schema = json.loads((CONTRACT_DIR / "ipc-v1.schema.json").read_text(encoding="utf-8"))
+    event = _example("conversation.changed")
+    contract.validate_message(event)
+    jsonschema.validate(event, schema)
+    for key in ("request_id", "session_id", "generation_id", "seq"):
+        bad = copy.deepcopy(event)
+        bad[key] = 1 if key == "seq" else "old-owner"
+        with pytest.raises(contract.ContractError):
+            contract.validate_message(bad)
+        with pytest.raises(jsonschema.ValidationError):
+            jsonschema.validate(bad, schema)
+    for key in ("messages", "summary", "memory_signals"):
+        bad = copy.deepcopy(event)
+        bad["payload"]["conversation"][key] = []
+        with pytest.raises(contract.ContractError):
+            contract.validate_message(bad)
 
 
 def test_direct_chat_optional_observations_validate_in_both_validators():

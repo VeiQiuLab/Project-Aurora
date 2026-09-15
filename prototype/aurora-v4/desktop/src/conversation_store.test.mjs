@@ -3,6 +3,17 @@ import test from "node:test";
 
 import { ConversationStore, initialConversations } from "./conversation_store.ts";
 
+test("background title refresh preserves selected conversation and messages", () => {
+  const store = new ConversationStore(initialConversations());
+  const selected = store.active.id;
+  const target = store.conversations[1];
+  const before = structuredClone(target.messages);
+  store.updateSummary(target.id, "后台标题", "2 条消息");
+  assert.equal(store.active.id, selected);
+  assert.equal(target.title, "后台标题");
+  assert.deepEqual(target.messages, before);
+});
+
 test("new conversations become active without removing existing conversations", () => {
   const store = new ConversationStore(initialConversations());
   const previousCount = store.conversations.length;
