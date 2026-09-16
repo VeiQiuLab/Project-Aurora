@@ -305,6 +305,10 @@ pub enum FrontendEvent {
         request_id: String,
         code: String,
     },
+    SettingsSnapshot { request_id: String, snapshot: crate::settings::Snapshot },
+    SettingsUpdated { request_id: String, change: crate::settings::Change },
+    SettingsChanged { change: crate::settings::Change },
+    SettingsError { request_id: String, code: String },
 }
 
 #[derive(Clone, Debug, Serialize)]
@@ -547,6 +551,11 @@ pub fn validate_hello_ack_for_mode(
         .get("limits")
         .and_then(Value::as_object)
         .ok_or_else(|| "missing negotiated limits".to_string())?;
+    if let Some(settings) = capabilities.get("settings") {
+        if settings != &json!({"read":true,"update":true,"ui":false}) {
+            return Err("INVALID_SETTINGS_CAPABILITY".into());
+        }
+    }
     for name in [
         "json_frame_max_bytes",
         "chat_input_max_bytes",
@@ -566,6 +575,7 @@ pub fn validate_sidecar_event(value: &Value) -> Result<&str, String> {
         .and_then(Value::as_str)
         .ok_or_else(|| "missing event type".to_string())?;
     let allowed = [
+        "settings.get.response", "settings.update.response", "settings.changed",
         "health.response",
         "chat.accepted",
         "chat.delta",
@@ -614,6 +624,21 @@ pub fn validate_sidecar_event(value: &Value) -> Result<&str, String> {
             payload.get("conversation").cloned().ok_or("INVALID_CONVERSATION_CHANGED")?
         ).map_err(|_| "INVALID_CONVERSATION_CHANGED")?;
         conversation.validate()?;
+    }
+    if message_type.starts_with("settings.") {
+        if ["session_id", "generation_id", "seq"].iter().any(|key| value.get(key).is_some()) {
+            return Err("INVALID_SETTINGS_RESPONSE".into());
+        }
+        if message_type == "settings.changed" {
+            if value.get("request_id").is_some() { return Err("INVALID_SETTINGS_RESPONSE".into()); }
+        } else {
+            require_string(value, "request_id", None)?;
+        }
+        if message_type == "settings.get.response" {
+            crate::settings::Snapshot::from_wire(value["payload"].clone())?;
+        } else {
+            crate::settings::Change::from_wire(value["payload"].clone())?;
+        }
     }
     for key in ["ipc_received_unix_ms", "python_sent_unix_ms"] {
         if payload.contains_key(key)

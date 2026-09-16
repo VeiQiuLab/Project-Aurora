@@ -470,6 +470,7 @@ def chat_with_messages(
     thinking_mode=None,
     num_predict=None,
     diagnostics=None,
+    settings_store=None,
 ):
     """Send prepared chat messages to Ollama and return the assistant response."""
 
@@ -487,7 +488,8 @@ def chat_with_messages(
     except Exception:
         pass
 
-    host = str(settings.get("ollama.host", "")).strip().rstrip("/")
+    request_settings = settings_store if settings_store is not None else settings
+    host = str(request_settings.get("ollama.host", "")).strip().rstrip("/")
     if not host:
         raise ChatError(
             "Ollama host is not configured.",
@@ -512,7 +514,7 @@ def chat_with_messages(
         payload["messages"] = [{"role": "user", "content": ""}]
     if thinking_mode is not None:
         request_policy = resolve_ollama_request_policy(
-            settings,
+            request_settings,
             thinking_mode=thinking_mode,
         )
         request_policy.apply(payload)
@@ -659,6 +661,7 @@ def stream_chat(
     raw_line_observer=None,
     thinking_mode=None,
     collect_memory_candidates=True,
+    settings_store=None,
 ):
     """Stream one Ollama response while preserving the session context."""
 
@@ -681,7 +684,8 @@ def stream_chat(
     except Exception:
         pass
 
-    host = str(settings.get("ollama.host", "")).strip().rstrip("/")
+    request_settings = settings_store if settings_store is not None else settings
+    host = str(request_settings.get("ollama.host", "")).strip().rstrip("/")
     if not host:
         raise ChatError(
             "Ollama host is not configured.",
@@ -695,7 +699,7 @@ def stream_chat(
         return "stopped"
 
     request_policy = resolve_ollama_request_policy(
-        settings,
+        request_settings,
         thinking_mode=thinking_mode,
     )
     session.add_user(prompt)

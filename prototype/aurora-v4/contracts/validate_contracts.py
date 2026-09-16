@@ -11,6 +11,7 @@ import math
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Iterable, Mapping
+from settings_contract import ERRORS as SETTINGS_ERRORS, validate_settings
 
 
 PROTOCOL = "aurora-ipc"
@@ -38,6 +39,7 @@ STATES = {
 }
 TERMINAL_STATES = {"completed", "cancelled", "failed", "backend_lost", "rejected"}
 ERROR_CODES = {
+    *SETTINGS_ERRORS,
     "PROTOCOL_ERROR",
     "PROTOCOL_VERSION_MISMATCH",
     "AUTHENTICATION_FAILED",
@@ -82,6 +84,17 @@ def _rule(
 _NO_CONTEXT = {"session_id", "generation_id", "seq"}
 _CHAT_IDS = {"request_id", "session_id", "generation_id"}
 MESSAGE_RULES: dict[str, MessageRule] = {
+    "settings.get.request": _rule(required={"request_id"}, forbidden=_NO_CONTEXT),
+    "settings.get.response": _rule(required={"request_id"}, forbidden=_NO_CONTEXT,
+        payload_required={"revision", "status", "descriptors"}, payload_allowed={"revision", "status", "descriptors"}),
+    "settings.update.request": _rule(required={"request_id"}, forbidden=_NO_CONTEXT,
+        payload_required={"expected_revision", "patch"}, payload_allowed={"expected_revision", "patch"}),
+    "settings.update.response": _rule(required={"request_id"}, forbidden=_NO_CONTEXT,
+        payload_required={"revision", "changed_keys", "restart_required_keys"},
+        payload_allowed={"revision", "changed_keys", "restart_required_keys"}),
+    "settings.changed": _rule(forbidden=_NO_CONTEXT | {"request_id"},
+        payload_required={"revision", "changed_keys", "restart_required_keys"},
+        payload_allowed={"revision", "changed_keys", "restart_required_keys"}),
     "hello": _rule(
         required={"request_id"},
         forbidden=_NO_CONTEXT,
@@ -260,6 +273,8 @@ def _validate_capabilities(value: Any) -> None:
         raise ContractError("Local CosyVoice is not implemented and must be false")
     if voice["ipc"] is not False or voice["streaming_pcm"] is not False:
         raise ContractError("Voice IPC and streaming PCM are reserved in v1")
+    if "settings" in value and value["settings"] != {"read": True, "update": True, "ui": False}:
+        raise ContractError("Invalid settings capability boundary")
 
 
 def _validate_error(value: Any) -> None:
@@ -457,6 +472,12 @@ def validate_chat_diagnostics(value):
 
 
 def _validate_payload(message_type: str, payload: Mapping[str, Any]) -> None:
+    if message_type.startswith("settings."):
+        try:
+            validate_settings(message_type, payload)
+        except (ValueError, TypeError, KeyError):
+            raise ContractError("Invalid settings payload.") from None
+        return
     for key in ("ipc_received_unix_ms", "python_sent_unix_ms"):
         if key in payload and (isinstance(payload[key], bool) or not isinstance(payload[key], (float, int))
                                or not math.isfinite(payload[key]) or payload[key] < 0):

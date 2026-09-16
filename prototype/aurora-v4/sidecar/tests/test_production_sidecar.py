@@ -21,7 +21,8 @@ from uuid import uuid4
 SIDECAR = Path(__file__).resolve().parents[1]
 ROOT = SIDECAR.parents[2]
 sys.path[:0] = [str(SIDECAR), str(ROOT)]
-from production_sidecar.aurora_adapter import ReadOnlySettings, settings_declaration
+from production_sidecar.aurora_adapter import ReadOnlySettings
+from modules.settings import Settings
 from production_sidecar.composition import ProductionComposition
 from production_sidecar.server import ProductionSidecar
 from mock_sidecar.server import PROTOCOL, validate_message
@@ -122,7 +123,7 @@ class SettingsTests(unittest.TestCase):
             self.assertEqual(snapshot.policy.keep_alive, "5m")
             self.assertEqual(path.read_bytes(), before)
             for method, args in (("save", ()), ("set", ("chat_model", "oops")), ("update_many", ({},))):
-                with self.assertRaisesRegex(RuntimeError, "READ_ONLY_SETTINGS"):
+                with self.assertRaises(AttributeError):
                     getattr(snapshot._snapshot, method)(*args)
 
     def test_corrupt_and_non_object_settings_never_repaired(self):
@@ -133,18 +134,18 @@ class SettingsTests(unittest.TestCase):
                 self.assertEqual(ReadOnlySettings(ROOT, path).status, "invalid_defaults")
                 self.assertEqual(path.read_text(), text)
 
-    def test_declaration_drift_fails_closed(self):
+    def test_snapshot_is_immutable(self):
         with tempfile.TemporaryDirectory() as directory:
-            root = Path(directory)
-            (root / "modules").mkdir()
-            (root / "modules/settings.py").write_text("raise RuntimeError('must not execute')")
-            with self.assertRaisesRegex(RuntimeError, "SETTINGS_DECLARATION_CHANGED"):
-                settings_declaration(root)
+            snapshot = ReadOnlySettings(ROOT, Path(directory) / "settings.json").snapshot()
+            with self.assertRaises(AttributeError):
+                snapshot.revision = 22
+            data = snapshot.get("ollama")
+            data["thinking_mode"] = "on"
+            self.assertEqual(snapshot.policy.thinking_mode, "off")
 
     def test_normalization_matches_actual_production_load(self):
         # Load the real declaration in the parent; run its normal constructor only
         # against disposable injected paths. This catches migration-order drift.
-        base = settings_declaration(ROOT)
         fixtures = [{}, {"model": "legacy", "language": "zh"},
                     {"ollama": None, "services": {"docker": {}}, "openwebui": {}},
                     {"chat_model_mode": "bad", "chat_model": "manual-model"}]
@@ -153,10 +154,9 @@ class SettingsTests(unittest.TestCase):
                 path = Path(directory) / "settings.json"
                 path.write_text(json.dumps(fixture))
                 snapshot = ReadOnlySettings(ROOT, path)
-                namespace = base.__init__.__globals__
-                with patch.dict(namespace, CONFIG_FILE=path, CONFIG_DIR=path.parent):
-                    production = base()
-                self.assertEqual(snapshot._snapshot.data, production.data)
+                production = Settings(config_file=path)
+                for key, value in production.data.items():
+                    self.assertEqual(snapshot.get(key), value)
 
     def test_import_safety_no_ui_threads_network_writes_or_singletons(self):
         with tempfile.TemporaryDirectory() as directory:
@@ -173,7 +173,9 @@ from production_sidecar.composition import ProductionComposition
 c = ProductionComposition()
 assert c.settings.status == 'missing_defaults'
 assert len(threading.enumerate()) == 1
-assert not any(n.startswith(('tkinter', 'customtkinter', 'widgets', 'modules.chat', 'modules.settings', 'modules.logger', 'modules.runtime_state', 'modules.service_manager')) for n in sys.modules)
+assert not any(n.startswith(('tkinter', 'customtkinter', 'widgets', 'modules.chat', 'modules.logger', 'modules.runtime_state', 'modules.service_manager')) for n in sys.modules)
+from modules.settings import settings
+assert settings._instance is None
 assert not list(c.settings.config_file.parent.parent.glob('*'))
 print('import-safe')
 '''
@@ -238,7 +240,7 @@ class CompositionTests(unittest.IsolatedAsyncioTestCase):
             c = ProductionComposition(ROOT, path)
             fake = {"reachable": True, "host": "http://127.0.0.1:1", "configured_model": "fixture",
                     "model_available": True, "error_code": "", "probe_duration_ms": 0.0}
-            with patch.object(c.ollama, "probe", return_value=fake):
+            with patch("production_sidecar.composition.OllamaHealth.probe", return_value=fake):
                 result = await c.refresh()
             self.assertEqual(c.state, "DEGRADED")
             self.assertEqual(result["settings_status"], "invalid_defaults")

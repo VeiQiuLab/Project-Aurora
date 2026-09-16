@@ -12,6 +12,8 @@ import { decideComposerAction } from "./input_policy";
 import { captionLabel, composerPresentation } from "./presentation_policy";
 import { ownsChatEvent, consumeDelta, chatErrorLabel, chatDiagnosticLabel } from "./chat_event_policy";
 import "./styles.css";
+import { SettingsState, type SettingsEvent } from "./settings_state";
+const settingsState = new SettingsState();
 
 type BackendState =
   | "STOPPED"
@@ -60,6 +62,7 @@ interface ChatStartResult {
 }
 
 type GatewayEvent =
+  | SettingsEvent
   | { type: "backend_state"; state: BackendState; metrics: PrototypeMetrics; info: BackendInfo }
   | { type: "chat_accepted"; requestId: string; generationId: string; ipcReceivedUnixMs: number | null }
   | {
@@ -443,8 +446,14 @@ const applyConversationEvent = (event: GatewayEvent): boolean => {
 };
 
 const applyGatewayEvent = (event: GatewayEvent): void => {
+  if (event.type === "settings_snapshot" || event.type === "settings_updated" ||
+      event.type === "settings_changed" || event.type === "settings_error") {
+    settingsState.accept(event);
+    return;
+  }
   if (applyConversationEvent(event)) return;
   if (event.type === "backend_state") {
+    if (!["READY", "DEGRADED"].includes(event.state)) settingsState.reset();
     productionConversationMode = event.info.mode === "production";
     if (!productionConversationMode) conversationListRequested = false;
     updateBackendInfo(event.info);

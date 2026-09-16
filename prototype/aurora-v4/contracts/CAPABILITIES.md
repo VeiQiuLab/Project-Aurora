@@ -65,3 +65,8 @@ voice.ipc, voice.streaming_pcm and voice.cosyvoice_local remain false.
 V4-3C production reports the additive `conversation` capability object. Its
 `list`, `get`, `create`, and `save` members gate the Python-owned conversation
 RPCs; mock mode keeps its deterministic in-memory presentation store.
+
+V4-5A production adds `settings: {read: true, update: true, ui: false}`.
+This enables allowlisted Python-owned read/patch RPCs, not a Settings page,
+secret editing, desktop settings migration or Voice IPC. Mock does not advertise
+these capabilities. Voice flags remain unchanged.

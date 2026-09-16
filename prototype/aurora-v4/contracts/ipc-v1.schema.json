@@ -4,6 +4,11 @@
   "title": "Project Aurora IPC v1",
   "description": "Bootstrap object and authenticated WebSocket JSON envelopes for Aurora IPC v1.",
   "oneOf": [
+    {"$ref": "#/$defs/settings_get_request"},
+    {"$ref": "#/$defs/settings_get_response"},
+    {"$ref": "#/$defs/settings_update_request"},
+    {"$ref": "#/$defs/settings_update_response"},
+    {"$ref": "#/$defs/settings_changed"},
     {"$ref": "#/$defs/bootstrapReady"},
     {"$ref": "#/$defs/hello"},
     {"$ref": "#/$defs/helloAck"},
@@ -29,6 +34,484 @@
     {"$ref": "#/$defs/error"}
   ],
   "$defs": {
+  "settings_get_request": {
+    "type": "object",
+    "additionalProperties": false,
+    "required": [
+      "protocol",
+      "version",
+      "type",
+      "payload",
+      "request_id"
+    ],
+    "properties": {
+      "protocol": {
+        "const": "aurora-ipc"
+      },
+      "version": {
+        "const": 1
+      },
+      "type": {
+        "const": "settings.get.request"
+      },
+      "payload": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [],
+        "properties": {}
+      },
+      "request_id": {
+        "type": "string",
+        "minLength": 1,
+        "maxLength": 128
+      }
+    }
+  },
+  "settings_get_response": {
+    "type": "object",
+    "additionalProperties": false,
+    "required": [
+      "protocol",
+      "version",
+      "type",
+      "payload",
+      "request_id"
+    ],
+    "properties": {
+      "protocol": {
+        "const": "aurora-ipc"
+      },
+      "version": {
+        "const": 1
+      },
+      "type": {
+        "const": "settings.get.response"
+      },
+      "payload": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "revision",
+          "status",
+          "descriptors"
+        ],
+        "properties": {
+          "revision": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 9007199254740991
+          },
+          "status": {
+            "enum": [
+              "loaded",
+              "missing_defaults",
+              "invalid_defaults"
+            ]
+          },
+          "descriptors": {
+            "type": "array",
+            "minItems": 23,
+            "maxItems": 23,
+            "items": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": [
+                "key",
+                "type",
+                "value",
+                "default",
+                "mutable",
+                "restart_required",
+                "apply",
+                "options",
+                "min",
+                "max",
+                "label_id",
+                "value_valid"
+              ],
+              "properties": {
+                "key": {
+                  "enum": [
+                    "ollama.host",
+                    "ollama.thinking_mode",
+                    "ollama.keep_alive",
+                    "chat_model",
+                    "chat_model_mode",
+                    "embedding_model",
+                    "embedding_model_mode",
+                    "resolved_chat_model",
+                    "resolved_embedding_model",
+                    "memory.max_injection",
+                    "memory.min_importance",
+                    "memory.retrieval_threshold",
+                    "memory.confidence_default",
+                    "persona.enabled",
+                    "knowledge.enabled",
+                    "knowledge.max_results",
+                    "rag.pipeline_enabled",
+                    "rag.enable_dedup",
+                    "rag.enable_ranking",
+                    "rag.enable_optimization",
+                    "rag.context_budget",
+                    "rag.reserved_output",
+                    "context.warning_tokens"
+                  ]
+                },
+                "type": {
+                  "enum": [
+                    "string",
+                    "nullable_string",
+                    "integer",
+                    "number",
+                    "boolean"
+                  ]
+                },
+                "value": {
+                  "type": [
+                    "string",
+                    "number",
+                    "boolean",
+                    "null"
+                  ],
+                  "maxLength": 512,
+                  "minimum": -9007199254740991,
+                  "maximum": 9007199254740991
+                },
+                "default": {
+                  "type": [
+                    "string",
+                    "number",
+                    "boolean",
+                    "null"
+                  ],
+                  "maxLength": 512,
+                  "minimum": -9007199254740991,
+                  "maximum": 9007199254740991
+                },
+                "mutable": {
+                  "type": "boolean"
+                },
+                "restart_required": {
+                  "type": "boolean"
+                },
+                "apply": {
+                  "enum": [
+                    "read_only",
+                    "next_request",
+                    "restart_required"
+                  ]
+                },
+                "options": {
+                  "type": [
+                    "array",
+                    "null"
+                  ],
+                  "maxItems": 16,
+                  "items": {
+                    "type": "string",
+                    "maxLength": 128
+                  }
+                },
+                "min": {
+                  "type": [
+                    "number",
+                    "null"
+                  ]
+                },
+                "max": {
+                  "type": [
+                    "number",
+                    "null"
+                  ]
+                },
+                "label_id": {
+                  "type": "string",
+                  "maxLength": 160
+                },
+                "value_valid": {
+                  "type": "boolean"
+                }
+              }
+            }
+          }
+        }
+      },
+      "request_id": {
+        "type": "string",
+        "minLength": 1,
+        "maxLength": 128
+      }
+    }
+  },
+  "settings_update_request": {
+    "type": "object",
+    "additionalProperties": false,
+    "required": [
+      "protocol",
+      "version",
+      "type",
+      "payload",
+      "request_id"
+    ],
+    "properties": {
+      "protocol": {
+        "const": "aurora-ipc"
+      },
+      "version": {
+        "const": 1
+      },
+      "type": {
+        "const": "settings.update.request"
+      },
+      "payload": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "expected_revision",
+          "patch"
+        ],
+        "properties": {
+          "expected_revision": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 9007199254740991
+          },
+          "patch": {
+            "type": "object",
+            "maxProperties": 23,
+            "propertyNames": {
+              "maxLength": 128,
+              "minLength": 1
+            },
+            "additionalProperties": {
+              "type": [
+                "string",
+                "number",
+                "boolean",
+                "null"
+              ],
+              "maxLength": 512,
+              "minimum": -9007199254740991,
+              "maximum": 9007199254740991
+            }
+          }
+        }
+      },
+      "request_id": {
+        "type": "string",
+        "minLength": 1,
+        "maxLength": 128
+      }
+    }
+  },
+  "settings_update_response": {
+    "type": "object",
+    "additionalProperties": false,
+    "required": [
+      "protocol",
+      "version",
+      "type",
+      "payload",
+      "request_id"
+    ],
+    "properties": {
+      "protocol": {
+        "const": "aurora-ipc"
+      },
+      "version": {
+        "const": 1
+      },
+      "type": {
+        "const": "settings.update.response"
+      },
+      "payload": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "revision",
+          "changed_keys",
+          "restart_required_keys"
+        ],
+        "properties": {
+          "revision": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 9007199254740991
+          },
+          "changed_keys": {
+            "type": "array",
+            "maxItems": 23,
+            "uniqueItems": true,
+            "items": {
+              "enum": [
+                "ollama.host",
+                "ollama.thinking_mode",
+                "ollama.keep_alive",
+                "chat_model",
+                "chat_model_mode",
+                "embedding_model",
+                "embedding_model_mode",
+                "resolved_chat_model",
+                "resolved_embedding_model",
+                "memory.max_injection",
+                "memory.min_importance",
+                "memory.retrieval_threshold",
+                "memory.confidence_default",
+                "persona.enabled",
+                "knowledge.enabled",
+                "knowledge.max_results",
+                "rag.pipeline_enabled",
+                "rag.enable_dedup",
+                "rag.enable_ranking",
+                "rag.enable_optimization",
+                "rag.context_budget",
+                "rag.reserved_output",
+                "context.warning_tokens"
+              ]
+            }
+          },
+          "restart_required_keys": {
+            "type": "array",
+            "maxItems": 23,
+            "uniqueItems": true,
+            "items": {
+              "enum": [
+                "ollama.host",
+                "ollama.thinking_mode",
+                "ollama.keep_alive",
+                "chat_model",
+                "chat_model_mode",
+                "embedding_model",
+                "embedding_model_mode",
+                "resolved_chat_model",
+                "resolved_embedding_model",
+                "memory.max_injection",
+                "memory.min_importance",
+                "memory.retrieval_threshold",
+                "memory.confidence_default",
+                "persona.enabled",
+                "knowledge.enabled",
+                "knowledge.max_results",
+                "rag.pipeline_enabled",
+                "rag.enable_dedup",
+                "rag.enable_ranking",
+                "rag.enable_optimization",
+                "rag.context_budget",
+                "rag.reserved_output",
+                "context.warning_tokens"
+              ]
+            }
+          }
+        }
+      },
+      "request_id": {
+        "type": "string",
+        "minLength": 1,
+        "maxLength": 128
+      }
+    }
+  },
+  "settings_changed": {
+    "type": "object",
+    "additionalProperties": false,
+    "required": [
+      "protocol",
+      "version",
+      "type",
+      "payload"
+    ],
+    "properties": {
+      "protocol": {
+        "const": "aurora-ipc"
+      },
+      "version": {
+        "const": 1
+      },
+      "type": {
+        "const": "settings.changed"
+      },
+      "payload": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "revision",
+          "changed_keys",
+          "restart_required_keys"
+        ],
+        "properties": {
+          "revision": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 9007199254740991
+          },
+          "changed_keys": {
+            "type": "array",
+            "maxItems": 23,
+            "uniqueItems": true,
+            "items": {
+              "enum": [
+                "ollama.host",
+                "ollama.thinking_mode",
+                "ollama.keep_alive",
+                "chat_model",
+                "chat_model_mode",
+                "embedding_model",
+                "embedding_model_mode",
+                "resolved_chat_model",
+                "resolved_embedding_model",
+                "memory.max_injection",
+                "memory.min_importance",
+                "memory.retrieval_threshold",
+                "memory.confidence_default",
+                "persona.enabled",
+                "knowledge.enabled",
+                "knowledge.max_results",
+                "rag.pipeline_enabled",
+                "rag.enable_dedup",
+                "rag.enable_ranking",
+                "rag.enable_optimization",
+                "rag.context_budget",
+                "rag.reserved_output",
+                "context.warning_tokens"
+              ]
+            }
+          },
+          "restart_required_keys": {
+            "type": "array",
+            "maxItems": 23,
+            "uniqueItems": true,
+            "items": {
+              "enum": [
+                "ollama.host",
+                "ollama.thinking_mode",
+                "ollama.keep_alive",
+                "chat_model",
+                "chat_model_mode",
+                "embedding_model",
+                "embedding_model_mode",
+                "resolved_chat_model",
+                "resolved_embedding_model",
+                "memory.max_injection",
+                "memory.min_importance",
+                "memory.retrieval_threshold",
+                "memory.confidence_default",
+                "persona.enabled",
+                "knowledge.enabled",
+                "knowledge.max_results",
+                "rag.pipeline_enabled",
+                "rag.enable_dedup",
+                "rag.enable_ranking",
+                "rag.enable_optimization",
+                "rag.context_budget",
+                "rag.reserved_output",
+                "context.warning_tokens"
+              ]
+            }
+          }
+        }
+      }
+    }
+  },
     "chatDiagnostics": {
   "type": "object",
   "additionalProperties": false,
@@ -324,7 +807,8 @@
         "INTERNAL_ERROR",
         "NOT_FOUND",
         "INVALID_CONVERSATION",
-        "PERSISTENCE_FAILED"
+        "PERSISTENCE_FAILED",
+        "INVALID_SETTING", "INVALID_VALUE", "READ_ONLY", "RESTART_REQUIRED", "PERSISTENCE_ERROR", "CONFLICT"
       ]
     },
     "errorDetail": {
@@ -364,7 +848,9 @@
         "memory": {"type": "boolean"},
         "knowledge": {"type": "boolean"},
         "rag": {"type": "boolean"},
-        "voice": {"$ref": "#/$defs/voiceCapabilities"}
+        "voice": {"$ref": "#/$defs/voiceCapabilities"},
+        "settings": {"type":"object","additionalProperties":false,"required":["read","update","ui"],
+          "properties":{"read":{"const":true},"update":{"const":true},"ui":{"const":false}}}
       },
       "additionalProperties": true
     },

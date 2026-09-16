@@ -180,7 +180,9 @@ from pathlib import Path
 from production_sidecar.composition import ProductionComposition
 c = ProductionComposition(context_root=Path(sys.argv[1]))
 c.context.prepare("synthetic")
-assert not any(n in sys.modules for n in ("tkinter", "main", "widgets", "modules.settings", "modules.memory_intelligence", "modules.conversation_intelligence"))
+assert not any(n in sys.modules for n in ("tkinter", "main", "widgets", "modules.memory_intelligence", "modules.conversation_intelligence"))
+from modules.settings import settings
+assert settings._instance is None
 assert not list(Path(sys.argv[1]).rglob("*.json"))
 c.close()
 '''

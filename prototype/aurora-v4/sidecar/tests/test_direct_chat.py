@@ -275,13 +275,12 @@ class BridgeTests(unittest.IsolatedAsyncioTestCase):
 
 
 class BoundaryTests(unittest.TestCase):
-    def test_settings_policy_not_hardcoded_and_source_drift_fails_closed(self):
+    def test_settings_policy_not_hardcoded_and_safe_direct_import(self):
         with tempfile.TemporaryDirectory() as directory:
             path = write_settings(directory, "http://127.0.0.1:1",
                                   ollama={"host": "http://127.0.0.1:1", "thinking_mode": "on", "keep_alive": "5m"})
             adapter = DirectChatAdapter(ProductionComposition(ROOT, path))
-            resolve = adapter.api["resolve_ollama_request_policy"]
-            payload = resolve(adapter.composition.settings).apply({})
+            payload = adapter.composition.settings.policy.apply({})
             self.assertEqual(payload, {"think": True, "keep_alive": "5m"})
             self.assertEqual(adapter.prepare_context().snapshot(), [])
             self.assertNotIn("private", repr(ChatRequest("r", "s", "g", "private")))
@@ -302,7 +301,9 @@ from production_sidecar.direct_chat import DirectChatAdapter
 a=DirectChatAdapter(ProductionComposition())
 assert a.prepare_context().snapshot()==[]
 assert len(threading.enumerate())==1
-assert not any(n.startswith(('modules.settings','modules.memory','widgets','tkinter','modules.conversation')) for n in sys.modules)
+assert not any(n.startswith(('modules.memory','widgets','tkinter','modules.conversation')) for n in sys.modules)
+from modules.settings import settings
+assert settings._instance is None
 """
             result = subprocess.run([sys.executable, "-B", "-c", code], cwd=directory,
                 env={**os.environ, "TEST_SIDECAR": str(SIDECAR), "TEST_ROOT": str(ROOT),

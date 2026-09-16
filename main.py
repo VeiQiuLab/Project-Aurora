@@ -171,6 +171,7 @@ def apply_language(language):
     return normalized
 
 
+settings.initialize()  # Explicit legacy startup load/migration; imports alone are read-only.
 apply_language(settings.get("language", "zh_CN"))
 settings_controller = SettingsController(settings)
 

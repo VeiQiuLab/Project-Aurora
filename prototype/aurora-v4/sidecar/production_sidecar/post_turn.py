@@ -67,14 +67,15 @@ class PostTurnCoordinator:
                 self.idle_since = self.clock()
                 self.condition.notify_all()
 
-    def schedule(self, conversation_id, generation_id, messages, model, *, status="completed"):
+    def schedule(self, conversation_id, generation_id, messages, model, *, status="completed", settings_snapshot=None):
         with self.condition:
             key = (conversation_id, generation_id)
             if self.closed or status != "completed" or key in self.seen:
                 return False
             self.seen.add(key)
             self.pending.append(dict(conversation_id=conversation_id, generation_id=generation_id,
-                                     messages=deepcopy(messages), model=model, cpu_done=False))
+                                     messages=deepcopy(messages), model=model, cpu_done=False,
+                                     settings_snapshot=settings_snapshot))
             self.record("scheduled", self.pending[-1])
             if self.worker is None:
                 self.worker = threading.Thread(target=self._run, name="post-turn", daemon=True)
@@ -171,10 +172,12 @@ class PostTurnCoordinator:
             self.record("title_started", job, wait_ms=(started-self.idle_since)*1000)
             request_diagnostics = {}
             try:
+                settings_args = ({"settings_store": job["settings_snapshot"]}
+                                 if job.get("settings_snapshot") is not None else {})
                 return self.chat_api["chat_with_messages"](
                     job["model"], [{"role": "user", "content": prompt}],
                     timeout=TITLE_GENERATION_TIMEOUT_SECONDS, thinking_mode="off",
-                    num_predict=TITLE_GENERATION_MAX_TOKENS, diagnostics=request_diagnostics)
+                    num_predict=TITLE_GENERATION_MAX_TOKENS, diagnostics=request_diagnostics, **settings_args)
             finally:
                 self.record("title_request_finished", job, duration_ms=(self.clock()-started)*1000,
                             **request_diagnostics)

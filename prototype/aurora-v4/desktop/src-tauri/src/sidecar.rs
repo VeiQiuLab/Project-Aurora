@@ -482,6 +482,14 @@ impl BackendManager {
         self.send_value(conversation_list(&format!("conversation-list-{}", Uuid::new_v4().simple()))).await
     }
 
+    pub async fn settings_get(&self) -> Result<(), String> {
+        self.send_value(crate::settings::get(&format!("settings-get-{}", Uuid::new_v4().simple()))).await
+    }
+
+    pub async fn settings_update(&self, expected_revision: u64, patch: Value) -> Result<(), String> {
+        self.send_value(crate::settings::update(&format!("settings-update-{}", Uuid::new_v4().simple()), expected_revision, patch)?).await
+    }
+
     pub async fn conversation_get(&self, conversation_id: String) -> Result<(), String> {
         if conversation_id.is_empty() || conversation_id.len() > 128 ||
             !conversation_id.chars().all(|c| c.is_ascii_alphanumeric() || c == '_' || c == '-') {
@@ -620,6 +628,20 @@ impl BackendManager {
             return Err("STALE_CONNECTION".into());
         }
         match message_type {
+            "settings.get.response" => {
+                let request_id = require_string(&value, "request_id", None)?.to_owned();
+                let snapshot = crate::settings::Snapshot::from_wire(value["payload"].clone())?;
+                self.emit(FrontendEvent::SettingsSnapshot { request_id, snapshot });
+            }
+            "settings.update.response" => {
+                let request_id = require_string(&value, "request_id", None)?.to_owned();
+                let change = crate::settings::Change::from_wire(value["payload"].clone())?;
+                self.emit(FrontendEvent::SettingsUpdated { request_id, change });
+            }
+            "settings.changed" => {
+                let change = crate::settings::Change::from_wire(value["payload"].clone())?;
+                self.emit(FrontendEvent::SettingsChanged { change });
+            }
             "conversation.changed" => {
                 let conversation: ConversationSummary = serde_json::from_value(
                     object(&value, "payload")?.get("conversation").cloned()
@@ -796,7 +818,10 @@ impl BackendManager {
                     .and_then(Value::as_str)
                     .unwrap_or("BACKEND_WARNING")
                     .to_owned();
-                if message_type == "error"
+                if message_type == "error" && crate::settings::ERRORS.contains(&code.as_str()) {
+                    let request_id = require_string(&value, "request_id", None)?.to_owned();
+                    self.emit(FrontendEvent::SettingsError { request_id, code });
+                } else if message_type == "error"
                     && matches!(code.as_str(), "NOT_FOUND" | "INVALID_CONVERSATION" | "PERSISTENCE_FAILED")
                     && value.get("request_id").is_some()
                     && value.get("session_id").is_none()
@@ -1073,6 +1098,7 @@ impl JobGuard {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use serde_json::json;
 
     async fn wait_for(
         manager: &BackendManager,
@@ -1101,6 +1127,41 @@ mod tests {
         );
         assert!(std::env::split_paths(&launch.python_path).count() >= 2);
         assert!(find_sidecar_launch("unknown").is_err());
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn settings_route_offline_persist_restart_and_backend_lost() {
+        let directory = std::env::temp_dir().join(format!("aurora-settings-test-{}", Uuid::new_v4()));
+        std::fs::create_dir_all(directory.join("config")).unwrap();
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let file = directory.join("config/settings.json");
+        std::fs::write(&file, json!({"ollama":{"host":format!("http://{}",listener.local_addr().unwrap())}}).to_string()).unwrap();
+        let mut manager = BackendManager::with_mode("production".into());
+        manager.test_data_directory = Some(directory.clone());
+        assert!(manager.settings_get().await.is_err());
+        manager.start(false).await.unwrap();
+        wait_for(&manager, |s| s.info.diagnostics.is_some()).await;
+        manager.settings_get().await.unwrap();
+        manager.settings_update(0,json!({"ollama.thinking_mode":"on"})).await.unwrap();
+        timeout(Duration::from_secs(4), async {
+            loop {
+                let raw: Value = serde_json::from_str(&std::fs::read_to_string(&file).unwrap()).unwrap();
+                if raw["ollama"]["thinking_mode"] == "on" { break; }
+                tokio::time::sleep(Duration::from_millis(10)).await;
+            }
+        }).await.unwrap();
+        let old_epoch = manager.inner.lock().await.epoch;
+        manager.crash().await.unwrap();
+        wait_for(&manager, |s| s.state == BackendState::Disconnected).await;
+        assert!(manager.settings_update(1,json!({})).await.is_err());
+        manager.restart().await.unwrap();
+        wait_for(&manager, |s| s.info.diagnostics.as_ref().is_some_and(|d| d.ollama_think_mode == "on")).await;
+        let examples: Vec<Value> = serde_json::from_str(include_str!("../../../contracts/ipc-v1.settings.examples.json")).unwrap();
+        assert_eq!(manager.handle_wire(old_epoch,&examples[4].to_string()).await.unwrap_err(),"STALE_CONNECTION");
+        manager.shutdown().await.unwrap();
+        std::fs::remove_file(file).unwrap();
+        std::fs::remove_dir(directory.join("config")).unwrap();
+        std::fs::remove_dir(directory).unwrap();
     }
 
     // Fully offline fixture; this test never consults the user's settings/Ollama.

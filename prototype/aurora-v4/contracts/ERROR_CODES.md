@@ -22,6 +22,12 @@ automatically.
 | `NOT_FOUND` | The requested conversation ID does not exist | No |
 | `INVALID_CONVERSATION` | Conversation JSON is malformed or has unsupported data | No |
 | `PERSISTENCE_FAILED` | A completed conversation turn could not be saved | Yes |
+| `INVALID_SETTING` | Settings key is outside the explicit allowlist | No |
+| `INVALID_VALUE` | Setting type, enum, range or format is invalid | No |
+| `READ_ONLY` | Setting is metadata or settings owner is closed | No |
+| `RESTART_REQUIRED` | Reserved for an operation requiring restart; none of V4-5A mutable keys use it | No |
+| `PERSISTENCE_ERROR` | Settings transaction failed without publishing a new snapshot | After resolving storage failure |
+| `CONFLICT` | Stale revision or externally modified settings file | Reload/get current state first |
 
 ## Error delivery
 

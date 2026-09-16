@@ -1,11 +1,7 @@
-"""Reuse the actual production chat module without its eager settings import.
-
-No rewritten HTTP/NDJSON/policy/cancellation implementation. This is the same
-source-only bridge as V4-3A, with a private request-settings namespace.
-"""
+"""Direct production imports with explicit request-local settings injection."""
 from __future__ import annotations
 
-import ast
+from functools import partial
 from dataclasses import dataclass, field
 from pathlib import Path
 
@@ -21,26 +17,11 @@ class ChatRequest:
 
 
 def load_chat_boundary(root: Path, settings):
-    path = root / "modules/chat.py"
-    tree = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
-    expected = ast.parse(
-        "import copy\nimport json\nimport math\nimport socket\nimport threading\n"
-        "import urllib.error\nimport urllib.request\nfrom time import monotonic\n"
-        "from modules.ollama_request_policy import resolve_ollama_request_policy\n"
-        "from modules.settings import settings\n"
-    ).body
-    imports = [n for n in tree.body if isinstance(n, (ast.Import, ast.ImportFrom))]
-    if [ast.dump(n) for n in imports] != [ast.dump(n) for n in expected]:
-        raise RuntimeError("CHAT_IMPORT_BOUNDARY_CHANGED")
-    for node in tree.body:
-        if isinstance(node, ast.Assign):
-            ast.literal_eval(node.value)  # only the audited constant tables
-        elif not isinstance(node, (ast.Import, ast.ImportFrom, ast.ClassDef, ast.FunctionDef)):
-            raise RuntimeError("CHAT_IMPORT_BOUNDARY_CHANGED")
-    tree.body.remove(imports[-1])  # replace ONLY the eager singleton dependency
-    namespace = {"__name__": "aurora_v4_direct_chat", "settings": settings}
-    exec(compile(tree, str(path), "exec"), namespace)
-    return namespace
+    from modules import chat
+    return {"ChatSession": chat.ChatSession, "ChatError": chat.ChatError,
+            "StreamingRequestHandle": chat.StreamingRequestHandle,
+            "stream_chat": partial(chat.stream_chat, settings_store=settings),
+            "chat_with_messages": partial(chat.chat_with_messages, settings_store=settings)}
 
 
 class DirectChatAdapter:
@@ -79,9 +60,11 @@ class DirectChatAdapter:
         persisted_history = self.prepare_context(history).snapshot()
         session = self.prepare_context(history, context_snapshot)
         history_length = len(session.snapshot())
+        settings = getattr(context_snapshot, "settings", None) or self.composition.settings.snapshot()
         result = self.api["stream_chat"](
             model, request.text, session, on_chunk, handle.stop_event,
             request_handle=handle, collect_memory_candidates=False, raw_line_observer=observe,
+            settings_store=settings,
         )
         if not handle.cancelled and not done_seen:
             raise self.api["ChatError"]("Incomplete production stream.", category="invalid_response")

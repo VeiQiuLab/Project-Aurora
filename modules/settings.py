@@ -1,17 +1,19 @@
 import copy
 import json
+import threading
 
 from modules.app_paths import CONFIG_DIR, CONFIG_FILE, DEFAULT_SETTINGS_FILE
 
 
 class Settings:
-    def __init__(self):
-        self.config_dir = CONFIG_DIR
-        self.config_file = CONFIG_FILE
+    def __init__(self, *, config_file=None, initialize=True):
+        self.config_file = config_file if config_file is not None else CONFIG_FILE
+        self.config_dir = self.config_file.parent if config_file is not None else CONFIG_DIR
 
         self.default_settings = self._load_default_settings()
         self.data = {}
-        self.load()
+        if initialize:
+            self.load()
 
     @staticmethod
     def _fallback_default_settings():
@@ -198,6 +200,14 @@ class Settings:
             self.save()
             return
 
+        if self.normalize_loaded():
+            try:
+                self.save()
+            except OSError:
+                pass
+
+    def normalize_loaded(self):
+        """Normalize an explicitly loaded object in memory, with no IO."""
         changed = False
         if self._migrate_first_run_settings():
             changed = True
@@ -211,11 +221,7 @@ class Settings:
             changed = True
         if self._remove_legacy_openwebui_settings():
             changed = True
-        if changed:
-            try:
-                self.save()
-            except OSError:
-                pass
+        return changed
 
     def _migrate_first_run_settings(self):
         """Keep existing Aurora users out of a newly introduced first-run loop.
@@ -389,4 +395,40 @@ class Settings:
         target[keys[-1]] = value
 
 
-settings = Settings()
+class _LazySettings:
+    """Legacy singleton, initialized at first use rather than module import.
+
+    Settings() retains the historical explicit load/migration behavior. Headless
+    owners import Settings without instantiating this legacy application owner.
+    """
+
+    def __init__(self):
+        self._instance = None
+        self._init_lock = threading.Lock()
+
+    def initialize(self):
+        with self._init_lock:
+            if self._instance is None:
+                self._instance = Settings()
+            return self._instance
+
+    def get(self, key, default=None):
+        return self.initialize().get(key, default)
+
+    def set(self, key, value):
+        return self.initialize().set(key, value)
+
+    def update_many(self, values, save=True):
+        return self.initialize().update_many(values, save=save)
+
+    def __getattr__(self, name):
+        return getattr(self.initialize(), name)
+
+    def __setattr__(self, name, value):
+        if name.startswith("_") or name in type(self).__dict__:
+            object.__setattr__(self, name, value)
+        else:
+            setattr(self.initialize(), name, value)
+
+
+settings = _LazySettings()

@@ -18,6 +18,7 @@ from production_sidecar.composition import ProductionComposition
 from production_sidecar.chat_execution import ChatExecution
 from production_sidecar.conversations import ConversationError
 from production_sidecar.post_turn import PostTurnCoordinator
+from modules.settings_service import SettingsError
 
 LOGGER = logging.getLogger("aurora-v4-production")
 
@@ -49,6 +50,39 @@ class ProductionSidecar(MockSidecar):
 
     def capabilities(self):
         return self.composition.capabilities()
+
+    async def dispatch(self, connection, message):
+        kind = message["type"]
+        if kind not in {"settings.get.request", "settings.update.request"}:
+            return await super().dispatch(connection, message)
+        self._event_loop = asyncio.get_running_loop()
+        self._metadata_connections.add(connection)
+        try:
+            if kind == "settings.get.request":
+                result = await asyncio.to_thread(self.composition.settings.describe)
+                response_type = "settings.get.response"
+            else:
+                result = await asyncio.to_thread(self.composition.settings.apply_patch,
+                    message["payload"]["patch"], message["payload"]["expected_revision"])
+                response_type = "settings.update.response"
+                LOGGER.info("event=settings_updated revision=%s count=%s", result["revision"], len(result["changed_keys"]))
+            await self.send(connection, {"protocol": "aurora-ipc", "version": 1, "type": response_type,
+                "request_id": message["request_id"], "payload": result})
+            if kind == "settings.update.request" and result["changed_keys"]:
+                for observer in tuple(self._metadata_connections):
+                    try:
+                        await self.send(observer, {"protocol": "aurora-ipc", "version": 1,
+                            "type": "settings.changed", "payload": result})
+                    except Exception:
+                        self._metadata_connections.discard(observer)
+        except SettingsError as error:
+            LOGGER.info("event=settings_update_rejected code=%s", error.code)
+            await self.send_error(connection, code=error.code, message="Settings operation could not complete.",
+                                  retryable=error.code == "CONFLICT", envelope=message)
+        except (OSError, ValueError, TypeError):
+            LOGGER.info("event=settings_persist_failed code=PERSISTENCE_ERROR")
+            await self.send_error(connection, code="PERSISTENCE_ERROR",
+                message="Settings operation could not complete.", retryable=False, envelope=message)
 
     def backend_state(self):
         return self.composition.state

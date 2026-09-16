@@ -272,6 +272,32 @@ does not define a credit protocol or implement these reserved message types.
 
 ## Examples
 
+### V4-5A Settings extension (still v1)
+
+Authenticated request/response pairs carry request_id only, no generation/session/seq.
+`settings.get.request` has an empty payload. `settings.get.response` returns
+`revision`, `status`, and the explicit allowlisted `descriptors` (safe values/defaults,
+type, mutable/apply/restart metadata, bounds/options/label/value_valid). It is not raw JSON.
+
+`settings.update.request` requires `expected_revision` (nonnegative safe integer)
+and a bounded `patch` object of flat dotted keys to scalar values.
+Python validates every key/value before any persistence. A response contains only
+`revision`, `changed_keys`, `restart_required_keys`.
+Only nonempty successful changes emit `settings.changed` with this same payload,
+without request/session/generation/seq. No-op produces a response but no event or file IO.
+Concurrent updates are serialized; stale revisions/external edits produce CONFLICT.
+Revision is process-local; gateway epoch invalidation and frontend cache reset require
+a fresh get after backend loss/restart before editing. This is not a durable revision token.
+
+Rust commands `settings_get` / `settings_update` route through the authenticated
+transport. Typed frontend events are `settings_snapshot`, `settings_updated`,
+`settings_changed`, `settings_error`; no Settings UI is added.
+Secrets, unknown keys, and raw paths are not exposed. All current mutable descriptors
+apply to the next request; restart_required_keys is empty. Embedding mode and resolved
+model metadata are read-only (no automatic resolver is introduced).
+See `ipc-v1.settings.examples.json`, `settings_contract.py`,
+and [the complete ownership/runtime audit](../docs/V4_5A_SETTINGS_AUDIT.md).
+
 `ipc-v1.examples.json` contains a bootstrap/handshake, health/capability reply,
 three ordered deltas and completion, cancellation with cancelled terminal,
 backend failure, and a Rust-synthesized backend-lost terminal. All text and IDs

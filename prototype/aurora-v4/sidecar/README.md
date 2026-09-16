@@ -1,5 +1,15 @@
 # Python sidecar lifecycle contract
 
+V4-5A replaces the checked-source Settings/Chat bridge with direct headless-safe
+production imports and request-local immutable settings snapshots. AI settings
+remain Python-owned in the existing app_paths.CONFIG_FILE; no second V4 file.
+Read/patch/change notifications use authenticated IPC v1. See
+[Settings ownership/runtime audit](../docs/V4_5A_SETTINGS_AUDIT.md).
+The real-config smoke is read-only:
+`python -B prototype/aurora-v4/sidecar/smoke_settings_readonly.py`.
+It prints safe scalar results only; all update tests use isolated settings roots.
+No Settings page is included. Manual GUI remains **NOT YET VERIFIED**.
+
 V4-3C adds Python-owned conversation list/get/create and completed-turn
 persistence on top of the V4-3B direct-chat RPC. History is loaded lazily from
 the existing `modules.app_paths` conversation directory; cancelled, failed,

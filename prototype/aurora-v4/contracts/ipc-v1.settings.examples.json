@@ -1,0 +1,390 @@
+[
+  {
+    "protocol": "aurora-ipc",
+    "version": 1,
+    "type": "settings.get.request",
+    "request_id": "settings-example",
+    "payload": {}
+  },
+  {
+    "protocol": "aurora-ipc",
+    "version": 1,
+    "type": "settings.get.response",
+    "request_id": "settings-example",
+    "payload": {
+      "revision": 0,
+      "status": "missing_defaults",
+      "descriptors": [
+        {
+          "key": "ollama.host",
+          "type": "string",
+          "value": "http://127.0.0.1:11434",
+          "default": "http://127.0.0.1:11434",
+          "mutable": true,
+          "restart_required": false,
+          "apply": "next_request",
+          "options": null,
+          "min": null,
+          "max": null,
+          "label_id": "settings.ollama.host",
+          "value_valid": true
+        },
+        {
+          "key": "ollama.thinking_mode",
+          "type": "string",
+          "value": "off",
+          "default": "off",
+          "mutable": true,
+          "restart_required": false,
+          "apply": "next_request",
+          "options": [
+            "off",
+            "on",
+            "default"
+          ],
+          "min": null,
+          "max": null,
+          "label_id": "settings.ollama.thinking_mode",
+          "value_valid": true
+        },
+        {
+          "key": "ollama.keep_alive",
+          "type": "nullable_string",
+          "value": "30m",
+          "default": "30m",
+          "mutable": true,
+          "restart_required": false,
+          "apply": "next_request",
+          "options": null,
+          "min": null,
+          "max": null,
+          "label_id": "settings.ollama.keep_alive",
+          "value_valid": true
+        },
+        {
+          "key": "chat_model",
+          "type": "string",
+          "value": "",
+          "default": "",
+          "mutable": true,
+          "restart_required": false,
+          "apply": "next_request",
+          "options": null,
+          "min": null,
+          "max": null,
+          "label_id": "settings.chat_model",
+          "value_valid": true
+        },
+        {
+          "key": "chat_model_mode",
+          "type": "string",
+          "value": "auto",
+          "default": "auto",
+          "mutable": true,
+          "restart_required": false,
+          "apply": "next_request",
+          "options": [
+            "auto",
+            "manual"
+          ],
+          "min": null,
+          "max": null,
+          "label_id": "settings.chat_model_mode",
+          "value_valid": true
+        },
+        {
+          "key": "embedding_model",
+          "type": "string",
+          "value": "",
+          "default": "",
+          "mutable": true,
+          "restart_required": false,
+          "apply": "next_request",
+          "options": null,
+          "min": null,
+          "max": null,
+          "label_id": "settings.embedding_model",
+          "value_valid": true
+        },
+        {
+          "key": "embedding_model_mode",
+          "type": "string",
+          "value": "manual",
+          "default": "manual",
+          "mutable": false,
+          "restart_required": false,
+          "apply": "read_only",
+          "options": [
+            "auto",
+            "manual"
+          ],
+          "min": null,
+          "max": null,
+          "label_id": "settings.embedding_model_mode",
+          "value_valid": true
+        },
+        {
+          "key": "resolved_chat_model",
+          "type": "string",
+          "value": "",
+          "default": "",
+          "mutable": false,
+          "restart_required": false,
+          "apply": "read_only",
+          "options": null,
+          "min": null,
+          "max": null,
+          "label_id": "settings.resolved_chat_model",
+          "value_valid": true
+        },
+        {
+          "key": "resolved_embedding_model",
+          "type": "string",
+          "value": "",
+          "default": "",
+          "mutable": false,
+          "restart_required": false,
+          "apply": "read_only",
+          "options": null,
+          "min": null,
+          "max": null,
+          "label_id": "settings.resolved_embedding_model",
+          "value_valid": true
+        },
+        {
+          "key": "memory.max_injection",
+          "type": "integer",
+          "value": 5,
+          "default": 5,
+          "mutable": true,
+          "restart_required": false,
+          "apply": "next_request",
+          "options": null,
+          "min": 1,
+          "max": null,
+          "label_id": "settings.memory.max_injection",
+          "value_valid": true
+        },
+        {
+          "key": "memory.min_importance",
+          "type": "number",
+          "value": 0,
+          "default": 0,
+          "mutable": true,
+          "restart_required": false,
+          "apply": "next_request",
+          "options": null,
+          "min": 0,
+          "max": null,
+          "label_id": "settings.memory.min_importance",
+          "value_valid": true
+        },
+        {
+          "key": "memory.retrieval_threshold",
+          "type": "number",
+          "value": 0.35,
+          "default": 0.35,
+          "mutable": true,
+          "restart_required": false,
+          "apply": "next_request",
+          "options": null,
+          "min": 0,
+          "max": 1,
+          "label_id": "settings.memory.retrieval_threshold",
+          "value_valid": true
+        },
+        {
+          "key": "memory.confidence_default",
+          "type": "number",
+          "value": 0.5,
+          "default": 0.5,
+          "mutable": true,
+          "restart_required": false,
+          "apply": "next_request",
+          "options": null,
+          "min": 0,
+          "max": 1,
+          "label_id": "settings.memory.confidence_default",
+          "value_valid": true
+        },
+        {
+          "key": "persona.enabled",
+          "type": "boolean",
+          "value": true,
+          "default": true,
+          "mutable": true,
+          "restart_required": false,
+          "apply": "next_request",
+          "options": null,
+          "min": null,
+          "max": null,
+          "label_id": "settings.persona.enabled",
+          "value_valid": true
+        },
+        {
+          "key": "knowledge.enabled",
+          "type": "boolean",
+          "value": true,
+          "default": true,
+          "mutable": true,
+          "restart_required": false,
+          "apply": "next_request",
+          "options": null,
+          "min": null,
+          "max": null,
+          "label_id": "settings.knowledge.enabled",
+          "value_valid": true
+        },
+        {
+          "key": "knowledge.max_results",
+          "type": "integer",
+          "value": 3,
+          "default": 3,
+          "mutable": true,
+          "restart_required": false,
+          "apply": "next_request",
+          "options": null,
+          "min": 0,
+          "max": null,
+          "label_id": "settings.knowledge.max_results",
+          "value_valid": true
+        },
+        {
+          "key": "rag.pipeline_enabled",
+          "type": "boolean",
+          "value": true,
+          "default": true,
+          "mutable": true,
+          "restart_required": false,
+          "apply": "next_request",
+          "options": null,
+          "min": null,
+          "max": null,
+          "label_id": "settings.rag.pipeline_enabled",
+          "value_valid": true
+        },
+        {
+          "key": "rag.enable_dedup",
+          "type": "boolean",
+          "value": true,
+          "default": true,
+          "mutable": true,
+          "restart_required": false,
+          "apply": "next_request",
+          "options": null,
+          "min": null,
+          "max": null,
+          "label_id": "settings.rag.enable_dedup",
+          "value_valid": true
+        },
+        {
+          "key": "rag.enable_ranking",
+          "type": "boolean",
+          "value": true,
+          "default": true,
+          "mutable": true,
+          "restart_required": false,
+          "apply": "next_request",
+          "options": null,
+          "min": null,
+          "max": null,
+          "label_id": "settings.rag.enable_ranking",
+          "value_valid": true
+        },
+        {
+          "key": "rag.enable_optimization",
+          "type": "boolean",
+          "value": true,
+          "default": true,
+          "mutable": true,
+          "restart_required": false,
+          "apply": "next_request",
+          "options": null,
+          "min": null,
+          "max": null,
+          "label_id": "settings.rag.enable_optimization",
+          "value_valid": true
+        },
+        {
+          "key": "rag.context_budget",
+          "type": "integer",
+          "value": 4000,
+          "default": 4000,
+          "mutable": true,
+          "restart_required": false,
+          "apply": "next_request",
+          "options": null,
+          "min": 1,
+          "max": null,
+          "label_id": "settings.rag.context_budget",
+          "value_valid": true
+        },
+        {
+          "key": "rag.reserved_output",
+          "type": "integer",
+          "value": 0,
+          "default": 0,
+          "mutable": true,
+          "restart_required": false,
+          "apply": "next_request",
+          "options": null,
+          "min": 0,
+          "max": null,
+          "label_id": "settings.rag.reserved_output",
+          "value_valid": true
+        },
+        {
+          "key": "context.warning_tokens",
+          "type": "integer",
+          "value": 6000,
+          "default": 6000,
+          "mutable": true,
+          "restart_required": false,
+          "apply": "next_request",
+          "options": null,
+          "min": 1,
+          "max": null,
+          "label_id": "settings.context.warning_tokens",
+          "value_valid": true
+        }
+      ]
+    }
+  },
+  {
+    "protocol": "aurora-ipc",
+    "version": 1,
+    "type": "settings.update.request",
+    "request_id": "settings-example",
+    "payload": {
+      "expected_revision": 0,
+      "patch": {
+        "ollama.thinking_mode": "on"
+      }
+    }
+  },
+  {
+    "protocol": "aurora-ipc",
+    "version": 1,
+    "type": "settings.update.response",
+    "request_id": "settings-example",
+    "payload": {
+      "revision": 1,
+      "changed_keys": [
+        "ollama.thinking_mode"
+      ],
+      "restart_required_keys": []
+    }
+  },
+  {
+    "protocol": "aurora-ipc",
+    "version": 1,
+    "type": "settings.changed",
+    "payload": {
+      "revision": 1,
+      "changed_keys": [
+        "ollama.thinking_mode"
+      ],
+      "restart_required_keys": []
+    }
+  }
+]

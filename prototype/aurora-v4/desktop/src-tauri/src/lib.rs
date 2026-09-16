@@ -1,6 +1,7 @@
 mod protocol;
 mod registry;
 mod sidecar;
+mod settings;
 
 use protocol::{BackendSnapshot, CancelTarget, ChatStartResult, FrontendEvent};
 use serde::{Deserialize, Serialize};
@@ -74,6 +75,16 @@ async fn conversation_list(manager: tauri::State<'_, BackendManager>) -> Result<
 }
 
 #[tauri::command]
+async fn settings_get(manager: tauri::State<'_, BackendManager>) -> Result<(), String> {
+    manager.settings_get().await
+}
+
+#[tauri::command]
+async fn settings_update(manager: tauri::State<'_, BackendManager>, expected_revision: u64, patch: serde_json::Value) -> Result<(), String> {
+    manager.settings_update(expected_revision, patch).await
+}
+
+#[tauri::command]
 async fn conversation_get(
     manager: tauri::State<'_, BackendManager>,
     conversation_id: String,
@@ -124,6 +135,8 @@ pub fn run() {
             backend_snapshot,
             chat_start,
             conversation_list,
+            settings_get,
+            settings_update,
             conversation_get,
             conversation_create,
             chat_cancel,

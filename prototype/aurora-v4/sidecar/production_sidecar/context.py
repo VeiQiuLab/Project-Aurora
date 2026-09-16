@@ -67,10 +67,9 @@ class ProductionContextAdapter:
             self._persona = PersonaStore(self.root / "persona" / "persona.json", read_only=True)
         return self._persona
 
-    def prepare(self, prompt, history=(), stop_event=None, *, conversation_id=None, generation_id=None):
-        # ReadOnlySettings is fixed at composition construction. Store results
-        # are local values, never re-read during token generation.
-        settings = self.composition.settings
+    def prepare(self, prompt, history=(), stop_event=None, *, conversation_id=None, generation_id=None, settings_snapshot=None):
+        # One accepted-generation snapshot, never a mutable service during work.
+        settings = settings_snapshot or self.composition.settings.snapshot()
         history = tuple(MappingProxyType(dict(item)) for item in history)
         latency = PreLLMLatencyDiagnostics(source="v4_context", clock=perf_counter)
         started = perf_counter()

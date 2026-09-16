@@ -1,4 +1,4 @@
-"""Production composition: paths, read-only settings, policy, bounded GET health."""
+"""Production composition: Python-owned settings snapshots and bounded GET health."""
 from __future__ import annotations
 
 import asyncio
@@ -13,7 +13,7 @@ from pathlib import Path
 from time import monotonic
 
 from modules import app_paths
-from production_sidecar.aurora_adapter import ReadOnlySettings
+from modules.settings_service import SettingsService
 
 LOGGER = logging.getLogger("aurora-v4-production")
 
@@ -83,7 +83,7 @@ class ProductionComposition:
                  conversation_root: Path | None = None,
                  context_root: Path | None = None):
         self.root = root or app_paths.PROGRAM_ROOT
-        self.settings = ReadOnlySettings(self.root, config_file)
+        self.settings = SettingsService(config_file)
         self.ollama = OllamaHealth(self.settings)
         self._conversation_root = conversation_root
         self._context_root = context_root
@@ -127,6 +127,7 @@ class ProductionComposition:
         exists = lambda path: (self.root / path).is_file()
         return {
             "chat_streaming": True, "chat_cancel": True,
+            "settings": {"read": True, "update": True, "ui": False},
             "conversation": {"list": True, "get": True, "create": True, "save": True},
             "memory": False, "knowledge": False, "rag": False,
             "voice": {"ipc": False,
@@ -140,17 +141,18 @@ class ProductionComposition:
                                "rag": exists("modules/rag_pipeline.py")},
         }
 
-    async def refresh(self):
+    async def refresh(self, settings_snapshot=None):
         async with self._refresh_lock:
             if self.closed:
                 raise RuntimeError("BACKEND_CLOSED")
-            probe = await asyncio.to_thread(self.ollama.probe)
+            snapshot = settings_snapshot or self.settings.snapshot()
+            probe = await asyncio.to_thread(OllamaHealth(snapshot).probe)
             self.diagnostics = {
                 "backend_mode": "production", "backend_ready": True,
-                "settings_status": self.settings.status,
-                **self.settings.policy.diagnostics(), "ollama": probe,
+                "settings_status": snapshot.status,
+                **snapshot.policy.diagnostics(), "ollama": probe,
             }
-            self.state = "READY" if not probe["error_code"] and self.settings.status == "loaded" else "DEGRADED"
+            self.state = "READY" if not probe["error_code"] and snapshot.status == "loaded" else "DEGRADED"
             LOGGER.info("event=health state=%s ollama=%s duration_ms=%s", self.state,
                         probe["error_code"] or "AVAILABLE", probe["probe_duration_ms"])
             return self.diagnostics
@@ -159,3 +161,4 @@ class ProductionComposition:
         self.closed = True
         if self.post_turn is not None:
             self.post_turn.close()
+        self.settings.close()

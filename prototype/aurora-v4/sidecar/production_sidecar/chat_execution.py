@@ -49,6 +49,7 @@ class Execution:
     session_messages: list[dict] = field(default_factory=list)
     persistence_lock: asyncio.Lock = field(default_factory=asyncio.Lock)
     completion_committed: bool = False
+    settings_snapshot: object = None
 
 
 class ChatExecution:
@@ -83,6 +84,7 @@ class ChatExecution:
                 "error": {"code": "BACKEND_NOT_READY", "message": "Another generation is active.", "retryable": True}})
             return
         self.active = run  # ownership before first await
+        run.settings_snapshot = self.sidecar.composition.settings.snapshot()
         post_turn = self.sidecar.composition.post_turn
         if post_turn is not None:
             post_turn.foreground_started(request.generation_id)
@@ -101,7 +103,7 @@ class ChatExecution:
         context_snapshot = None
         status, code = "completed", None
         try:
-            health = await self.sidecar.composition.refresh()
+            health = await self.sidecar.composition.refresh(run.settings_snapshot)
             probe = health["ollama"]
             if not probe["reachable"]:
                 code = "PROVIDER_UNAVAILABLE"
@@ -132,6 +134,7 @@ class ChatExecution:
                             run.handle.stop_event,
                             conversation_id=run.request.conversation_id,
                             generation_id=run.request.generation_id,
+                            settings_snapshot=run.settings_snapshot,
                         ))
                         # Cancelling the asyncio task must NOT detach the real
                         # blocking context worker or release ownership early.
@@ -245,7 +248,7 @@ class ChatExecution:
                 "cancel_to_terminal_ms": (now - run.cancel_at) * 1000 if run.cancel_at else None,
                 "active_response": run.handle.active_response is not None,
                 "worker_exited": (worker is None or worker.done()) and (context_worker is None or context_worker.done()),
-                **self.sidecar.composition.settings.policy.diagnostics(),
+                **run.settings_snapshot.policy.diagnostics(),
             })
             payload = {"terminal_state": status, "output_chars": run.output_chars,
                        "duration_ms": (now - run.received_at) * 1000, "diagnostics": diagnostics}
@@ -263,7 +266,8 @@ class ChatExecution:
                     try:
                         if status == "completed" and run.completion_committed:
                             post_turn.schedule(run.request.conversation_id, run.request.generation_id,
-                                               run.session_messages, probe["configured_model"])
+                                               run.session_messages, probe["configured_model"],
+                                               settings_snapshot=run.settings_snapshot)
                     except Exception as error:
                         LOGGER.warning("event=post_turn_schedule_failed error_code=%s", type(error).__name__)
                     finally:
