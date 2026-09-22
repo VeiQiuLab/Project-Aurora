@@ -7,6 +7,8 @@
     "dev": "vite --host 127.0.0.1 --port 1420",
     "build": "tsc --noEmit && vite build",
     "test": "node --test src/*.test.mjs",
+    "test:geometry": "node tests/shell_geometry.mjs",
+    "test:ui": "node tests/unified_ui.mjs",
     "tauri": "tauri"
   },
   "dependencies": {

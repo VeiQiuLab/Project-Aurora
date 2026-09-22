@@ -3,5 +3,5 @@
   "identifier": "default",
   "description": "Minimum capability set for the Aurora v4 prototype window.",
   "windows": ["main"],
-  "permissions": ["core:default"]
+  "permissions": ["core:default", "core:window:allow-start-dragging"]
 }

@@ -9,11 +9,13 @@ import {
   type MessageState,
 } from "./conversation_store";
 import { decideComposerAction } from "./input_policy";
-import { captionLabel, composerPresentation } from "./presentation_policy";
+import { captionLabel, composerPresentation, modelConnectionAvailable } from "./presentation_policy";
+import { bindTitlebar, bindGlass, observeComposer } from "./desktop_shell";
 import { ownsChatEvent, consumeDelta, chatErrorLabel, chatDiagnosticLabel } from "./chat_event_policy";
 import "./styles.css";
-import { SettingsState, type SettingsEvent } from "./settings_state";
-const settingsState = new SettingsState();
+import { type SettingsEvent } from "./settings_state";
+import { SettingsPanel } from "./settings_panel";
+const settingsPanel = new SettingsPanel(invoke);
 
 type BackendState =
   | "STOPPED"
@@ -256,7 +258,7 @@ const updateBackendInfo = (info: BackendInfo): void => {
 };
 
 const updateControls = (): void => {
-  const ready = ["READY", "DEGRADED"].includes(backendState) && backendInfo.chat_enabled;
+  const ready = modelConnectionAvailable(backendState, backendInfo);
   const active = activeGeneration !== null && !activeGeneration.terminal;
   const presentation = composerPresentation({
     ready, active, starting: startingGeneration,
@@ -275,18 +277,23 @@ const updateControls = (): void => {
 
 const updateBackendState = (state: BackendState): void => {
   backendState = state;
-  backendStatus.hidden = state === "READY" || state === "DEGRADED";
+  const connected = ["READY", "DEGRADED"].includes(state);
+  const modelReady = modelConnectionAvailable(state, backendInfo);
+  backendStatus.hidden = modelReady;
+  settingsPanel.backend(connected && backendInfo.mode === "production");
+  getElement("settings-model-status").textContent = backendInfo.mode === "mock" ? "界面演示 · 未连接模型" : modelReady ? "旧服务已连接" : "旧模型服务不可用";
   const labels: Record<BackendState, string> = {
     STOPPED: "已停止",
     STARTING: "正在连接…",
     HANDSHAKING: "正在连接…",
     READY: "",
-    DEGRADED: "能力受限",
+    DEGRADED: "模型服务不可用",
     DISCONNECTED: "连接已断开",
     RESTARTING: "正在恢复…",
     STOPPING: "正在停止",
   };
-  backendStatusText.textContent = labels[state];
+  backendStatusText.textContent = connected && !modelReady ? "模型服务不可用 · 仍可查看对话与设置" : labels[state];
+  promptInput.placeholder = connected && !modelReady ? "模型服务暂不可用，你仍可编辑消息" : "和 Aurora 说点什么……";
   updateControls();
 };
 
@@ -448,12 +455,11 @@ const applyConversationEvent = (event: GatewayEvent): boolean => {
 const applyGatewayEvent = (event: GatewayEvent): void => {
   if (event.type === "settings_snapshot" || event.type === "settings_updated" ||
       event.type === "settings_changed" || event.type === "settings_error") {
-    settingsState.accept(event);
+    settingsPanel.accept(event);
     return;
   }
   if (applyConversationEvent(event)) return;
   if (event.type === "backend_state") {
-    if (!["READY", "DEGRADED"].includes(event.state)) settingsState.reset();
     productionConversationMode = event.info.mode === "production";
     if (!productionConversationMode) conversationListRequested = false;
     updateBackendInfo(event.info);
@@ -556,7 +562,7 @@ const applyGatewayEvent = (event: GatewayEvent): void => {
 const sendPrompt = async (): Promise<void> => {
   if (compositionActive || startingGeneration || activeGeneration !== null) return;
   const input = promptInput.value.trim();
-  if (!input || !["READY", "DEGRADED"].includes(backendState) || !backendInfo.chat_enabled) return;
+  if (!input || !modelConnectionAvailable(backendState, backendInfo)) return;
   const conversationId = conversations.activeId;
   if (!conversationId) return;
   const conversation = conversations.active;
@@ -646,6 +652,32 @@ const invokeWindowAction = async (action: WindowAction): Promise<void> => {
 
 // Track native resize/maximize too (titlebar double-click, snap, system menu).
 const desktopWindow = getCurrentWindow();
+bindTitlebar(getElement("titlebar"), () => desktopWindow.startDragging(),
+  () => invokeWindowAction("toggle_maximize"), (error) => console.error("Window titlebar action failed", error));
+const appearance = bindGlass(getElement<HTMLInputElement>("glass-intensity"), reducedEffects, getElement("glass-status"));
+void invoke("set_reduced_effects", { enabled: appearance.store.value.lowGpu }).catch(() => {});
+observeComposer(getElement("composer"), messageViewport);
+const showSettings = (show: boolean) => {
+  getElement("settings-pane").hidden = !show; getElement("chat-pane").hidden = show;
+  getElement("open-settings").setAttribute("aria-expanded", String(show));
+  getElement("open-settings").classList.toggle("active", show);
+  document.querySelector<HTMLDetailsElement>(".developer-menu")!.open = false;
+  if (show) { settingsPanel.open(); getElement("settings-title").focus(); }
+  else { settingsPanel.close(); getElement("open-settings").focus(); }
+};
+getElement("open-settings").addEventListener("click", () => showSettings(Boolean(getElement("settings-pane").hidden)));
+getElement("close-settings").addEventListener("click", () => showSettings(false));
+getElement("menu-appearance").addEventListener("click", () => showSettings(true));
+document.addEventListener("keydown", e => {
+  if (e.key !== "Escape" || e.isComposing) return;
+  if (!getElement("settings-pane").hidden) { showSettings(false); e.preventDefault(); return; }
+  const menu = document.querySelector<HTMLDetailsElement>(".developer-menu")!;
+  if (menu.open) { menu.open = false; menu.querySelector("summary")?.focus(); }
+});
+document.addEventListener("pointerdown", e => {
+  const menu = document.querySelector<HTMLDetailsElement>(".developer-menu")!;
+  if (menu.open && e.target instanceof Node && !menu.contains(e.target)) menu.open = false;
+});
 const syncCaption = async (): Promise<void> => updateCaption(await desktopWindow.isMaximized());
 void desktopWindow.onResized(() => void syncCaption());
 void syncCaption();
@@ -661,11 +693,11 @@ getElement("window-close").addEventListener("click", () => {
 });
 
 reducedEffects.addEventListener("change", () => {
-  document.body.classList.toggle("reduced-effects", reducedEffects.checked);
   void invoke("set_reduced_effects", { enabled: reducedEffects.checked });
 });
 
 newConversationButton.addEventListener("click", () => {
+  if (!getElement("settings-pane").hidden) showSettings(false);
   if (productionConversationMode) {
     if (creatingConversation || activeGeneration !== null) return;
     creatingConversation = true;
@@ -687,6 +719,7 @@ conversationList.addEventListener("click", (event) => {
   const button = target.closest<HTMLButtonElement>("[data-conversation-id]");
   const id = button?.dataset.conversationId;
   if (!id || activeGeneration !== null || !conversations.select(id)) return;
+  if (!getElement("settings-pane").hidden) showSettings(false);
   renderConversation();
   promptInput.focus();
   if (productionConversationMode) {

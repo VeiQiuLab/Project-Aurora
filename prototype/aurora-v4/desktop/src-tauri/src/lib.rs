@@ -8,6 +8,7 @@ use serde::{Deserialize, Serialize};
 use sidecar::BackendManager;
 use tauri::ipc::Channel;
 use tauri::window::{Effect, EffectsBuilder};
+use tauri::Manager;
 
 #[derive(Clone, Copy, Debug, Deserialize, Serialize)]
 #[serde(rename_all = "snake_case")]
@@ -121,6 +122,17 @@ pub fn run() {
     let startup_manager = manager.clone();
     let cleanup_manager = manager.clone();
     let app = tauri::Builder::default()
+        // Must precede setup: a secondary process never starts another sidecar.
+        .plugin(tauri_plugin_single_instance::init(|app, _args, _cwd| {
+            if let Some(window) = app.get_webview_window("main") {
+                // Attempt every step even if one fails; retain maximized state.
+                if window.is_minimized().unwrap_or(false) {
+                    let _ = window.unminimize();
+                }
+                let _ = window.show();
+                let _ = window.set_focus();
+            }
+        }))
         .manage(manager)
         .setup(move |_| {
             tauri::async_runtime::spawn(async move {

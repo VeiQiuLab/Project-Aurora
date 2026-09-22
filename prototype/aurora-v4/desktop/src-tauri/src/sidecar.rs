@@ -106,7 +106,9 @@ pub struct BackendManager {
 
 impl BackendManager {
     pub fn new() -> Self {
-        Self::with_mode(std::env::var("AURORA_V4_BACKEND").unwrap_or_else(|_| "mock".into()))
+        // The desktop Settings page uses the existing production owner by default.
+        // Mock transport remains an explicit test/development opt-in.
+        Self::with_mode(std::env::var("AURORA_V4_BACKEND").unwrap_or_else(|_| "production".into()))
     }
 
     fn with_mode(mode: String) -> Self {

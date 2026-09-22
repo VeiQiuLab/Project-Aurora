@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { captionLabel, composerPresentation } from "./presentation_policy.ts";
+import { captionLabel, composerPresentation, modelConnectionAvailable } from "./presentation_policy.ts";
 
 const idle = { ready: true, active: false, starting: false, cancelling: false, composing: false, hasText: true };
 
@@ -34,4 +34,15 @@ test("caption accessible action follows native maximize and restore state", () =
   assert.equal(captionLabel(false), "最大化");
   assert.equal(captionLabel(true), "还原");
   assert.equal(captionLabel(false), "最大化");
+});
+
+test("protocol chat capability cannot masquerade as an available model", () => {
+  const info = { mode: "production", chat_enabled: true, diagnostics: null };
+  assert.equal(modelConnectionAvailable("DEGRADED", info), false);
+  assert.equal(modelConnectionAvailable("READY", info), true);
+  info.diagnostics = { ollama: { reachable: false, model_available: false } };
+  assert.equal(modelConnectionAvailable("READY", info), false);
+  info.diagnostics.ollama = { reachable: true, model_available: true };
+  assert.equal(modelConnectionAvailable("DEGRADED", info), true);
+  assert.equal(modelConnectionAvailable("DISCONNECTED", info), false);
 });

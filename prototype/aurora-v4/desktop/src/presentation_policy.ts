@@ -15,3 +15,13 @@ export const composerPresentation = (state: ComposerState) => ({
 });
 
 export const captionLabel = (maximized: boolean): string => maximized ? "还原" : "最大化";
+
+export function modelConnectionAvailable(state: string, info: {
+  mode: string; chat_enabled: boolean;
+  diagnostics: { ollama: { reachable: boolean; model_available: boolean } } | null;
+}): boolean {
+  if (!["READY", "DEGRADED"].includes(state) || !info.chat_enabled) return false;
+  if (info.mode === "mock") return true;
+  // chat_enabled describes protocol capability, NOT model readiness.
+  return info.diagnostics ? info.diagnostics.ollama.reachable && info.diagnostics.ollama.model_available : state === "READY";
+}

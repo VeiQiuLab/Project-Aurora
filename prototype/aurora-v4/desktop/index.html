@@ -8,11 +8,11 @@
   </head>
   <body>
     <div id="app" class="window-shell">
-      <header class="titlebar">
+      <header id="titlebar" class="titlebar">
         <div class="brand" data-tauri-drag-region>
           <span data-tauri-drag-region>Aurora</span>
         </div>
-        <div class="window-controls" aria-label="窗口控制">
+        <div class="window-controls" data-tauri-drag-region="false" aria-label="窗口控制">
           <button id="window-minimize" class="window-button" type="button" aria-label="最小化" title="最小化"><svg viewBox="0 0 16 16" aria-hidden="true"><path d="M3 8h10" /></svg></button>
           <button id="window-maximize" class="window-button" type="button" aria-label="最大化" title="最大化"><svg class="maximize-icon" viewBox="0 0 16 16" aria-hidden="true"><rect x="3.5" y="3.5" width="9" height="9" /></svg><svg class="restore-icon" viewBox="0 0 16 16" aria-hidden="true"><path d="M5.5 5.5v-3h8v8h-3" /><rect x="2.5" y="5.5" width="8" height="8" /></svg></button>
           <button id="window-close" class="window-button close" type="button" aria-label="关闭" title="关闭"><svg viewBox="0 0 16 16" aria-hidden="true"><path d="m3.5 3.5 9 9m0-9-9 9" /></svg></button>
@@ -27,6 +27,7 @@
           </div>
           <nav id="conversation-list" class="conversation-list" aria-label="对话列表"></nav>
           <div class="sidebar-footer">
+            <button id="open-settings" class="sidebar-settings" type="button" aria-controls="settings-pane" aria-expanded="false"><svg viewBox="0 0 20 20" aria-hidden="true"><path d="M3 5h14M3 10h14M3 15h14"/><circle cx="7" cy="5" r="2"/><circle cx="13" cy="10" r="2"/><circle cx="8" cy="15" r="2"/></svg><span>设置</span></button>
             <label class="effects-toggle">
               <input id="reduced-effects" type="checkbox" />
               <span aria-hidden="true" class="toggle-track"><span></span></span>
@@ -35,7 +36,7 @@
           </div>
         </aside>
 
-        <main class="chat-pane">
+        <main id="chat-pane" class="chat-pane">
           <section class="chat-header" aria-label="当前会话状态">
             <div class="content-column header-content">
               <h1 id="current-conversation-title">桌面架构</h1>
@@ -45,8 +46,9 @@
               </span>
               <details class="developer-menu">
                 <summary aria-label="打开开发选项" title="开发选项"><svg viewBox="0 0 20 20" aria-hidden="true"><circle cx="4" cy="10" r="1"/><circle cx="10" cy="10" r="1"/><circle cx="16" cy="10" r="1"/></svg></summary>
-                <div class="developer-popover">
+                <div class="developer-popover glass-popover" data-glass>
                   <div class="developer-heading">开发选项</div>
+                  <button id="menu-appearance" class="ghost-button" type="button">外观设置</button>
                   <button id="restart-backend" class="ghost-button" type="button">重启后端</button>
                   <button id="crash-backend" class="ghost-button" type="button">模拟后端崩溃</button>
                   <div class="developer-metrics" aria-label="原型性能指标">
@@ -63,12 +65,13 @@
             </div>
           </section>
 
-          <section id="message-viewport" class="message-viewport" aria-label="当前对话">
+          <div class="conversation-viewport">
+          <section id="message-viewport" class="message-viewport" aria-label="当前对话" tabindex="0">
             <div id="messages" class="messages content-column" aria-live="polite"></div>
           </section>
 
           <footer class="composer-wrap">
-            <div class="composer content-column">
+            <div id="composer" class="composer content-column" data-glass>
               <label class="sr-only" for="prompt-input">输入消息</label>
               <textarea
                 id="prompt-input"
@@ -82,6 +85,55 @@
               </div>
             </div>
           </footer>
+          </div>
+        </main>
+        <main id="settings-pane" class="settings-pane" aria-labelledby="settings-title" hidden>
+          <header class="settings-header">
+            <div><h1 id="settings-title" tabindex="-1">设置</h1><p>让 Aurora 更适合你。</p></div>
+            <button id="close-settings" class="icon-button" type="button" aria-label="返回对话" title="返回对话"><svg viewBox="0 0 20 20" aria-hidden="true"><path d="m12 4-6 6 6 6"/></svg></button>
+          </header>
+          <div id="settings-scroll" class="settings-scroll" tabindex="0" aria-label="设置内容">
+            <div class="settings-content">
+              <section id="appearance-section" class="settings-section" aria-labelledby="appearance-title">
+                <h2 id="appearance-title" class="section-header">外观</h2>
+                <p class="section-description">安静的黑色基底，让光线与内容留在玻璃之下。</p>
+                <div class="setting-row">
+                  <div class="setting-copy"><label for="glass-intensity">玻璃质感</label><small>从清透的镜片，到柔和的毛玻璃</small></div>
+                  <div class="glass-control glass-slider">
+                    <input id="glass-intensity" type="range" min="0" max="100" step="1" value="50" aria-valuemin="0" aria-valuemax="100" aria-valuenow="50" aria-describedby="glass-status" />
+                    <div class="glass-endpoints" aria-hidden="true"><span>通透</span><span>毛玻璃</span></div>
+                  </div>
+                </div>
+                <div class="material-preview" aria-label="玻璃材质预览">
+                  <div class="preview-copy" aria-hidden="true">光线在边缘停留，内容从玻璃下方经过，清晰的文字轻轻弯曲。<br/>清透、折射与柔和的光影，让每一次交互保留恰好的深度。<br/>Aurora · 留一点空间给思考，让界面安静地陪伴你的对话。</div>
+                  <div class="preview-lens" data-glass aria-hidden="true"><span>材质预览</span></div>
+                </div>
+                <div class="setting-row"><div class="setting-copy"><label for="appearance-low-gpu">低 GPU 模式</label><small>简化折射与高光，为本地模型保留资源</small></div><input id="appearance-low-gpu" class="setting-input" type="checkbox" /></div>
+                <p id="glass-status" class="settings-note" role="status">外观自动保存在此设备</p>
+              </section>
+              <section class="settings-section" aria-labelledby="model-title">
+                <h2 id="model-title" class="section-header">模型与连接</h2>
+                <p class="section-description">当前本地模型为 4B，文件由 LM Studio 管理。Aurora 内置模型运行时尚未接入。</p>
+                <div class="setting-row"><div class="setting-copy"><span>当前聊天连接</span><small>保留的旧服务配置不会自动启动或安装模型</small></div><span id="settings-model-status" class="status-text">正在检查连接</span></div>
+              </section>
+              <form id="ai-settings-form">
+                <div id="descriptor-fields"><p class="settings-note">连接设置服务后显示可管理项。</p></div>
+              </form>
+              <section class="settings-section" aria-labelledby="voice-title">
+                <h2 id="voice-title" class="section-header">语音</h2>
+                <p class="section-description">语音能力尚未接入 v4 桌面。本页暂不提供启用开关。</p>
+                <div class="setting-row"><span>Edge TTS</span><span class="status-text">核心已实现 · v4 未接入</span></div>
+                <div class="setting-row"><span>Remote CosyVoice</span><span class="status-text">核心已实现 · v4 未接入</span></div>
+                <div class="setting-row"><span>Local CosyVoice</span><span class="status-text">尚未实现</span></div>
+                <details class="capability-details"><summary>查看连接能力</summary><p>voice.ipc = false<br/>voice.streaming_pcm = false<br/>cosyvoice_local = false</p></details>
+              </section>
+            </div>
+          </div>
+          <div class="settings-actions-wrap"><footer class="settings-actions" data-glass>
+            <span id="settings-status" role="status">设置服务未连接</span>
+            <button id="settings-reload" class="glass-button secondary" type="button">重新载入</button>
+            <button id="settings-save" class="glass-button" type="submit" form="ai-settings-form" disabled>保存更改</button>
+          </footer></div>
         </main>
       </div>
     </div>
