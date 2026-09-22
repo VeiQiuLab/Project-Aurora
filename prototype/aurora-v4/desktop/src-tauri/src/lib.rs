@@ -2,6 +2,7 @@ mod protocol;
 mod registry;
 mod sidecar;
 mod settings;
+mod local_model;
 
 use protocol::{BackendSnapshot, CancelTarget, ChatStartResult, FrontendEvent};
 use serde::{Deserialize, Serialize};

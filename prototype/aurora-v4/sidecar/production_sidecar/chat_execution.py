@@ -104,7 +104,7 @@ class ChatExecution:
         status, code = "completed", None
         try:
             health = await self.sidecar.composition.refresh(run.settings_snapshot)
-            probe = health["ollama"]
+            probe = health.get("local_model", health["ollama"])
             if not probe["reachable"]:
                 code = "PROVIDER_UNAVAILABLE"
             elif not probe["model_available"]:
@@ -250,6 +250,8 @@ class ChatExecution:
                 "worker_exited": (worker is None or worker.done()) and (context_worker is None or context_worker.done()),
                 **run.settings_snapshot.policy.diagnostics(),
             })
+            if self.sidecar.composition.local_provider is not None:
+                diagnostics.update(ollama_think_mode="default", think_payload_value=None, ollama_keep_alive=None)
             payload = {"terminal_state": status, "output_chars": run.output_chars,
                        "duration_ms": (now - run.received_at) * 1000, "diagnostics": diagnostics}
             if code:

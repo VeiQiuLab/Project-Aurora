@@ -1,5 +1,11 @@
 # Python sidecar lifecycle contract
 
+V4-6A adds a V4-only BuiltInLlamaProvider selected by Rust's private environment
+handoff. Runtime/process/auth remain Rust-owned; production Settings, context,
+conversation and post-turn owners are preserved. Stable's Ollama default is
+unchanged. See [Local runtime architecture](../docs/V4_6A_LOCAL_RUNTIME.md).
+The descriptions below record earlier stages rather than today's desktop default.
+
 V4-5A replaces the checked-source Settings/Chat bridge with direct headless-safe
 production imports and request-local immutable settings snapshots. AI settings
 remain Python-owned in the existing app_paths.CONFIG_FILE; no second V4 file.

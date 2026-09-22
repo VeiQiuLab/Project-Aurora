@@ -46,3 +46,14 @@ test("protocol chat capability cannot masquerade as an available model", () => {
   assert.equal(modelConnectionAvailable("DEGRADED", info), true);
   assert.equal(modelConnectionAvailable("DISCONNECTED", info), false);
 });
+
+test("builtin readiness is independent of unavailable legacy Ollama", () => {
+  const info = { mode: "production", chat_enabled: true, diagnostics: {
+    ollama: { reachable: false, model_available: false },
+    local_model: { reachable: true, model_available: true },
+  } };
+  assert.equal(modelConnectionAvailable("READY", info), true);
+  info.diagnostics.local_model.model_available = false;
+  assert.equal(modelConnectionAvailable("READY", info), false);
+  assert.equal(modelConnectionAvailable("STARTING", info), false);
+});

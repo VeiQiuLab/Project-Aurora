@@ -64,6 +64,16 @@ export class ConversationStore {
     this.activeId = activeId && this.find(activeId) ? activeId : "";
   }
 
+  refreshSummaries(records: ConversationRecord[]): void {
+    // List responses carry metadata, not message bodies. Preserve selection and
+    // loaded/streaming messages when a completed turn refreshes that metadata.
+    const merged = records.map(record => ({
+      ...record,
+      messages: this.find(record.id)?.messages ?? record.messages,
+    }));
+    this.replace(merged, this.activeId);
+  }
+
   upsert(record: ConversationRecord): void {
     const index = this.conversations.findIndex((item) => item.id === record.id);
     if (index >= 0) this.conversations[index] = cloneConversation(record);

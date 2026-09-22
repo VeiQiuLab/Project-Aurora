@@ -400,8 +400,24 @@ def validate_diagnostics(value):
 
     fields = {"backend_mode", "backend_ready", "settings_status", "ollama_think_mode",
               "think_payload_value", "ollama_keep_alive", "ollama"}
-    if not isinstance(value, dict) or set(value) != fields:
+    if not isinstance(value, dict) or set(value) not in (fields, fields | {"local_model"}):
         raise ContractError("invalid diagnostics fields")
+    if "local_model" in value:
+        local = value["local_model"]
+        expected = {"provider", "backend", "state", "configured_model", "reachable", "model_available", "error_code", "probe_duration_ms"}
+        if not isinstance(local, dict) or set(local) != expected:
+            raise ContractError("invalid local model fields")
+        if local["provider"] != "builtin_local" or local["backend"] != "vulkan":
+            raise ContractError("invalid local model provider")
+        if local["state"] not in {"STOPPED", "STARTING", "LOADING_MODEL", "READY", "DEGRADED", "FAILED", "STOPPING"}:
+            raise ContractError("invalid local model state")
+        if not isinstance(local["configured_model"], str) or not re.fullmatch(r"[A-Za-z0-9_.-]{1,200}", local["configured_model"]):
+            raise ContractError("unsafe local model identity")
+        if type(local["reachable"]) is not bool or type(local["model_available"]) is not bool or local["error_code"] not in {"", "LOCAL_MODEL_UNAVAILABLE"}:
+            raise ContractError("invalid local model status")
+        duration = local["probe_duration_ms"]
+        if type(duration) not in (float, int) or not math.isfinite(duration) or duration < 0:
+            raise ContractError("invalid local model timing")
     if value["backend_mode"] != "production" or value["backend_ready"] is not True:
         raise ContractError("invalid backend diagnostics")
     if value["settings_status"] not in {"loaded", "missing_defaults", "invalid_defaults"}:

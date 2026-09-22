@@ -85,6 +85,44 @@ def test_foreground_resets_full_debounce_and_stale_finish_does_not_release(rig):
     wait_for(lambda: call.called)
 
 
+def test_builtin_inflight_title_is_cancelled_and_not_published_on_foreground(rig):
+    from test_local_provider import llama_fixture
+    composition, coordinator, cid, _, _ = rig
+    with llama_fixture("blocked") as (provider, calls):
+        composition.local_provider = provider
+        coordinator.chat_api = {"chat_with_messages": provider.chat_with_messages}
+        original_title = composition.conversations.get(cid)["title"]
+        schedule(rig)
+        wait_for(lambda: bool(calls))
+        coordinator.foreground_started("new-foreground")
+        wait_for(lambda: any(e["event"] == "title_request_finished" for e in coordinator.events))
+        assert composition.conversations.get(cid)["title"] == original_title
+        assert cid not in coordinator.title_attempts
+        coordinator.foreground_finished("stale")
+        assert provider._foreground
+        assert len(calls) == 1
+        coordinator.close()
+
+
+def test_builtin_invalidation_precedes_transport_abort(rig):
+    composition, coordinator = rig[:2]
+    provider = Mock()
+    composition.local_provider = provider
+    old_epoch = coordinator.epoch
+    def cancelled_title_returns():
+        with pytest.raises(Deferred): coordinator._guard(old_epoch)
+    provider.foreground_started.side_effect = cancelled_title_returns
+    coordinator.foreground_started("new")
+    assert provider.foreground_started.call_count == 1
+    coordinator.foreground_finished("new")
+    def closing_title_returns():
+        assert coordinator.closed
+        with pytest.raises(Deferred): coordinator._guard(coordinator.epoch)
+    provider.cancel_background.side_effect = closing_title_returns
+    coordinator.close()
+    assert provider.cancel_background.call_count == 1
+
+
 def test_final_guard_race_does_not_consume_attempt_or_write_fallback(rig):
     composition, coordinator, cid, call, _ = rig
     real = coordinator._guard

@@ -3,6 +3,11 @@
 This directory isolates Aurora v4 architecture work from the stable Tkinter
 application. Nothing here is imported by the production entry point.
 
+Current V4 desktop production default: Aurora-owned local Vulkan runtime,
+not an external Ollama/LM Studio service. See
+[V4-6A Built-in Local Model Runtime](docs/V4_6A_LOCAL_RUNTIME.md).
+The stage notes below describe historical boundaries; Stable stays unchanged.
+
 Stage V4-1 froze the first desktop-to-sidecar contract:
 
 - `ARCHITECTURE.md` defines the process and ownership boundaries.

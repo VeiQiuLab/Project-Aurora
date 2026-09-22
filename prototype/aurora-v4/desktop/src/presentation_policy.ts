@@ -18,10 +18,11 @@ export const captionLabel = (maximized: boolean): string => maximized ? "还原"
 
 export function modelConnectionAvailable(state: string, info: {
   mode: string; chat_enabled: boolean;
-  diagnostics: { ollama: { reachable: boolean; model_available: boolean } } | null;
+  diagnostics: { ollama: { reachable: boolean; model_available: boolean }; local_model?: { reachable: boolean; model_available: boolean } } | null;
 }): boolean {
   if (!["READY", "DEGRADED"].includes(state) || !info.chat_enabled) return false;
   if (info.mode === "mock") return true;
   // chat_enabled describes protocol capability, NOT model readiness.
-  return info.diagnostics ? info.diagnostics.ollama.reachable && info.diagnostics.ollama.model_available : state === "READY";
+  const model = info.diagnostics?.local_model ?? info.diagnostics?.ollama;
+  return model ? model.reachable && model.model_available : state === "READY";
 }

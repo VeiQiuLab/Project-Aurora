@@ -20,7 +20,7 @@ await mkdir(`${sandbox}/app/config`, { recursive: true });
 await writeFile(`${sandbox}/app/config/settings.json`, JSON.stringify({ ollama: { host: "http://127.0.0.1:1" } }));
 const portServer = createServer(); portServer.listen(0, "127.0.0.1"); await once(portServer, "listening");
 const port = portServer.address().port; await new Promise(resolve => portServer.close(resolve));
-const env = { ...process.env, AURORA_V4_BACKEND: "production", AURORA_USER_DATA_DIR: `${sandbox}/app`, WEBVIEW2_USER_DATA_FOLDER: `${sandbox}/webview`, WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS: `--remote-debugging-port=${port}` };
+const env = { ...process.env, AURORA_V4_BACKEND: "production", AURORA_V4_CHAT_PROVIDER: "ollama", AURORA_USER_DATA_DIR: `${sandbox}/app`, WEBVIEW2_USER_DATA_FOLDER: `${sandbox}/webview`, WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS: `--remote-debugging-port=${port}` };
 const resourceScript = fileURLToPath(new URL("./resource_snapshot.ps1", import.meta.url));
 const resourceCode = await readFile(resourceScript, "utf8");
 const sample = async pid => JSON.parse((await exec("powershell.exe", ["-NoProfile", "-Command", `& { ${resourceCode} } -TargetProcessId ${Number(pid)}`], { windowsHide: true })).stdout.trim());

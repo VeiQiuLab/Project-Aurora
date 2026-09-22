@@ -28,6 +28,9 @@ class DirectChatAdapter:
     def __init__(self, composition):
         self.composition = composition
         self.api = load_chat_boundary(composition.root, composition.settings)
+        if composition.local_provider is not None:
+            self.api.update(stream_chat=composition.local_provider.stream_chat,
+                            chat_with_messages=composition.local_provider.chat_with_messages)
 
     def new_handle(self, stop_event, diagnostics):
         return self.api["StreamingRequestHandle"](stop_event, diagnostics)
@@ -76,6 +79,7 @@ class DirectChatAdapter:
     def error_code(error):
         return {
             "ollama_unavailable": "PROVIDER_UNAVAILABLE",
+            "provider_unavailable": "PROVIDER_UNAVAILABLE",
             "model_unavailable": "MODEL_UNAVAILABLE",
             "model_capability": "MODEL_UNAVAILABLE",
             "timeout": "REQUEST_TIMEOUT",

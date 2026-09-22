@@ -59,6 +59,8 @@ pub struct ProductionDiagnostics {
     pub think_payload_value: Option<bool>,
     pub ollama_keep_alive: Option<String>,
     pub ollama: OllamaDiagnostics,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub local_model: Option<crate::local_model::LocalDiagnostics>,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -191,6 +193,7 @@ impl ChatDiagnostics {
 impl ProductionDiagnostics {
     pub fn from_wire(value: Value) -> Result<Self, String> {
         let result: Self = serde_json::from_value(value).map_err(|_| "INVALID_DIAGNOSTICS")?;
+        if let Some(local) = &result.local_model { local.validate()?; }
         let ollama = &result.ollama;
         if result.backend_mode != "production"
             || !result.backend_ready

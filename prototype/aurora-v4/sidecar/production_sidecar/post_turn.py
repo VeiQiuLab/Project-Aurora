@@ -24,9 +24,9 @@ class Deferred(Exception):
 class PostTurnCoordinator:
     """One daemon worker, one idle gate, sequential business calls.
 
-    Foreground hooks never wait for HTTP. Already-entered non-streaming urlopen
-    cannot be preempted before response headers. Shutdown invalidates publication
-    and drops pending work; the daemon cannot keep the sidecar process alive.
+    Built-in title transport is actively cancelled on foreground start. Legacy
+    non-streaming urlopen keeps its existing timeout boundary. Shutdown invalidates
+    publication and drops pending work; the daemon cannot keep the process alive.
     """
 
     def __init__(self, composition, chat_api, changed, *, idle_seconds=TITLE_GENERATION_IDLE_SECONDS,
@@ -59,11 +59,18 @@ class PostTurnCoordinator:
             if self.pending:
                 self.record("deferred_foreground")
             self.condition.notify_all()
+        # Invalidate publication BEFORE transport abort wakes the title worker.
+        provider = getattr(self.composition, "local_provider", None)
+        if provider is not None:
+            provider.foreground_started()
 
     def foreground_finished(self, generation_id):
         with self.condition:
             if self.foreground == generation_id:
                 self.foreground = None
+                provider = getattr(self.composition, "local_provider", None)
+                if provider is not None:
+                    provider.foreground_finished()
                 self.idle_since = self.clock()
                 self.condition.notify_all()
 
@@ -174,10 +181,20 @@ class PostTurnCoordinator:
             try:
                 settings_args = ({"settings_store": job["settings_snapshot"]}
                                  if job.get("settings_snapshot") is not None else {})
-                return self.chat_api["chat_with_messages"](
+                result = self.chat_api["chat_with_messages"](
                     job["model"], [{"role": "user", "content": prompt}],
                     timeout=TITLE_GENERATION_TIMEOUT_SECONDS, thinking_mode="off",
                     num_predict=TITLE_GENERATION_MAX_TOKENS, diagnostics=request_diagnostics, **settings_args)
+                self._guard(epoch)
+                return result
+            except Exception:
+                if getattr(self.composition, "local_provider", None) is not None:
+                    try:
+                        self._guard(epoch)
+                    except Deferred:
+                        self.title_attempts.discard(cid)
+                        raise
+                raise
             finally:
                 self.record("title_request_finished", job, duration_ms=(self.clock()-started)*1000,
                             **request_diagnostics)
@@ -202,5 +219,8 @@ class PostTurnCoordinator:
             self.closed = True
             self.pending.clear()
             self.condition.notify_all()
+        provider = getattr(self.composition, "local_provider", None)
+        if provider is not None:
+            provider.cancel_background()
         if self.worker is not None and self.worker is not threading.current_thread():
             self.worker.join(timeout=0.25)

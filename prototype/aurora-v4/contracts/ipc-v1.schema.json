@@ -708,6 +708,18 @@
       "additionalProperties": false,
       "properties": {
         "backend_mode": {"const": "production"},
+        "local_model": {
+          "type": "object", "additionalProperties": false,
+          "required": ["provider", "backend", "state", "configured_model", "reachable", "model_available", "error_code", "probe_duration_ms"],
+          "properties": {
+            "provider": {"const": "builtin_local"}, "backend": {"const": "vulkan"},
+            "state": {"enum": ["STOPPED", "STARTING", "LOADING_MODEL", "READY", "DEGRADED", "FAILED", "STOPPING"]},
+            "configured_model": {"type": "string", "pattern": "^[A-Za-z0-9_.-]{1,200}$"},
+            "reachable": {"type": "boolean"}, "model_available": {"type": "boolean"},
+            "error_code": {"enum": ["", "LOCAL_MODEL_UNAVAILABLE"]},
+            "probe_duration_ms": {"type": "number", "minimum": 0}
+          }
+        },
         "backend_ready": {"const": true},
         "settings_status": {"enum": ["loaded", "missing_defaults", "invalid_defaults"]},
         "ollama_think_mode": {"enum": ["on", "off", "default"]},

@@ -5,6 +5,7 @@ import asyncio
 import http.client
 import json
 import logging
+import os
 import re
 import urllib.error
 import urllib.parse
@@ -84,6 +85,10 @@ class ProductionComposition:
                  context_root: Path | None = None):
         self.root = root or app_paths.PROGRAM_ROOT
         self.settings = SettingsService(config_file)
+        self.local_provider = None
+        if os.environ.get("AURORA_V4_CHAT_PROVIDER") == "builtin_local":
+            from production_sidecar.local_provider import BuiltInLlamaProvider
+            self.local_provider = BuiltInLlamaProvider.from_environment()
         self.ollama = OllamaHealth(self.settings)
         self._conversation_root = conversation_root
         self._context_root = context_root
@@ -146,13 +151,25 @@ class ProductionComposition:
             if self.closed:
                 raise RuntimeError("BACKEND_CLOSED")
             snapshot = settings_snapshot or self.settings.snapshot()
-            probe = await asyncio.to_thread(OllamaHealth(snapshot).probe)
+            if self.local_provider is not None:
+                local = await asyncio.to_thread(self.local_provider.probe)
+                # Retained legacy field is explicitly unavailable, never a disguised llama endpoint.
+                probe = dict(reachable=False, host="", configured_model="", model_available=False,
+                             error_code="OLLAMA_UNAVAILABLE", probe_duration_ms=0.0)
+            else:
+                local = None
+                probe = await asyncio.to_thread(OllamaHealth(snapshot).probe)
             self.diagnostics = {
                 "backend_mode": "production", "backend_ready": True,
                 "settings_status": snapshot.status,
                 **snapshot.policy.diagnostics(), "ollama": probe,
             }
-            self.state = "READY" if not probe["error_code"] and snapshot.status == "loaded" else "DEGRADED"
+            if local is not None:
+                self.diagnostics["local_model"] = local
+                self.diagnostics.update(ollama_think_mode="default", think_payload_value=None, ollama_keep_alive=None)
+            selected = local if local is not None else probe
+            valid_settings = snapshot.status != "invalid_defaults" if local is not None else snapshot.status == "loaded"
+            self.state = "READY" if not selected["error_code"] and valid_settings else "DEGRADED"
             LOGGER.info("event=health state=%s ollama=%s duration_ms=%s", self.state,
                         probe["error_code"] or "AVAILABLE", probe["probe_duration_ms"])
             return self.diagnostics
@@ -161,4 +178,6 @@ class ProductionComposition:
         self.closed = True
         if self.post_turn is not None:
             self.post_turn.close()
+        elif self.local_provider is not None:
+            self.local_provider.cancel_background()
         self.settings.close()

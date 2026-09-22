@@ -37,6 +37,10 @@ The desktop now defaults to the existing production sidecar adapter so Settings
 and stored conversations are available on a normal EXE launch. Set
 `AURORA_V4_BACKEND=mock` explicitly for the isolated UI demo. Model unavailability
 does not prevent opening Settings; generation is disabled until actual model
-health is available. No service/model is installed or started automatically.
-The current user model is 4B, managed by LM Studio; its built-in Aurora runtime
-is a future stage. Voice transport is not connected to the v4 desktop.
+health is available. V4-6A eagerly starts Aurora's own pinned Vulkan llama-server
+and reads the existing 4B GGUF without running LM Studio or Ollama. Runtime
+installation is explicit, through `../runtime/bootstrap.ps1`; no model is
+downloaded. See [Built-in runtime](../docs/V4_6A_LOCAL_RUNTIME.md) for discovery,
+private configuration, lifecycle, validation and limitations. Use
+`AURORA_V4_CHAT_PROVIDER=ollama` explicitly for the legacy service path.
+Voice transport is not connected to the v4 desktop.

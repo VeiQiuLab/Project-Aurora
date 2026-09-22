@@ -3,6 +3,19 @@ import test from "node:test";
 
 import { ConversationStore, initialConversations } from "./conversation_store.ts";
 
+test("post-turn list refresh preserves active history and allows the next send", () => {
+  const store = new ConversationStore(initialConversations());
+  const selected = store.activeId;
+  const history = structuredClone(store.active.messages);
+  store.refreshSummaries([{ id: selected, title: "真实标题", preview: "2 条消息", messages: [] }]);
+  assert.equal(store.activeId, selected);
+  assert.deepEqual(store.active.messages, history);
+  assert.equal(store.active.title, "真实标题");
+  store.addMessage(selected, {id: "next", role: "user", content: "下一轮", state: "normal"});
+  store.refreshSummaries([]);
+  assert.equal(store.activeId, "");
+});
+
 test("background title refresh preserves selected conversation and messages", () => {
   const store = new ConversationStore(initialConversations());
   const selected = store.active.id;

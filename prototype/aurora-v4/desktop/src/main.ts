@@ -52,6 +52,7 @@ interface BackendInfo {
     ollama_think_mode: string;
     ollama_keep_alive: string | null;
     ollama: { reachable: boolean; configured_model: string; model_available: boolean; probe_duration_ms: number };
+    local_model?: { provider: string; backend: string; state: string; configured_model: string; reachable: boolean; model_available: boolean; error_code: string; probe_duration_ms: number };
   } | null;
 }
 
@@ -248,10 +249,15 @@ const updateBackendInfo = (info: BackendInfo): void => {
   if (info.error_code) lines.push(`启动失败 ${info.error_code} · 详见后端日志`);
   if (diagnostics) {
     lines.push(`Python 已连接 · 设置 ${diagnostics.settings_status}`);
+    if (diagnostics.local_model) {
+      const local = diagnostics.local_model;
+      lines.push(`内置本地模型 · ${local.configured_model} · Vulkan`, `状态 ${local.state} · 由 Aurora 管理驻留`);
+    } else {
     lines.push(`Ollama ${diagnostics.ollama.reachable ? "已连接" : "不可用"}`);
     lines.push(`模型 ${diagnostics.ollama.configured_model || "未配置"} · ${diagnostics.ollama.model_available ? "已安装" : "不可用"}`);
     lines.push(`Thinking ${diagnostics.ollama_think_mode} · Keep Alive ${diagnostics.ollama_keep_alive ?? "默认"}`);
     lines.push(`探测 ${diagnostics.ollama.probe_duration_ms.toFixed(1)}ms · Direct Chat`);
+    }
   }
   if (lastChatSummary) lines.push(lastChatSummary);
   getElement("backend-diagnostics").textContent = lines.join("\n");
@@ -281,10 +287,11 @@ const updateBackendState = (state: BackendState): void => {
   const modelReady = modelConnectionAvailable(state, backendInfo);
   backendStatus.hidden = modelReady;
   settingsPanel.backend(connected && backendInfo.mode === "production");
-  getElement("settings-model-status").textContent = backendInfo.mode === "mock" ? "界面演示 · 未连接模型" : modelReady ? "旧服务已连接" : "旧模型服务不可用";
+  const local = backendInfo.diagnostics?.local_model;
+  getElement("settings-model-status").textContent = local ? `内置本地模型 · ${local.configured_model} · Vulkan · ${modelReady ? "已就绪" : "不可用"}（旧服务设置不适用于内置模型）` : backendInfo.mode === "mock" ? "界面演示 · 未连接模型" : modelReady ? "旧服务已连接" : "旧模型服务不可用";
   const labels: Record<BackendState, string> = {
     STOPPED: "已停止",
-    STARTING: "正在连接…",
+    STARTING: "正在启动本地模型…",
     HANDSHAKING: "正在连接…",
     READY: "",
     DEGRADED: "模型服务不可用",
@@ -415,7 +422,7 @@ const applyConversationEvent = (event: GatewayEvent): boolean => {
   }
   if (event.type === "conversation_list") {
     if (!productionConversationMode) return true;
-    conversations.replace(event.conversations.map(productionRecord));
+    conversations.refreshSummaries(event.conversations.map(productionRecord));
     conversationListRequested = true;
     renderConversation();
     return true;
@@ -582,7 +589,7 @@ const sendPrompt = async (): Promise<void> => {
   for (const name of ["aurora-send", "aurora-first-frontend-delta", "aurora-terminal"]) performance.clearMarks(name);
   performance.mark("aurora-send");
   try {
-    const result = await invoke<ChatStartResult>("chat_start", { input, conversation_id: conversationId });
+    const result = await invoke<ChatStartResult>("chat_start", { input, conversationId });
     activeGeneration = {
       ...result,
       expectedSeq: 0,
@@ -724,7 +731,7 @@ conversationList.addEventListener("click", (event) => {
   promptInput.focus();
   if (productionConversationMode) {
     loadingConversationId = id;
-    void invoke("conversation_get", { conversation_id: id }).catch(() => {
+    void invoke("conversation_get", { conversationId: id }).catch(() => {
       loadingConversationId = null;
     });
   }

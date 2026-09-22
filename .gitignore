@@ -64,6 +64,7 @@ tests/output/
 .venv/
 models/
 **/models/
+prototype/aurora-v4/runtime-local/
 *.token
 *.secret
 *.pem

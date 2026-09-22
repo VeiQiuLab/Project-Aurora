@@ -1,7 +1,7 @@
 use std::{
     path::PathBuf,
     process::Stdio,
-    sync::{Arc, Mutex as StdMutex},
+    sync::{Arc, Mutex as StdMutex, atomic::{AtomicBool, Ordering}},
     time::{Instant, SystemTime, UNIX_EPOCH},
 };
 
@@ -54,6 +54,7 @@ struct BackendData {
     state: BackendState,
     info: BackendInfo,
     epoch: u64,
+    startup_cancel: Arc<AtomicBool>,
     child: Option<Arc<Mutex<Child>>>,
     job: Option<JobGuard>,
     writer: Option<mpsc::Sender<Message>>,
@@ -76,6 +77,7 @@ impl BackendData {
             state: BackendState::Stopped,
             info: BackendInfo::default(),
             epoch: 0,
+            startup_cancel: Arc::new(AtomicBool::new(false)),
             child: None,
             job: None,
             writer: None,
@@ -100,6 +102,7 @@ pub struct BackendManager {
     frontend: Arc<StdMutex<Option<Channel<FrontendEvent>>>>,
     desktop_started: Instant,
     mode: String,
+    local_model: Option<crate::local_model::LocalModelSupervisor>,
     #[cfg(test)]
     test_data_directory: Option<PathBuf>,
 }
@@ -108,7 +111,11 @@ impl BackendManager {
     pub fn new() -> Self {
         // The desktop Settings page uses the existing production owner by default.
         // Mock transport remains an explicit test/development opt-in.
-        Self::with_mode(std::env::var("AURORA_V4_BACKEND").unwrap_or_else(|_| "production".into()))
+        let mut manager = Self::with_mode(std::env::var("AURORA_V4_BACKEND").unwrap_or_else(|_| "production".into()));
+        if manager.mode == "production" && std::env::var("AURORA_V4_CHAT_PROVIDER").as_deref() != Ok("ollama") {
+            manager.local_model = Some(Default::default());
+        }
+        manager
     }
 
     fn with_mode(mode: String) -> Self {
@@ -117,6 +124,7 @@ impl BackendManager {
             frontend: Arc::new(StdMutex::new(None)),
             desktop_started: Instant::now(),
             mode,
+            local_model: None,
             #[cfg(test)]
             test_data_directory: None,
         }
@@ -153,11 +161,14 @@ impl BackendManager {
 
     pub async fn start(&self, restarting: bool) -> Result<(), String> {
         let epoch;
+        let startup_cancel;
         {
             let mut data = self.inner.lock().await;
             if matches!(
                 data.state,
                 BackendState::Starting
+                    | BackendState::Restarting
+                    | BackendState::Stopping
                     | BackendState::Handshaking
                     | BackendState::Ready
                     | BackendState::Degraded
@@ -166,6 +177,9 @@ impl BackendManager {
             }
             data.epoch += 1;
             epoch = data.epoch;
+            data.startup_cancel.store(true, Ordering::SeqCst);
+            startup_cancel = Arc::new(AtomicBool::new(false));
+            data.startup_cancel = startup_cancel.clone();
             data.info = BackendInfo {
                 mode: if self.mode == "production" {
                     "production"
@@ -184,7 +198,7 @@ impl BackendManager {
         }
         self.emit_state().await;
 
-        let result = self.start_once(epoch).await;
+        let result = self.start_once(epoch, startup_cancel).await;
         if let Err(error) = &result {
             eprintln!("[aurora-v4] event=sidecar_start_failed error={error}");
             let mut data = self.inner.lock().await;
@@ -197,15 +211,22 @@ impl BackendManager {
             data.child = None;
             data.job = None;
             data.sidecar_instance_id = None;
+            // A Python bootstrap/handshake failure must not leave a loaded model
+            // behind. Keep the owner epoch locked until cleanup finishes so an
+            // old startup cannot tear down a newer instance.
+            if let Some(supervisor) = &self.local_model { supervisor.shutdown().await; }
             drop(data);
             self.emit_state().await;
         }
         result.map_err(|_| "Backend startup failed; see sidecar stderr diagnostics.".into())
     }
 
-    async fn start_once(&self, epoch: u64) -> Result<(), String> {
+    async fn start_once(&self, epoch: u64, startup_cancel: Arc<AtomicBool>) -> Result<(), String> {
+        if startup_cancel.load(Ordering::SeqCst) { return Err("STALE_STARTUP".into()); }
         let spawn_started = Instant::now();
         let launch = find_sidecar_launch(&self.mode)?;
+        let handoff = if let Some(supervisor) = &self.local_model { Some(supervisor.start(startup_cancel).await?) } else { None };
+        if self.inner.lock().await.epoch != epoch { return Err("STALE_STARTUP".into()); }
         let token = format!("{}{}", Uuid::new_v4().simple(), Uuid::new_v4().simple());
         let mut command = Command::new(&launch.python);
         command
@@ -228,6 +249,13 @@ impl BackendManager {
         if let Some(directory) = &self.test_data_directory {
             command.env("AURORA_USER_DATA_DIR", directory);
         }
+        // Always clear inherited private values before selecting this instance's provider.
+        for name in ["AURORA_LOCAL_ENDPOINT", "AURORA_LOCAL_TOKEN", "AURORA_LOCAL_MODEL"] { command.env_remove(name); }
+        if let Some(private) = handoff {
+            command.env("AURORA_V4_CHAT_PROVIDER", "builtin_local")
+                .env("AURORA_LOCAL_ENDPOINT", private.endpoint).env("AURORA_LOCAL_TOKEN", private.token)
+                .env("AURORA_LOCAL_MODEL", private.model);
+        } else { command.env("AURORA_V4_CHAT_PROVIDER", "ollama"); }
         #[cfg(windows)]
         {
             use std::os::windows::process::CommandExt;
@@ -404,6 +432,32 @@ impl BackendManager {
             reader_manager.connection_lost(epoch).await;
         });
 
+        if let Some(supervisor) = self.local_model.clone() {
+            let manager = self.clone();
+            tokio::spawn(async move {
+                loop {
+                    tokio::time::sleep(Duration::from_millis(500)).await;
+                    if manager.inner.lock().await.epoch != epoch { break; }
+                    if supervisor.exited().await {
+                        let events = {
+                            let mut data=manager.inner.lock().await;
+                            if data.epoch != epoch { break; }
+                            data.state=BackendState::Degraded; data.info.chat_enabled=false;
+                            data.info.error_code=Some("LOCAL_MODEL_UNAVAILABLE".into());
+                            data.request_started.clear(); data.cancel_started.clear();
+                            data.registry.backend_lost()
+                        };
+                        for owner in events {
+                            manager.emit(FrontendEvent::ChatTerminal { request_id:owner.request_id,
+                                generation_id:owner.generation_id, terminal_state:"backend_lost".into(),
+                                error_code:Some("BACKEND_LOST".into()), diagnostics:None });
+                        }
+                        manager.emit_state().await;
+                    }
+                    if manager.send_value(health(&format!("health-{}",Uuid::new_v4().simple()))).await.is_err() {break;}
+                }
+            });
+        }
         self.send_value(health(&format!("health-{}", Uuid::new_v4().simple())))
             .await
     }
@@ -567,9 +621,10 @@ impl BackendManager {
     pub async fn shutdown(&self) -> Result<(), String> {
         let (writer, child, job, should_emit) = {
             let mut data = self.inner.lock().await;
-            if data.state == BackendState::Stopped {
+            if matches!(data.state, BackendState::Stopped | BackendState::Stopping) {
                 return Ok(());
             }
+            data.startup_cancel.store(true, Ordering::SeqCst);
             data.state = BackendState::Stopping;
             data.epoch += 1;
             let writer = data.writer.take();
@@ -582,6 +637,7 @@ impl BackendManager {
         if should_emit {
             self.emit_state().await;
         }
+        if let Some(supervisor) = &self.local_model { supervisor.shutdown().await; }
         if let Some(writer) = writer {
             let request_id = format!("shutdown-{}", Uuid::new_v4().simple());
             let _ = writer
@@ -1020,7 +1076,7 @@ fn short_id(value: &str) -> &str {
 
 #[cfg(windows)]
 #[derive(Debug)]
-struct JobGuard(windows_sys::Win32::Foundation::HANDLE);
+pub(crate) struct JobGuard(windows_sys::Win32::Foundation::HANDLE);
 
 #[cfg(windows)]
 unsafe impl Send for JobGuard {}
@@ -1029,7 +1085,7 @@ unsafe impl Sync for JobGuard {}
 
 #[cfg(windows)]
 impl JobGuard {
-    fn assign(pid: u32) -> Result<Self, String> {
+    pub(crate) fn assign(pid: u32) -> Result<Self, String> {
         use std::{mem::size_of, ptr::null};
         use windows_sys::Win32::{
             Foundation::{CloseHandle, HANDLE},
@@ -1088,11 +1144,11 @@ impl Drop for JobGuard {
 
 #[cfg(not(windows))]
 #[derive(Debug)]
-struct JobGuard;
+pub(crate) struct JobGuard;
 
 #[cfg(not(windows))]
 impl JobGuard {
-    fn assign(_pid: u32) -> Result<Self, String> {
+    pub(crate) fn assign(_pid: u32) -> Result<Self, String> {
         Ok(Self)
     }
 }
@@ -1245,6 +1301,34 @@ mod tests {
             Some("BACKEND_START_FAILED")
         );
         manager.shutdown().await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn python_start_failure_cleans_already_owned_model_runtime() {
+        let supervisor=crate::local_model::LocalModelSupervisor::default();
+        let config=crate::local_model::ModelConfig {executable:std::env::current_exe().unwrap(),
+            model:std::path::PathBuf::from("fixture.gguf"),context:4096};
+        let handoff=supervisor.start_config(Ok(config)).await.unwrap();
+        let address=handoff.endpoint.strip_prefix("http://").unwrap();
+        assert!(std::net::TcpStream::connect(address).is_ok());
+        let mut manager=BackendManager::with_mode("invalid".into());
+        manager.local_model=Some(supervisor);
+        assert!(manager.start(false).await.is_err());
+        assert!(std::net::TcpStream::connect(address).is_err());
+        manager.shutdown().await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn shutdown_before_local_start_invalidates_owner_permanently() {
+        let mut manager=BackendManager::with_mode("production".into());
+        manager.local_model=Some(Default::default());
+        let (epoch,owner)={let mut data=manager.inner.lock().await;
+            data.state=BackendState::Starting;data.epoch+=1;
+            (data.epoch,data.startup_cancel.clone())};
+        manager.shutdown().await.unwrap();
+        assert!(owner.load(Ordering::SeqCst));
+        assert_eq!(manager.start_once(epoch,owner).await.unwrap_err(),"STALE_STARTUP");
+        assert_eq!(manager.snapshot().await.state,BackendState::Stopped);
     }
 
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
