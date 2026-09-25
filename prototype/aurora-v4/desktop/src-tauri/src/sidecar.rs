@@ -54,6 +54,7 @@ struct BackendData {
     state: BackendState,
     info: BackendInfo,
     voice: Option<crate::voice::Snapshot>,
+    audio: Option<Arc<crate::audio::AudioOwner>>,
     epoch: u64,
     startup_cancel: Arc<AtomicBool>,
     child: Option<Arc<Mutex<Child>>>,
@@ -78,6 +79,7 @@ impl BackendData {
             state: BackendState::Stopped,
             info: BackendInfo::default(),
             voice: None,
+            audio: None,
             epoch: 0,
             startup_cancel: Arc::new(AtomicBool::new(false)),
             child: None,
@@ -235,6 +237,11 @@ impl BackendManager {
         if self.inner.lock().await.epoch != epoch { return Err("STALE_STARTUP".into()); }
         let token = format!("{}{}", Uuid::new_v4().simple(), Uuid::new_v4().simple());
         let mut command = Command::new(&launch.python);
+        let audio_root = if self.mode == "production" {
+            tempfile::Builder::new().prefix("aurora-v4-audio-").tempdir().ok()
+        } else { None };
+        command.env_remove("AURORA_AUDIO_ROOT");
+        if let Some(root) = &audio_root { command.env("AURORA_AUDIO_ROOT", root.path()); }
         command
             .arg("-u")
             .arg(&launch.script)
@@ -366,6 +373,8 @@ impl BackendManager {
 
         let (mut socket_writer, mut socket_reader) = socket.split();
         let (writer, mut messages) = mpsc::channel::<Message>(WRITER_CAPACITY);
+        let audio = audio_root.and_then(|root| crate::audio::AudioOwner::new(root, writer.clone()).ok()).map(Arc::new);
+        if self.mode == "production" && audio.is_none() { eprintln!("[aurora-v4] event=audio_unavailable"); }
         let child = Arc::new(Mutex::new(child));
         {
             let mut data = self.inner.lock().await;
@@ -379,6 +388,7 @@ impl BackendManager {
             data.child = Some(child);
             data.job = Some(job);
             data.writer = Some(writer.clone());
+            data.audio = audio;
             data.sidecar_instance_id = Some(sidecar_instance_id);
             data.negotiated_chat_input_max_bytes = negotiated_limit;
             data.state = if ack_value["payload"]["state"] == "DEGRADED" {
@@ -405,28 +415,43 @@ impl BackendManager {
         let writer_manager = self.clone();
         tokio::spawn(async move {
             while let Some(message) = messages.recv().await {
+                let closing = message.is_close();
                 if socket_writer.send(message).await.is_err() {
                     break;
                 }
+                if closing { break; }
             }
             let _ = socket_writer.close().await;
             writer_manager.connection_lost(epoch).await;
         });
 
         let reader_manager = self.clone();
+        let close_writer = writer.clone();
         tokio::spawn(async move {
             while let Some(item) = socket_reader.next().await {
                 match item {
                     Ok(Message::Text(text)) => {
                         if let Err(error) = reader_manager.handle_wire(epoch, text.as_str()).await {
                             if error == "STALE_CONNECTION" {
-                                break;
+                                // Shutdown invalidates the epoch before Python
+                                // finishes Voice cleanup. Drain (do not forward)
+                                // these frames until its close handshake arrives.
+                                continue;
                             }
                             eprintln!("[aurora-v4] event=protocol_warning code={error}");
                             reader_manager.emit(FrontendEvent::ProtocolWarning { code: error });
                         }
                     }
-                    Ok(Message::Close(_)) | Err(_) => break,
+                    Ok(Message::Close(_)) => {
+                        // Flush the close handshake even while Audio's reply
+                        // sender is retained for orderly resource shutdown.
+                        let _ = close_writer.try_send(Message::Close(None));
+                        break;
+                    }
+                    Err(_) => {
+                        let _ = close_writer.try_send(Message::Close(None));
+                        break;
+                    }
                     Ok(Message::Binary(_)) => {
                         reader_manager.emit(FrontendEvent::ProtocolWarning {
                             code: "UNEXPECTED_BINARY_FRAME".into(),
@@ -508,6 +533,7 @@ impl BackendManager {
                 generation_id: result.generation_id.clone(),
             };
             data.registry.start(owner)?;
+            if let Some(audio) = &data.audio { audio.new_generation(&result.generation_id); }
             data.request_started.insert(
                 (result.session_id.clone(), result.generation_id.clone()),
                 Instant::now(),
@@ -551,6 +577,7 @@ impl BackendManager {
 
     pub async fn voice_stop(&self, generation_id: String) -> Result<(), String> {
         if self.mode != "production" { return Err("VOICE_UNAVAILABLE".into()); }
+        if let Some(audio) = &self.inner.lock().await.audio { audio.stop_generation(&generation_id); }
         self.send_value(crate::voice::stop(&format!("voice-stop-{}", Uuid::new_v4().simple()), &generation_id)?).await
     }
 
@@ -635,7 +662,7 @@ impl BackendManager {
     }
 
     pub async fn shutdown(&self) -> Result<(), String> {
-        let (writer, child, job, should_emit) = {
+        let (writer, child, job, audio, should_emit) = {
             let mut data = self.inner.lock().await;
             if matches!(data.state, BackendState::Stopped | BackendState::Stopping) {
                 return Ok(());
@@ -647,9 +674,11 @@ impl BackendManager {
             let writer = data.writer.take();
             let child = data.child.take();
             let job = data.job.take();
+            let audio = data.audio.take();
+            if let Some(audio) = &audio { audio.halt(); }
             data.sidecar_instance_id = None;
             data.info.chat_enabled = false;
-            (writer, child, job, true)
+            (writer, child, job, audio, true)
         };
         if should_emit {
             self.emit_state().await;
@@ -669,12 +698,19 @@ impl BackendManager {
                 .map_err(|error| error.to_string())?
                 .is_none()
             {
+                eprintln!("[aurora-v4] event=sidecar_shutdown forced=true");
                 let _ = child.start_kill();
                 let _ = timeout(Duration::from_secs(3), child.wait()).await;
+            } else {
+                eprintln!("[aurora-v4] event=sidecar_shutdown forced=false");
             }
         }
         if let Some(supervisor) = &self.local_model { supervisor.shutdown().await; }
         drop(job);
+        if let Some(audio) = audio {
+            // Python has exited: now join and delete only this owned handoff root.
+            let _ = tokio::task::spawn_blocking(move || { audio.join(); drop(audio); }).await;
+        }
         let mut data = self.inner.lock().await;
         data.state = BackendState::Stopped;
         drop(data);
@@ -704,11 +740,29 @@ impl BackendManager {
             return Err("STALE_CONNECTION".into());
         }
         match message_type {
+            "audio.play.request" | "audio.stop.request" => {
+                let data = self.inner.lock().await;
+                if data.epoch != epoch { return Err("STALE_CONNECTION".into()); }
+                if let Some(audio) = &data.audio {
+                    if message_type == "audio.play.request" {
+                        let play = serde_json::from_value(value["payload"].clone()).map_err(|_| "INVALID_AUDIO_PLAY")?;
+                        audio.play(play);
+                    } else {
+                        let id = serde_json::from_value(value["payload"].clone()).map_err(|_| "INVALID_AUDIO_STOP")?;
+                        audio.stop(&id);
+                    }
+                } else if let Some(writer) = &data.writer {
+                    let _ = writer.try_send(Message::Text(serde_json::json!({"protocol":"aurora-ipc","version":1,
+                        "type":"audio.event","payload":{"generation_id":value["payload"]["generation_id"],
+                        "revision":value["payload"]["revision"],"state":"failed","error_code":"AUDIO_INTERNAL_ERROR"}}).to_string().into()));
+                }
+            }
             "voice.get.response" | "voice.stop.response" | "voice.changed" => {
                 let snapshot = crate::voice::Snapshot::from_wire(value["payload"].clone())?;
                 let mut data = self.inner.lock().await;
                 if data.epoch != epoch { return Err("STALE_CONNECTION".into()); }
                 if data.voice.as_ref().is_some_and(|old| old.revision >= snapshot.revision) { return Ok(()); }
+                if let Some(audio) = &data.audio { audio.voice(&snapshot); }
                 data.voice = Some(snapshot.clone());
                 drop(data);
                 self.emit(FrontendEvent::VoiceState { snapshot });
@@ -940,6 +994,7 @@ impl BackendManager {
             data.info.chat_enabled = false;
             data.voice = None;
             data.writer = None;
+            if let Some(audio) = &data.audio { audio.halt(); }
             data.sidecar_instance_id = None;
             data.request_started.clear();
             data.cancel_started.clear();

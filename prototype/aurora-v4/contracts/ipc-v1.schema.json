@@ -4,6 +4,9 @@
   "title": "Project Aurora IPC v1",
   "description": "Bootstrap object and authenticated WebSocket JSON envelopes for Aurora IPC v1.",
   "oneOf": [
+    {"$ref": "#/$defs/audioPlay"},
+    {"$ref": "#/$defs/audioStop"},
+    {"$ref": "#/$defs/audioEvent"},
     {"$ref": "#/$defs/voiceGetRequest"},
     {"$ref": "#/$defs/voiceGetResponse"},
     {"$ref": "#/$defs/voiceStopRequest"},
@@ -39,6 +42,31 @@
     {"$ref": "#/$defs/error"}
   ],
   "$defs": {
+    "audioIdentity": {
+      "type":"object", "required":["generation_id","revision"],
+      "properties":{"generation_id":{"$ref":"#/$defs/opaqueId"},"revision":{"type":"integer","minimum":0,"maximum":9007199254740991}}
+    },
+    "audioPlay": {"allOf":[
+      {"$ref":"#/$defs/baseEnvelope"},{"$ref":"#/$defs/noIdentifiers"},
+      {"properties":{"type":{"const":"audio.play.request"},"payload":{"allOf":[
+        {"$ref":"#/$defs/audioIdentity"},
+        {"type":"object","required":["file"],"properties":{"file":{"type":"string","maxLength":256,"pattern":"^[A-Za-z0-9_-]+/[A-Za-z0-9_-]+\\.(mp3|wav)$"}}}
+      ],"unevaluatedProperties":false}}}
+    ]},
+    "audioStop": {"allOf":[
+      {"$ref":"#/$defs/baseEnvelope"},{"$ref":"#/$defs/noIdentifiers"},
+      {"properties":{"type":{"const":"audio.stop.request"},"payload":{"allOf":[{"$ref":"#/$defs/audioIdentity"}],"unevaluatedProperties":false}}}
+    ]},
+    "audioEvent": {"allOf":[
+      {"$ref":"#/$defs/baseEnvelope"},{"$ref":"#/$defs/noIdentifiers"},
+      {"properties":{"type":{"const":"audio.event"},"payload":{"allOf":[
+        {"$ref":"#/$defs/audioIdentity"},
+        {"type":"object","required":["state","error_code"],"properties":{
+          "state":{"enum":["started","completed","stopped","failed"]},
+          "error_code":{"enum":["","INVALID_AUDIO_FILE","AUDIO_FILE_UNAVAILABLE","AUDIO_SIZE_LIMIT","AUDIO_DECODE_FAILED","AUDIO_DEVICE_UNAVAILABLE","AUDIO_DEVICE_FAILED","AUDIO_TIMEOUT","AUDIO_INTERNAL_ERROR","AUDIO_BUSY"]}},
+          "if":{"properties":{"state":{"const":"failed"}}},"then":{"properties":{"error_code":{"minLength":1}}},"else":{"properties":{"error_code":{"const":""}}}}
+      ],"unevaluatedProperties":false}}}
+    ]},
   "voiceSnapshot": {
     "type": "object",
     "additionalProperties": false,

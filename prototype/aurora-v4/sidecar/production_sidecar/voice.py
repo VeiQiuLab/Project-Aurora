@@ -1,4 +1,4 @@
-"""Completed-turn TTS integration; Python owns routing, audio and cancellation.
+"""Completed-turn TTS integration; Python owns routing and Voice cancellation.
 
 No chat generation, microphone, PCM IPC or streaming playback is created here.
 The existing Chat generation ID is the only turn owner. A serial execution lock
@@ -7,10 +7,9 @@ keeps old audio cleanup from touching a newer turn's mixer resources.
 from __future__ import annotations
 
 import logging
-import os
 import tempfile
 import threading
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from pathlib import Path
 from time import monotonic
 
@@ -29,6 +28,7 @@ class VoiceRun:
     thread: threading.Thread | None = None
     speech: object = None
     error: str = ""
+    revision: int = 0
 
 
 def create_router(settings, output_dir):
@@ -43,19 +43,18 @@ def create_router(settings, output_dir):
 
 
 def create_playback():
-    # stdout is reserved for the sidecar bootstrap, including lazy imports.
-    os.environ.setdefault("PYGAME_HIDE_SUPPORT_PROMPT", "1")
-    from modules.experience.audio.real_playback import RealPlaybackController
-    return RealPlaybackController()
+    # Production must inject the private Rust bridge, never silently use pygame.
+    raise RuntimeError("RUST_AUDIO_BRIDGE_REQUIRED")
 
 
 class VoiceExecution:
     def __init__(self, settings, notify, *, router_factory=create_router,
-                 playback_factory=create_playback):
+                 playback_factory=create_playback, audio_root=None):
         self.settings = settings
         self.notify = notify
         self.router_factory = router_factory
         self.playback_factory = playback_factory
+        self.audio_root = audio_root
         self._lock = threading.RLock()
         self._serial = threading.Lock()
         self._workers = set()
@@ -149,6 +148,7 @@ class VoiceExecution:
             run = VoiceRun(generation_id, snapshot, text.strip())
             self._active = run
             self._publish("preparing")
+            run.revision = self._revision
             run.thread = threading.Thread(target=self._execute, args=(run,),
                                           name="aurora-v4-voice", daemon=False)
             self._workers.add(run)
@@ -213,7 +213,7 @@ class VoiceExecution:
                 elif event.event_type in {PlaybackEventType.COMPLETED, PlaybackEventType.STOPPED}:
                     run.playback_done.set()
 
-        with tempfile.TemporaryDirectory(prefix="aurora-v4-voice-") as output:
+        with tempfile.TemporaryDirectory(prefix="aurora-v4-voice-", dir=self.audio_root) as output:
             try:
                 router = self.router_factory(run.settings, output)
                 timeout = float(run.settings.get("voice.tts.timeout_seconds", 30.0))
@@ -227,6 +227,14 @@ class VoiceExecution:
             speech = router.synthesize(run.text,
                 VoiceOptions(voice=run.settings.get("voice.tts.voice", "")),
                 timeout_seconds=timeout, cancel_event=run.cancel)
+            if self.audio_root and not speech.audio_path and speech.audio_bytes and not run.cancel.is_set():
+                if len(speech.audio_bytes) > 64 * 1024 * 1024:
+                    run.error = "PLAYBACK_FAILED"
+                    return
+                suffix = ".mp3" if speech.mime_type == "audio/mpeg" else ".wav"
+                path = Path(output) / ("speech" + suffix)
+                path.write_bytes(speech.audio_bytes)
+                speech = replace(speech, audio_path=str(path), audio_bytes=None)
             with self._lock:
                 if not self._owns(run):
                     return
@@ -246,6 +254,9 @@ class VoiceExecution:
                 playback = self._playback
                 playback.subscribe(callback)
                 try:
+                    bind = getattr(playback, "bind", None)
+                    if callable(bind):
+                        bind(run.generation_id, run.revision)
                     playback.play(speech)
                 except Exception:
                     run.error = "PLAYBACK_FAILED"

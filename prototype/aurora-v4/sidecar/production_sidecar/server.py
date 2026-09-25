@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import os
 import sys
 from pathlib import Path
 
@@ -19,6 +20,7 @@ from production_sidecar.chat_execution import ChatExecution
 from production_sidecar.conversations import ConversationError
 from production_sidecar.post_turn import PostTurnCoordinator
 from production_sidecar.voice import VoiceExecution
+from production_sidecar.rust_playback import RustPlayback
 from modules.settings_service import SettingsError
 
 LOGGER = logging.getLogger("aurora-v4-production")
@@ -34,7 +36,25 @@ class ProductionSidecar(MockSidecar):
         self._metadata_connections = set()
         self._event_loop = None
         self.composition.post_turn = PostTurnCoordinator(composition, self.chat.adapter.api, self.metadata_changed)
-        self.composition.voice = VoiceExecution(composition.settings, self.voice_changed)
+        self._audio_connection = None
+        audio_root = os.environ.get("AURORA_AUDIO_ROOT")
+        self.audio = RustPlayback(audio_root, self.send_audio)
+        self.composition.voice = VoiceExecution(composition.settings, self.voice_changed,
+            playback_factory=lambda: self.audio, audio_root=audio_root)
+
+    def send_audio(self, kind, payload):
+        loop = self._event_loop
+        connection = self._audio_connection
+        if loop is None or loop.is_closed() or connection is None:
+            return False
+        async def send():
+            try:
+                await self.send(connection, {"protocol":"aurora-ipc", "version":1,
+                    "type":kind, "payload":payload})
+            except Exception:
+                self.audio.disconnected()
+        loop.call_soon_threadsafe(lambda: asyncio.create_task(send()))
+        return True
 
     def voice_changed(self, snapshot):
         if self._event_loop is not None and not self._event_loop.is_closed():
@@ -67,6 +87,10 @@ class ProductionSidecar(MockSidecar):
 
     async def dispatch(self, connection, message):
         kind = message["type"]
+        if kind == "audio.event":
+            if connection is self._audio_connection:
+                self.audio.accept(message["payload"])
+            return
         if kind in {"voice.get.request", "voice.stop.request"}:
             self._event_loop = asyncio.get_running_loop()
             self._metadata_connections.add(connection)
@@ -122,6 +146,13 @@ class ProductionSidecar(MockSidecar):
         self._event_loop = asyncio.get_running_loop()
         self._metadata_connections.add(connection)
         await self.chat.start(connection, message)
+        run = self.chat.active
+        if (run is not None and run.connection is connection
+                and run.request.generation_id == message["generation_id"]):
+            # Only an accepted owner may change the playback reply connection.
+            # start() schedules execution immediately before returning, so this
+            # assignment precedes generation/TTS work on the event loop.
+            self._audio_connection = connection
 
     async def cancel_chat(self, connection, message):
         await self.chat.cancel(connection, message)
@@ -185,6 +216,9 @@ class ProductionSidecar(MockSidecar):
             await super().handle_connection(connection)
         finally:
             self._metadata_connections.discard(connection)
+            if connection is self._audio_connection:
+                self.audio.disconnected()
+                self._audio_connection = None
             self.composition.voice.stop(connection=connection)
             await self.chat.close(connection)
 

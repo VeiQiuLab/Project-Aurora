@@ -71,3 +71,9 @@ V4-5A production adds `settings: {read: true, update: true, ui: false}`.
 This enables allowlisted Python-owned read/patch RPCs, not a Settings page,
 secret editing, desktop settings migration or Voice IPC. Mock does not advertise
 these capabilities. Voice flags remain unchanged.
+
+B-3 keeps V4-6B `voice.ipc=true`: it adds private complete-file audio execution
+messages between Python and Rust, not another frontend audio channel.
+`voice.streaming_pcm=false` (no PCM stream across IPC) and
+`voice.cosyvoice_local=false` (no LocalCosyVoiceProvider) remain unchanged.
+Python owns Voice orchestration; Rust is the only v4 production playback owner.

@@ -4,6 +4,7 @@ mod sidecar;
 mod settings;
 mod local_model;
 mod voice;
+mod audio;
 
 use protocol::{BackendSnapshot, CancelTarget, ChatStartResult, FrontendEvent};
 use serde::{Deserialize, Serialize};

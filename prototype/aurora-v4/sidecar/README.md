@@ -118,3 +118,9 @@ The optional Edge/pygame dependencies are already declared in the root
 `requirements.txt` / `requirements-voice.lock.txt`; this stage adds no dependency
 family. Missing dependencies report a Voice-only error, not Chat failure.
 See [V4-6B ownership, lifecycle and validation](../docs/V4_6B_VOICE.md).
+
+B-3 replaces only v4 production's pygame execution with private Rust playback.
+`AURORA_AUDIO_ROOT` is supplied by the supervisor, not personal settings.
+No bridge/root means Voice-only failure, never automatic pygame fallback.
+Legacy pygame remains supported outside v4 production. See
+[B-3 details](../docs/B3_RUST_AUDIO.md).

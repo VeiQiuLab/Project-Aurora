@@ -580,6 +580,7 @@ pub fn validate_sidecar_event(value: &Value) -> Result<&str, String> {
         .and_then(Value::as_str)
         .ok_or_else(|| "missing event type".to_string())?;
     let allowed = [
+        "audio.play.request", "audio.stop.request",
         "settings.get.response", "settings.update.response", "settings.changed",
         "voice.get.response", "voice.stop.response", "voice.changed",
         "health.response",
@@ -645,6 +646,9 @@ pub fn validate_sidecar_event(value: &Value) -> Result<&str, String> {
         } else {
             crate::settings::Change::from_wire(value["payload"].clone())?;
         }
+    }
+    if message_type.starts_with("audio.") {
+        crate::audio::validate_wire(value)?;
     }
     if message_type.starts_with("voice.") {
         let response = matches!(message_type, "voice.get.response" | "voice.stop.response");

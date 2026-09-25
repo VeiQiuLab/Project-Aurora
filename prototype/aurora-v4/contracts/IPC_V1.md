@@ -340,3 +340,37 @@ Five descriptors use the existing settings authority and patch transaction:
 `voice.enabled`, `voice.playback.enabled`, `voice.tts.provider`,
 `voice.tts.voice`, `voice.tts.timeout_seconds`. Voice changes stop current speech
 and take effect next turn. Remote endpoint remains backend-private.
+
+### B-3 private audio execution extension (still v1)
+
+Python now delegates complete-artifact playback to Rust. This is not a Tauri
+frontend command/channel and is not PCM streaming. Authentication and bounded
+JSON envelopes are unchanged. The Rust supervisor passes a fresh private
+`AURORA_AUDIO_ROOT` to its Python child; this root never reaches the frontend.
+
+These messages have no envelope request/session/generation/seq fields:
+
+| Direction | Type | Exact payload |
+| --- | --- | --- |
+| Python -> Rust | audio.play.request | generation_id, revision, file |
+| Python -> Rust | audio.stop.request | generation_id, revision |
+| Rust -> Python | audio.event | generation_id, revision, state, error_code |
+
+`revision` is the existing Voice preparing revision, fixed for this playback;
+`generation_id` is the existing Chat generation. Epoch ownership is checked by
+the authenticated transport. `file` is a two-component relative MP3/WAV name,
+max 256 ASCII characters, not a URL or absolute path. Root containment, links/
+reparse points and a 64 MiB size limit are checked again by Rust. No extra fields.
+Rust opens/reads/closes the file before decoder use; the private encoded buffer
+is not forwarded. One worker/one pending slot; duplicates never queue twice.
+
+Audio facts are started/completed/stopped/failed. Terminal follows device/sink/
+decoder release. Python maps these to existing Voice states and deletes its
+artifact only after release acknowledgement (or transport failure). Rust owns
+root cleanup after the child exits. New Chat invalidates prior playback before
+sending the Chat request. Local Voice Stop aborts its matching audio identity
+before forwarding Voice cancellation. Late callbacks cannot authorize another
+generation. Missing device/file, decoder failure and bounded-queue failure are
+audio errors, never Chat errors. Frontend still consumes only voice.changed.
+
+See [B-3 ownership and validation](../docs/B3_RUST_AUDIO.md).

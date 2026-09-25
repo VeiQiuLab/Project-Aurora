@@ -13,6 +13,7 @@ from pathlib import Path
 from typing import Any, Iterable, Mapping
 from settings_contract import ERRORS as SETTINGS_ERRORS, validate_settings
 from voice_contract import SNAPSHOT_KEYS as VOICE_KEYS, validate_voice
+from audio_contract import IDENTITY as AUDIO_IDENTITY, validate_audio
 
 
 PROTOCOL = "aurora-ipc"
@@ -85,6 +86,12 @@ def _rule(
 _NO_CONTEXT = {"session_id", "generation_id", "seq"}
 _CHAT_IDS = {"request_id", "session_id", "generation_id"}
 MESSAGE_RULES: dict[str, MessageRule] = {
+    "audio.play.request": _rule(forbidden=_NO_CONTEXT | {"request_id"},
+        payload_required=AUDIO_IDENTITY | {"file"}, payload_allowed=AUDIO_IDENTITY | {"file"}),
+    "audio.stop.request": _rule(forbidden=_NO_CONTEXT | {"request_id"},
+        payload_required=AUDIO_IDENTITY, payload_allowed=AUDIO_IDENTITY),
+    "audio.event": _rule(forbidden=_NO_CONTEXT | {"request_id"},
+        payload_required=AUDIO_IDENTITY | {"state", "error_code"}, payload_allowed=AUDIO_IDENTITY | {"state", "error_code"}),
     "voice.get.request": _rule(required={"request_id"}, forbidden=_NO_CONTEXT),
     "voice.stop.request": _rule(required={"request_id"}, forbidden=_NO_CONTEXT,
         payload_required={"target_generation_id"}, payload_allowed={"target_generation_id"}),
@@ -498,6 +505,11 @@ def validate_chat_diagnostics(value):
 
 
 def _validate_payload(message_type: str, payload: Mapping[str, Any]) -> None:
+    if message_type.startswith("audio."):
+        try:
+            validate_audio(message_type, payload)
+        except (ValueError, TypeError, KeyError):
+            raise ContractError("Invalid Audio payload.") from None
     if message_type.startswith("voice."):
         try:
             validate_voice(message_type, payload)
