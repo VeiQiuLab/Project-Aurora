@@ -5,13 +5,19 @@ mod settings;
 mod local_model;
 mod voice;
 mod audio;
+mod live2d;
 
 use protocol::{BackendSnapshot, CancelTarget, ChatStartResult, FrontendEvent};
 use serde::{Deserialize, Serialize};
 use sidecar::BackendManager;
 use tauri::ipc::Channel;
 use tauri::window::{Effect, EffectsBuilder};
-use tauri::Manager;
+use tauri::{Emitter, Manager};
+
+#[tauri::command]
+fn live2d_snapshot(manager: tauri::State<'_, BackendManager>) -> live2d::Snapshot {
+    manager.live2d.as_ref().map(|host| host.snapshot()).unwrap_or_default()
+}
 
 #[derive(Clone, Copy, Debug, Deserialize, Serialize)]
 #[serde(rename_all = "snake_case")]
@@ -147,7 +153,11 @@ pub fn run() {
             }
         }))
         .manage(manager)
-        .setup(move |_| {
+        .setup(move |app| {
+            if let Some(host) = &startup_manager.live2d {
+                let handle = app.handle().clone();
+                host.start(move |snapshot| { let _ = handle.emit("live2d-status", snapshot); });
+            }
             tauri::async_runtime::spawn(async move {
                 let _ = startup_manager.start(false).await;
             });
@@ -161,6 +171,7 @@ pub fn run() {
             chat_start,
             conversation_list,
             settings_get,
+            live2d_snapshot,
             voice_get,
             voice_stop,
             settings_update,
@@ -175,7 +186,14 @@ pub fn run() {
 
     app.run(move |_app_handle, event| {
         if matches!(event, tauri::RunEvent::Exit) {
-            let _ = tauri::async_runtime::block_on(cleanup_manager.shutdown());
+            tauri::async_runtime::block_on(async {
+                if let Some(host) = &cleanup_manager.live2d {
+                    // A stuck optional renderer must not delay Voice/audio cancel.
+                    let _ = tokio::join!(host.shutdown(), cleanup_manager.shutdown());
+                } else {
+                    let _ = cleanup_manager.shutdown().await;
+                }
+            });
         }
     });
 }

@@ -34,6 +34,10 @@ class SettingsError(ValueError):
 # Bounds for numeric values match SettingsController; caps apply only to wire
 # string/patch sizes, not model loading or product defaults.
 RULES = {
+    "live2d.enabled": ("boolean", None, None, None),
+    "live2d.visible": ("boolean", None, None, None),
+    "live2d.x": ("integer", None, -32768, 32767),
+    "live2d.y": ("integer", None, -32768, 32767),
     "voice.enabled": ("boolean", None, None, None),
     "voice.playback.enabled": ("boolean", None, None, None),
     "voice.tts.provider": ("string", ["edge_tts", "remote_cosyvoice", "fake"], None, None),

@@ -1,5 +1,11 @@
 {
     "app_name": "Project Aurora",
+    "live2d": {
+        "enabled": false,
+        "visible": true,
+        "x": 64,
+        "y": 64
+    },
     "theme": "System",
     "appearance": "System",
     "language": "zh_CN",

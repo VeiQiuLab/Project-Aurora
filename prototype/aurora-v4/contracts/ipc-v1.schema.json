@@ -349,8 +349,8 @@
           },
           "descriptors": {
             "type": "array",
-            "minItems": 28,
-            "maxItems": 28,
+            "minItems": 32,
+            "maxItems": 32,
             "items": {
               "type": "object",
               "additionalProperties": false,
@@ -398,7 +398,7 @@
                     "voice.playback.enabled",
                     "voice.tts.provider",
                     "voice.tts.voice",
-                    "voice.tts.timeout_seconds"
+                    "voice.tts.timeout_seconds", "live2d.enabled", "live2d.visible", "live2d.x", "live2d.y"
                   ]
                 },
                 "type": {
@@ -522,7 +522,7 @@
           },
           "patch": {
             "type": "object",
-            "maxProperties": 28,
+            "maxProperties": 32,
             "propertyNames": {
               "maxLength": 128,
               "minLength": 1
@@ -584,7 +584,7 @@
           },
           "changed_keys": {
             "type": "array",
-            "maxItems": 28,
+            "maxItems": 32,
             "uniqueItems": true,
             "items": {
               "enum": [
@@ -615,13 +615,13 @@
                 "voice.playback.enabled",
                 "voice.tts.provider",
                 "voice.tts.voice",
-                "voice.tts.timeout_seconds"
+                "voice.tts.timeout_seconds", "live2d.enabled", "live2d.visible", "live2d.x", "live2d.y"
               ]
             }
           },
           "restart_required_keys": {
             "type": "array",
-            "maxItems": 28,
+            "maxItems": 32,
             "uniqueItems": true,
             "items": {
               "enum": [
@@ -652,7 +652,7 @@
                 "voice.playback.enabled",
                 "voice.tts.provider",
                 "voice.tts.voice",
-                "voice.tts.timeout_seconds"
+                "voice.tts.timeout_seconds", "live2d.enabled", "live2d.visible", "live2d.x", "live2d.y"
               ]
             }
           }
@@ -700,7 +700,7 @@
           },
           "changed_keys": {
             "type": "array",
-            "maxItems": 28,
+            "maxItems": 32,
             "uniqueItems": true,
             "items": {
               "enum": [
@@ -731,13 +731,13 @@
                 "voice.playback.enabled",
                 "voice.tts.provider",
                 "voice.tts.voice",
-                "voice.tts.timeout_seconds"
+                "voice.tts.timeout_seconds", "live2d.enabled", "live2d.visible", "live2d.x", "live2d.y"
               ]
             }
           },
           "restart_required_keys": {
             "type": "array",
-            "maxItems": 28,
+            "maxItems": 32,
             "uniqueItems": true,
             "items": {
               "enum": [
@@ -768,7 +768,7 @@
                 "voice.playback.enabled",
                 "voice.tts.provider",
                 "voice.tts.voice",
-                "voice.tts.timeout_seconds"
+                "voice.tts.timeout_seconds", "live2d.enabled", "live2d.visible", "live2d.x", "live2d.y"
               ]
             }
           }

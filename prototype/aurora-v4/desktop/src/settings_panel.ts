@@ -3,6 +3,8 @@ import { SettingsState, type SettingDescriptor, type SettingValue, type Settings
 // Labels and grouping only. Types, options, limits, values and mutability belong
 // exclusively to the production descriptors.
 const labels: Record<string, string> = {
+  "live2d.enabled": "启用桌面角色", "live2d.visible": "显示角色",
+  "live2d.x": "水平位置", "live2d.y": "垂直位置",
   "voice.enabled": "回复后自动朗读", "voice.playback.enabled": "播放语音",
   "voice.tts.provider": "语音服务", "voice.tts.voice": "Edge 音色",
   "voice.tts.timeout_seconds": "语音请求超时（秒）",
@@ -51,6 +53,12 @@ export class SettingsPanel {
   private save = document.getElementById("settings-save") as HTMLButtonElement;
   private reload = document.getElementById("settings-reload") as HTMLButtonElement;
   private fields = document.getElementById("descriptor-fields")!;
+  private characterStatus = "角色未启用";
+  character(status: string) {
+    this.characterStatus = status;
+    const label = this.fields.querySelector("[data-character-status]");
+    if (label) label.textContent = status;
+  }
   private invoke: (command: string, args?: Record<string, unknown>) => Promise<unknown>;
   constructor(invoke: (command: string, args?: Record<string, unknown>) => Promise<unknown>) {
     this.invoke = invoke;
@@ -124,18 +132,23 @@ export class SettingsPanel {
   }
   private render(descriptors: SettingDescriptor[]) {
     this.fields.replaceChildren();
-    for (const [group, title] of [["voice", "语音朗读"], ["models", "旧模型服务"], ["context", "上下文与知识"]]) {
+    for (const [group, title] of [["live2d", "桌面角色"], ["voice", "语音朗读"], ["models", "旧模型服务"], ["context", "上下文与知识"]]) {
       const section = document.createElement("section"); section.className = "settings-section";
       const heading = document.createElement("h3"); heading.className = "section-header"; heading.textContent = title; section.append(heading);
+      if (group === "live2d") {
+        const status = document.createElement("small");
+        status.dataset.characterStatus = ""; status.textContent = this.characterStatus; section.append(status);
+      }
       for (const d of descriptors) {
         if (!labels[d.key]) continue;
         const model = d.key.startsWith("ollama.") || d.key.includes("model");
-        const category = d.key.startsWith("voice.") ? "voice" : model ? "models" : "context";
+        const category = d.key.startsWith("live2d.") ? "live2d" : d.key.startsWith("voice.") ? "voice" : model ? "models" : "context";
         if (category !== group) continue;
         const row = document.createElement("div"); row.className = "setting-row";
         const label = document.createElement("label"); label.htmlFor = `setting-${d.key}`; label.textContent = labels[d.key];
         const copy = document.createElement("div"); copy.className = "setting-copy";
         const hint = document.createElement("small"); hint.textContent = !d.mutable ? "由服务管理 · 只读" : d.restart_required ? "保存后重启生效" : "保存后用于下次请求";
+        if (group === "live2d") hint.textContent = "保存后应用 · 不影响聊天与语音";
         copy.append(label, hint); row.append(copy);
         const input = d.options ? document.createElement("select") : document.createElement("input");
         input.id = label.htmlFor; input.className = "setting-input";

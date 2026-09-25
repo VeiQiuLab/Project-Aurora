@@ -1,7 +1,7 @@
 """Settings wire shape; independent of production modules for mock transport."""
 import math
 
-KEYS = frozenset(["voice.enabled","voice.playback.enabled","voice.tts.provider","voice.tts.voice","voice.tts.timeout_seconds","ollama.host","ollama.thinking_mode","ollama.keep_alive","chat_model","chat_model_mode","embedding_model","embedding_model_mode","resolved_chat_model","resolved_embedding_model","memory.max_injection","memory.min_importance","memory.retrieval_threshold","memory.confidence_default","persona.enabled","knowledge.enabled","knowledge.max_results","rag.pipeline_enabled","rag.enable_dedup","rag.enable_ranking","rag.enable_optimization","rag.context_budget","rag.reserved_output","context.warning_tokens"])
+KEYS = frozenset(["live2d.enabled","live2d.visible","live2d.x","live2d.y","voice.enabled","voice.playback.enabled","voice.tts.provider","voice.tts.voice","voice.tts.timeout_seconds","ollama.host","ollama.thinking_mode","ollama.keep_alive","chat_model","chat_model_mode","embedding_model","embedding_model_mode","resolved_chat_model","resolved_embedding_model","memory.max_injection","memory.min_importance","memory.retrieval_threshold","memory.confidence_default","persona.enabled","knowledge.enabled","knowledge.max_results","rag.pipeline_enabled","rag.enable_dedup","rag.enable_ranking","rag.enable_optimization","rag.context_budget","rag.reserved_output","context.warning_tokens"])
 ERRORS = {"INVALID_SETTING", "INVALID_VALUE", "READ_ONLY", "RESTART_REQUIRED", "PERSISTENCE_ERROR", "CONFLICT"}
 
 

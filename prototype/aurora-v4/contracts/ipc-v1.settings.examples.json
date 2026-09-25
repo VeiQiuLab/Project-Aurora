@@ -420,6 +420,62 @@
           "max": 120,
           "label_id": "settings.voice.tts.timeout_seconds",
           "value_valid": true
+        },
+        {
+          "key": "live2d.enabled",
+          "type": "boolean",
+          "value": false,
+          "default": false,
+          "mutable": true,
+          "restart_required": false,
+          "apply": "next_request",
+          "options": null,
+          "min": null,
+          "max": null,
+          "label_id": "settings.live2d.enabled",
+          "value_valid": true
+        },
+        {
+          "key": "live2d.visible",
+          "type": "boolean",
+          "value": true,
+          "default": true,
+          "mutable": true,
+          "restart_required": false,
+          "apply": "next_request",
+          "options": null,
+          "min": null,
+          "max": null,
+          "label_id": "settings.live2d.visible",
+          "value_valid": true
+        },
+        {
+          "key": "live2d.x",
+          "type": "integer",
+          "value": 64,
+          "default": 64,
+          "mutable": true,
+          "restart_required": false,
+          "apply": "next_request",
+          "options": null,
+          "min": -32768,
+          "max": 32767,
+          "label_id": "settings.live2d.x",
+          "value_valid": true
+        },
+        {
+          "key": "live2d.y",
+          "type": "integer",
+          "value": 64,
+          "default": 64,
+          "mutable": true,
+          "restart_required": false,
+          "apply": "next_request",
+          "options": null,
+          "min": -32768,
+          "max": 32767,
+          "label_id": "settings.live2d.y",
+          "value_valid": true
         }
       ]
     }

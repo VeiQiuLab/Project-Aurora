@@ -1,4 +1,6 @@
 import { Channel, invoke } from "@tauri-apps/api/core";
+import { listen } from "@tauri-apps/api/event";
+import { characterLabel } from "./live2d_state";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import {
   ConversationStore,
@@ -17,6 +19,9 @@ import { type SettingsEvent } from "./settings_state";
 import { SettingsPanel } from "./settings_panel";
 import { VoiceState, type VoiceSnapshot } from "./voice_state";
 const settingsPanel = new SettingsPanel(invoke);
+void listen("live2d-status", event => settingsPanel.character(characterLabel(event.payload)))
+  .then(() => invoke("live2d_snapshot").then(value => settingsPanel.character(characterLabel(value))))
+  .catch(() => settingsPanel.character("角色状态不可用"));
 
 type BackendState =
   | "STOPPED"

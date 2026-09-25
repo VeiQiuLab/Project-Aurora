@@ -107,6 +107,7 @@ pub struct BackendManager {
     desktop_started: Instant,
     mode: String,
     local_model: Option<crate::local_model::LocalModelSupervisor>,
+    pub live2d: Option<crate::live2d::Live2d>,
     #[cfg(test)]
     test_data_directory: Option<PathBuf>,
 }
@@ -116,6 +117,7 @@ impl BackendManager {
         // The desktop Settings page uses the existing production owner by default.
         // Mock transport remains an explicit test/development opt-in.
         let mut manager = Self::with_mode(std::env::var("AURORA_V4_BACKEND").unwrap_or_else(|_| "production".into()));
+        manager.live2d = Some(Default::default());
         if manager.mode == "production" && std::env::var("AURORA_V4_CHAT_PROVIDER").as_deref() != Ok("ollama") {
             manager.local_model = Some(Default::default());
         }
@@ -129,6 +131,7 @@ impl BackendManager {
             desktop_started: Instant::now(),
             mode,
             local_model: None,
+            live2d: None,
             #[cfg(test)]
             test_data_directory: None,
         }
@@ -489,6 +492,7 @@ impl BackendManager {
                 }
             });
         }
+        if self.live2d.is_some() { self.settings_get().await?; }
         self.send_value(health(&format!("health-{}", Uuid::new_v4().simple())))
             .await
     }
@@ -779,7 +783,9 @@ impl BackendManager {
             }
             "settings.changed" => {
                 let change = crate::settings::Change::from_wire(value["payload"].clone())?;
+                let refresh_character = self.live2d.is_some() && change.changed_keys.iter().any(|key| key.starts_with("live2d."));
                 self.emit(FrontendEvent::SettingsChanged { change });
+                if refresh_character { self.settings_get().await?; }
             }
             "conversation.changed" => {
                 let conversation: ConversationSummary = serde_json::from_value(
@@ -1023,6 +1029,7 @@ impl BackendManager {
     }
 
     fn emit(&self, event: FrontendEvent) {
+        if let Some(character) = &self.live2d { character.observe(&event); }
         let channel = self
             .frontend
             .lock()
