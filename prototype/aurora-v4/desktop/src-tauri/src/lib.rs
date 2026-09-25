@@ -3,6 +3,7 @@ mod registry;
 mod sidecar;
 mod settings;
 mod local_model;
+mod voice;
 
 use protocol::{BackendSnapshot, CancelTarget, ChatStartResult, FrontendEvent};
 use serde::{Deserialize, Serialize};
@@ -87,6 +88,16 @@ async fn settings_update(manager: tauri::State<'_, BackendManager>, expected_rev
 }
 
 #[tauri::command]
+async fn voice_get(manager: tauri::State<'_, BackendManager>) -> Result<(), String> {
+    manager.voice_get().await
+}
+
+#[tauri::command]
+async fn voice_stop(manager: tauri::State<'_, BackendManager>, generation_id: String) -> Result<(), String> {
+    manager.voice_stop(generation_id).await
+}
+
+#[tauri::command]
 async fn conversation_get(
     manager: tauri::State<'_, BackendManager>,
     conversation_id: String,
@@ -149,6 +160,8 @@ pub fn run() {
             chat_start,
             conversation_list,
             settings_get,
+            voice_get,
+            voice_stop,
             settings_update,
             conversation_get,
             conversation_create,

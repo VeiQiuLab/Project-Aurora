@@ -12,6 +12,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Iterable, Mapping
 from settings_contract import ERRORS as SETTINGS_ERRORS, validate_settings
+from voice_contract import SNAPSHOT_KEYS as VOICE_KEYS, validate_voice
 
 
 PROTOCOL = "aurora-ipc"
@@ -84,6 +85,15 @@ def _rule(
 _NO_CONTEXT = {"session_id", "generation_id", "seq"}
 _CHAT_IDS = {"request_id", "session_id", "generation_id"}
 MESSAGE_RULES: dict[str, MessageRule] = {
+    "voice.get.request": _rule(required={"request_id"}, forbidden=_NO_CONTEXT),
+    "voice.stop.request": _rule(required={"request_id"}, forbidden=_NO_CONTEXT,
+        payload_required={"target_generation_id"}, payload_allowed={"target_generation_id"}),
+    "voice.get.response": _rule(required={"request_id"}, forbidden=_NO_CONTEXT,
+        payload_required=VOICE_KEYS, payload_allowed=VOICE_KEYS),
+    "voice.stop.response": _rule(required={"request_id"}, forbidden=_NO_CONTEXT,
+        payload_required=VOICE_KEYS, payload_allowed=VOICE_KEYS),
+    "voice.changed": _rule(forbidden=_NO_CONTEXT | {"request_id"},
+        payload_required=VOICE_KEYS, payload_allowed=VOICE_KEYS),
     "settings.get.request": _rule(required={"request_id"}, forbidden=_NO_CONTEXT),
     "settings.get.response": _rule(required={"request_id"}, forbidden=_NO_CONTEXT,
         payload_required={"revision", "status", "descriptors"}, payload_allowed={"revision", "status", "descriptors"}),
@@ -271,8 +281,8 @@ def _validate_capabilities(value: Any) -> None:
         raise ContractError("voice capability values must be booleans")
     if voice["cosyvoice_local"] is not False:
         raise ContractError("Local CosyVoice is not implemented and must be false")
-    if voice["ipc"] is not False or voice["streaming_pcm"] is not False:
-        raise ContractError("Voice IPC and streaming PCM are reserved in v1")
+    if voice["streaming_pcm"] is not False:
+        raise ContractError("Streaming PCM is reserved in v1")
     if "settings" in value and value["settings"] != {"read": True, "update": True, "ui": False}:
         raise ContractError("Invalid settings capability boundary")
 
@@ -488,6 +498,11 @@ def validate_chat_diagnostics(value):
 
 
 def _validate_payload(message_type: str, payload: Mapping[str, Any]) -> None:
+    if message_type.startswith("voice."):
+        try:
+            validate_voice(message_type, payload)
+        except (ValueError, TypeError, KeyError):
+            raise ContractError("Invalid Voice payload.") from None
     if message_type.startswith("settings."):
         try:
             validate_settings(message_type, payload)

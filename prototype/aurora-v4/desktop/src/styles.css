@@ -333,3 +333,6 @@ select.setting-input option { color: #eee; background: #171717; }
 @media (prefers-reduced-motion: reduce) {
   *, *::before, *::after { transition: none !important; }
 }
+.voice-controls { pointer-events: auto; display: flex; align-items: center; justify-content: flex-end; gap: 12px; padding-block: 4px; }
+.voice-controls .settings-note { margin: 0; white-space: nowrap; }
+.voice-controls .ghost-button { width: auto; flex: none; font-size: 12px; padding: 4px 8px; }

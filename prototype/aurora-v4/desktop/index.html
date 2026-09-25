@@ -70,7 +70,11 @@
             <div id="messages" class="messages content-column" aria-live="polite"></div>
           </section>
 
-          <footer class="composer-wrap">
+          <footer id="composer-wrap" class="composer-wrap">
+            <div class="voice-controls content-column">
+              <span id="voice-status" class="settings-note" role="status">语音未连接</span>
+              <button id="voice-stop" class="ghost-button" type="button" disabled>停止语音</button>
+            </div>
             <div id="composer" class="composer content-column" data-glass>
               <label class="sr-only" for="prompt-input">输入消息</label>
               <textarea
@@ -121,11 +125,11 @@
               </form>
               <section class="settings-section" aria-labelledby="voice-title">
                 <h2 id="voice-title" class="section-header">语音</h2>
-                <p class="section-description">语音能力尚未接入 v4 桌面。本页暂不提供启用开关。</p>
-                <div class="setting-row"><span>Edge TTS</span><span class="status-text">核心已实现 · v4 未接入</span></div>
-                <div class="setting-row"><span>Remote CosyVoice</span><span class="status-text">核心已实现 · v4 未接入</span></div>
+                <p class="section-description">回复完成后朗读。语音失败不会影响聊天；停止语音不会删除回复。</p>
+                <div class="setting-row"><span>Edge TTS</span><span class="status-text">在线服务 · 需要网络</span></div>
+                <div class="setting-row"><span>Remote CosyVoice</span><span class="status-text">可选 Voice Node · 地址由后端配置</span></div>
                 <div class="setting-row"><span>Local CosyVoice</span><span class="status-text">尚未实现</span></div>
-                <details class="capability-details"><summary>查看连接能力</summary><p>voice.ipc = false<br/>voice.streaming_pcm = false<br/>cosyvoice_local = false</p></details>
+                <details class="capability-details"><summary>能力范围</summary><p>语音控制已接入正式后端；未开放 PCM streaming。测试 provider 不输出真实语音。</p></details>
               </section>
             </div>
           </div>

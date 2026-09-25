@@ -312,6 +312,7 @@ pub enum FrontendEvent {
     SettingsUpdated { request_id: String, change: crate::settings::Change },
     SettingsChanged { change: crate::settings::Change },
     SettingsError { request_id: String, code: String },
+    VoiceState { snapshot: crate::voice::Snapshot },
 }
 
 #[derive(Clone, Debug, Serialize)]
@@ -320,6 +321,7 @@ pub struct BackendSnapshot {
     pub state: BackendState,
     pub metrics: PrototypeMetrics,
     pub info: BackendInfo,
+    pub voice: Option<crate::voice::Snapshot>,
 }
 
 #[derive(Clone, Debug, Serialize)]
@@ -512,7 +514,7 @@ pub fn validate_hello_ack(value: &Value, hello_request_id: &str) -> Result<Strin
 pub fn validate_hello_ack_for_mode(
     value: &Value,
     hello_request_id: &str,
-    _production: bool,
+    production: bool,
 ) -> Result<String, String> {
     validate_base(value, "hello_ack")?;
     require_string(value, "request_id", Some(hello_request_id))?;
@@ -544,11 +546,11 @@ pub fn validate_hello_ack_for_mode(
         .get("voice")
         .and_then(Value::as_object)
         .ok_or_else(|| "missing voice capability boundary".to_string())?;
-    if voice.get("ipc").and_then(Value::as_bool) != Some(false)
+    if voice.get("ipc").and_then(Value::as_bool) != Some(production)
         || voice.get("streaming_pcm").and_then(Value::as_bool) != Some(false)
         || voice.get("cosyvoice_local").and_then(Value::as_bool) != Some(false)
     {
-        return Err("reserved voice capability was advertised".into());
+        return Err("invalid voice capability boundary".into());
     }
     let limits = payload
         .get("limits")
@@ -579,6 +581,7 @@ pub fn validate_sidecar_event(value: &Value) -> Result<&str, String> {
         .ok_or_else(|| "missing event type".to_string())?;
     let allowed = [
         "settings.get.response", "settings.update.response", "settings.changed",
+        "voice.get.response", "voice.stop.response", "voice.changed",
         "health.response",
         "chat.accepted",
         "chat.delta",
@@ -642,6 +645,23 @@ pub fn validate_sidecar_event(value: &Value) -> Result<&str, String> {
         } else {
             crate::settings::Change::from_wire(value["payload"].clone())?;
         }
+    }
+    if message_type.starts_with("voice.") {
+        let response = matches!(message_type, "voice.get.response" | "voice.stop.response");
+        let allowed_keys = if response {
+            ["protocol", "version", "type", "request_id", "payload"].as_slice()
+        } else {
+            ["protocol", "version", "type", "payload"].as_slice()
+        };
+        if value.as_object().is_none_or(|root| {
+            root.len() != allowed_keys.len() || root.keys().any(|key| !allowed_keys.contains(&key.as_str()))
+        }) {
+            return Err("INVALID_VOICE_ENVELOPE".into());
+        }
+        if response {
+            require_string(value, "request_id", None)?;
+        }
+        crate::voice::Snapshot::from_wire(value["payload"].clone())?;
     }
     for key in ["ipc_received_unix_ms", "python_sent_unix_ms"] {
         if payload.contains_key(key)
@@ -776,7 +796,10 @@ mod tests {
         production["payload"]["state"] = json!("DEGRADED");
         assert!(validate_hello_ack_for_mode(&production, "hello-1", true).is_err());
         assert!(validate_hello_ack(&production, "hello-1").is_err());
-        assert!(validate_hello_ack_for_mode(&ack, "hello-1", true).is_ok());
+        let mut integrated = ack;
+        integrated["payload"]["capabilities"]["voice"]["ipc"] = json!(true);
+        assert!(validate_hello_ack_for_mode(&integrated, "hello-1", true).is_ok());
+        assert!(validate_hello_ack(&integrated, "hello-1").is_err());
     }
 
     #[test]

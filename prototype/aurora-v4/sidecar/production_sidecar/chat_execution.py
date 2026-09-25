@@ -49,6 +49,7 @@ class Execution:
     session_messages: list[dict] = field(default_factory=list)
     persistence_lock: asyncio.Lock = field(default_factory=asyncio.Lock)
     completion_committed: bool = False
+    response_text: str = field(default="", repr=False)
     settings_snapshot: object = None
 
 
@@ -84,6 +85,7 @@ class ChatExecution:
                 "error": {"code": "BACKEND_NOT_READY", "message": "Another generation is active.", "retryable": True}})
             return
         self.active = run  # ownership before first await
+        self.sidecar.composition.voice.begin(request.generation_id, connection)
         run.settings_snapshot = self.sidecar.composition.settings.snapshot()
         post_turn = self.sidecar.composition.post_turn
         if post_turn is not None:
@@ -92,6 +94,7 @@ class ChatExecution:
             await self.send(run, "chat.accepted", {"status": "accepted", "ipc_received_unix_ms": run.received_unix_ms})
         except BaseException:
             self.active = None
+            self.sidecar.composition.voice.stop(request.generation_id)
             if post_turn is not None:
                 post_turn.foreground_finished(request.generation_id)
             raise
@@ -188,6 +191,7 @@ class ChatExecution:
                             outcome = await asyncio.shield(worker)  # rethrow errors without detaching the real thread
                             if isinstance(outcome, tuple) and len(outcome) == 2:
                                 run.session_messages = outcome[1]
+                                run.response_text = outcome[0] if isinstance(outcome[0], str) else ""
                             if status == "completed" and run.request.conversation_id and run.session_messages:
                                 # Cancellation and persistence share one event-loop lock:
                                 # a cancel which wins before the save starts prevents a
@@ -263,6 +267,14 @@ class ChatExecution:
             except ConnectionClosed:
                 pass
             finally:
+                # Chat terminal/persistence are already decided. Voice cannot
+                # rewrite them, and its generation check rejects a late N after
+                # N+1 was accepted while terminal delivery yielded.
+                if status == "completed":
+                    try:
+                        self.sidecar.composition.voice.completed(run.request.generation_id, run.response_text)
+                    except Exception:
+                        LOGGER.warning("event=voice_schedule_failed")
                 post_turn = self.sidecar.composition.post_turn
                 if post_turn is not None:
                     try:
@@ -292,6 +304,7 @@ class ChatExecution:
                         candidate.cancel_at = candidate.cancel_at or monotonic()
                         candidate.ack_pending = True
                         candidate.handle.stop_event.set()  # truth before socket side effects
+                        self.sidecar.composition.voice.stop(candidate.request.generation_id)
                         await asyncio.to_thread(candidate.handle.cancel)
             await self.sidecar.send(connection, {**message, "type": "chat.cancel.ack",
                 "payload": {"target_request_id": message["payload"]["target_request_id"], "outcome": outcome}})
@@ -300,6 +313,7 @@ class ChatExecution:
                 candidate.ack_done.set()
 
     async def close(self, connection=None):
+        self.sidecar.composition.voice.stop(connection=connection)
         run = self.active
         if run is not None and (connection is None or run.connection is connection):
             async with run.persistence_lock:

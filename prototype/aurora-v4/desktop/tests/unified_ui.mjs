@@ -43,8 +43,22 @@ try {
     };
   }, snapshot);
   await page.goto(server.resolvedUrls.local[0]);
+  // Exercise real hit testing: the composer overlay must not intercept Voice Stop.
+  await page.waitForFunction(() => !!window.gateway);
+  await page.evaluate(() => window.gateway.onmessage({ type: "voice_state", snapshot: {
+    revision: 1, state: "speaking", enabled: true, provider: "edge_tts",
+    generation_id: "voice-ui-test", error_code: "",
+  } }));
+  await page.locator("#voice-stop").click();
+  assert.deepEqual(await page.evaluate(() => window.calls.find(c => c.cmd === "voice_stop").args), { generationId: "voice-ui-test" });
+  assert.equal(await page.evaluate(() => window.calls.some(c => c.cmd === "chat_cancel")), false);
+  await page.evaluate(() => window.gateway.onmessage({ type: "voice_state", snapshot: {
+    revision: 2, state: "idle", enabled: true, provider: "edge_tts",
+    generation_id: "voice-ui-test", error_code: "",
+  } }));
+  assert.equal(await page.locator("#voice-stop").isDisabled(), true);
   await page.locator("#open-settings").click();
-  await page.waitForFunction(() => document.querySelectorAll("[data-setting-key]").length === 23);
+  await page.waitForFunction(count => document.querySelectorAll("[data-setting-key]").length === count, snapshot.descriptors.length);
   assert.equal(await page.locator("[data-setting-key]:disabled").count(), 3);
   assert.equal(await page.locator("#send-button").isDisabled(), true);
   // Full descriptor form, including the sticky footer, must remain usable at
@@ -118,5 +132,5 @@ try {
   await page.locator("#appearance-low-gpu").check();
   assert.equal(await page.locator("body").getAttribute("data-glass-renderer"), "simple");
   assert.deepEqual(errors, []);
-  console.log(JSON.stringify({ status: "passed", descriptorCount: 23, readOnlyCount: 3, refractionChangedPixels: changed, settingsSaveConflictLostPersistence: "passed", rendererFallback: "passed", screenshots: output }));
+  console.log(JSON.stringify({ status: "passed", descriptorCount: snapshot.descriptors.length, readOnlyCount: 3, refractionChangedPixels: changed, settingsSaveConflictLostPersistence: "passed", rendererFallback: "passed", screenshots: output }));
 } finally { await browser.close(); await server.close(); }

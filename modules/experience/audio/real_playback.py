@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import time
 from pathlib import Path
-from threading import RLock, Thread
+from threading import RLock, Thread, current_thread
 from typing import Any
 
 from modules.diagnostics import create_diagnostics
@@ -30,6 +30,7 @@ class RealPlaybackController(AudioPlaybackController):
         self._playing = False
         self._playback_token = 0
         self._current_speech: SpeechResult | None = None
+        self._monitors: list[Thread] = []
 
     @property
     def dependency_error(self) -> Exception | None:
@@ -85,7 +86,12 @@ class RealPlaybackController(AudioPlaybackController):
                     diagnostics=self._diagnostics("started"),
                 )
             )
-            Thread(target=self._monitor_playback, args=(token, speech), daemon=True).start()
+            monitor = Thread(target=self._monitor_playback, args=(token, speech), daemon=True,
+                             name="aurora-playback-monitor")
+            with self._lock:
+                self._monitors = [thread for thread in self._monitors if thread.is_alive()]
+                self._monitors.append(monitor)
+                monitor.start()
         except Exception as error:
             with self._lock:
                 self._playing = False
@@ -134,6 +140,7 @@ class RealPlaybackController(AudioPlaybackController):
         """Stop playback and release the pygame mixer for application shutdown."""
 
         self.stop()
+        self.wait_stopped()
         self.unload()
         with self._lock:
             mixer = self._mixer
@@ -144,6 +151,16 @@ class RealPlaybackController(AudioPlaybackController):
                 return
             except Exception:
                 return
+
+    def wait_stopped(self) -> None:
+        """Join retired monitors outside locks before a new owner uses the mixer."""
+        with self._lock:
+            monitors = tuple(self._monitors)
+        for monitor in monitors:
+            if monitor is not current_thread():
+                monitor.join()
+        with self._lock:
+            self._monitors = [thread for thread in self._monitors if thread.is_alive()]
 
     def subscribe(self, callback: PlaybackCallback) -> PlaybackCallback:
         if not callable(callback):

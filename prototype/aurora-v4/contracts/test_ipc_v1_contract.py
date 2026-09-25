@@ -239,7 +239,7 @@ def test_local_cosyvoice_capability_can_never_be_advertised():
         contract.validate_message(hello_ack)
 
 
-@pytest.mark.parametrize("capability", ["ipc", "streaming_pcm"])
+@pytest.mark.parametrize("capability", ["streaming_pcm"])
 def test_reserved_voice_ipc_capabilities_remain_false(capability):
     hello_ack = _example("hello_ack")
     hello_ack["payload"]["capabilities"]["voice"][capability] = True

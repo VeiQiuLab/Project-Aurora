@@ -22,6 +22,7 @@ from aurora_voice_node.stream_protocol import CONTENT_TYPE, StreamFrame, StreamF
 from ..interfaces import StreamingTTSProvider, TTSProvider
 from ..models import SpeechResult, StreamingSpeechResult, VoiceOptions
 from ..wav_utils import inspect_wav
+from ._http_cancel import cancellable_response
 
 
 HttpOpen = Callable[..., Any]
@@ -201,7 +202,9 @@ class RemoteCosyVoiceProvider(TTSProvider, StreamingTTSProvider):
         )
 
         try:
-            with self._http_open(request, timeout=timeout) as response:
+            context = (cancellable_response(request, timeout, cancel_event, self._http_open)
+                       if cancel_event is not None else self._http_open(request, timeout=timeout))
+            with context as response:
                 status = int(getattr(response, "status", 200))
                 content_type = str(response.headers.get("Content-Type", "")).split(";", 1)[0].strip().lower()
                 if status != 200:
@@ -209,21 +212,34 @@ class RemoteCosyVoiceProvider(TTSProvider, StreamingTTSProvider):
                 if content_type not in {"audio/wav", "audio/x-wav"}:
                     return self._failure("invalid_response", "Voice Node did not return WAV audio")
                 audio_bytes = response.read(self.max_response_bytes + 1)
+        except InterruptedError:
+            return self._failure("cancelled", "speech synthesis was cancelled")
         except HTTPError as error:
+            if cancel_event is not None and cancel_event.is_set():
+                error.close()
+                return self._failure("cancelled", "speech synthesis was cancelled")
             return self._failure(
                 "server_error",
                 self._http_error_message(error),
                 metrics={"status": int(error.code)},
             )
         except (TimeoutError, socket.timeout) as error:
+            if cancel_event is not None and cancel_event.is_set():
+                return self._failure("cancelled", "speech synthesis was cancelled")
             return self._failure("timeout", "Voice Node request timed out", warning=type(error).__name__)
         except URLError as error:
+            if cancel_event is not None and cancel_event.is_set():
+                return self._failure("cancelled", "speech synthesis was cancelled")
             if isinstance(error.reason, (TimeoutError, socket.timeout)):
                 return self._failure("timeout", "Voice Node request timed out", warning=type(error.reason).__name__)
             return self._failure("connection_failed", "Voice Node is unavailable", warning=type(error.reason).__name__)
-        except (OSError, ValueError) as error:
+        except (OSError, ValueError, http.client.HTTPException) as error:
+            if cancel_event is not None and cancel_event.is_set():
+                return self._failure("cancelled", "speech synthesis was cancelled")
             return self._failure("connection_failed", "Voice Node request failed", warning=type(error).__name__)
 
+        if cancel_event is not None and cancel_event.is_set():
+            return self._failure("cancelled", "speech synthesis was cancelled")
         if len(audio_bytes) > self.max_response_bytes:
             return self._failure("invalid_response", "Voice Node WAV response exceeded the size limit")
         try:

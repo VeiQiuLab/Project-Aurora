@@ -18,6 +18,7 @@ from production_sidecar.composition import ProductionComposition
 from production_sidecar.chat_execution import ChatExecution
 from production_sidecar.conversations import ConversationError
 from production_sidecar.post_turn import PostTurnCoordinator
+from production_sidecar.voice import VoiceExecution
 from modules.settings_service import SettingsError
 
 LOGGER = logging.getLogger("aurora-v4-production")
@@ -33,6 +34,19 @@ class ProductionSidecar(MockSidecar):
         self._metadata_connections = set()
         self._event_loop = None
         self.composition.post_turn = PostTurnCoordinator(composition, self.chat.adapter.api, self.metadata_changed)
+        self.composition.voice = VoiceExecution(composition.settings, self.voice_changed)
+
+    def voice_changed(self, snapshot):
+        if self._event_loop is not None and not self._event_loop.is_closed():
+            self._event_loop.call_soon_threadsafe(lambda: asyncio.create_task(self._send_voice(snapshot)))
+
+    async def _send_voice(self, snapshot):
+        for connection in tuple(self._metadata_connections):
+            try:
+                await self.send(connection, {"protocol": "aurora-ipc", "version": 1,
+                    "type": "voice.changed", "payload": snapshot})
+            except Exception:
+                self._metadata_connections.discard(connection)
 
     def metadata_changed(self, metadata):
         if self._event_loop is not None and not self._event_loop.is_closed():
@@ -53,6 +67,17 @@ class ProductionSidecar(MockSidecar):
 
     async def dispatch(self, connection, message):
         kind = message["type"]
+        if kind in {"voice.get.request", "voice.stop.request"}:
+            self._event_loop = asyncio.get_running_loop()
+            self._metadata_connections.add(connection)
+            if kind == "voice.stop.request":
+                result = self.composition.voice.stop(message["payload"]["target_generation_id"])
+            else:
+                result = self.composition.voice.snapshot()
+            await self.send(connection, {"protocol": "aurora-ipc", "version": 1,
+                "type": kind.replace("request", "response"), "request_id": message["request_id"],
+                "payload": result})
+            return
         if kind not in {"settings.get.request", "settings.update.request"}:
             return await super().dispatch(connection, message)
         self._event_loop = asyncio.get_running_loop()
@@ -66,6 +91,8 @@ class ProductionSidecar(MockSidecar):
                     message["payload"]["patch"], message["payload"]["expected_revision"])
                 response_type = "settings.update.response"
                 LOGGER.info("event=settings_updated revision=%s count=%s", result["revision"], len(result["changed_keys"]))
+                if any(key.startswith("voice.") for key in result["changed_keys"]):
+                    self.composition.voice.settings_changed()
             await self.send(connection, {"protocol": "aurora-ipc", "version": 1, "type": response_type,
                 "request_id": message["request_id"], "payload": result})
             if kind == "settings.update.request" and result["changed_keys"]:
@@ -148,14 +175,17 @@ class ProductionSidecar(MockSidecar):
                                   envelope=message)
 
     async def cancel_all(self):
+        self.composition.voice.stop()
         self.composition.post_turn.close()
         await self.chat.close()
+        await asyncio.to_thread(self.composition.voice.close)
 
     async def handle_connection(self, connection):
         try:
             await super().handle_connection(connection)
         finally:
             self._metadata_connections.discard(connection)
+            self.composition.voice.stop(connection=connection)
             await self.chat.close(connection)
 
 

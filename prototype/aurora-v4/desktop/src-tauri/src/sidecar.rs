@@ -38,7 +38,7 @@ use crate::{
 
 const STARTUP_TIMEOUT: Duration = Duration::from_secs(10);
 const HANDSHAKE_TIMEOUT: Duration = Duration::from_secs(5);
-const SHUTDOWN_GRACE: Duration = Duration::from_millis(300);
+const SHUTDOWN_GRACE: Duration = Duration::from_secs(6);
 const WRITER_CAPACITY: usize = 32;
 
 #[derive(Debug)]
@@ -53,6 +53,7 @@ struct SidecarLaunch {
 struct BackendData {
     state: BackendState,
     info: BackendInfo,
+    voice: Option<crate::voice::Snapshot>,
     epoch: u64,
     startup_cancel: Arc<AtomicBool>,
     child: Option<Arc<Mutex<Child>>>,
@@ -76,6 +77,7 @@ impl BackendData {
         Self {
             state: BackendState::Stopped,
             info: BackendInfo::default(),
+            voice: None,
             epoch: 0,
             startup_cancel: Arc::new(AtomicBool::new(false)),
             child: None,
@@ -140,6 +142,7 @@ impl BackendManager {
             state: data.state,
             metrics: data.metrics.clone(),
             info: data.info.clone(),
+            voice: data.voice.clone(),
         };
         drop(data);
         self.emit(FrontendEvent::BackendState {
@@ -156,6 +159,7 @@ impl BackendManager {
             state: data.state,
             metrics: data.metrics.clone(),
             info: data.info.clone(),
+            voice: data.voice.clone(),
         }
     }
 
@@ -176,6 +180,7 @@ impl BackendManager {
                 return Ok(());
             }
             data.epoch += 1;
+            data.voice = None;
             epoch = data.epoch;
             data.startup_cancel.store(true, Ordering::SeqCst);
             startup_cancel = Arc::new(AtomicBool::new(false));
@@ -206,6 +211,7 @@ impl BackendManager {
                 return Err("Backend startup was superseded.".into());
             }
             data.state = BackendState::Disconnected;
+            data.voice = None;
             data.info.error_code = Some("BACKEND_START_FAILED".into());
             data.writer = None;
             data.child = None;
@@ -538,6 +544,16 @@ impl BackendManager {
         self.send_value(conversation_list(&format!("conversation-list-{}", Uuid::new_v4().simple()))).await
     }
 
+    pub async fn voice_get(&self) -> Result<(), String> {
+        if self.mode != "production" { return Err("VOICE_UNAVAILABLE".into()); }
+        self.send_value(crate::voice::get(&format!("voice-get-{}", Uuid::new_v4().simple()))).await
+    }
+
+    pub async fn voice_stop(&self, generation_id: String) -> Result<(), String> {
+        if self.mode != "production" { return Err("VOICE_UNAVAILABLE".into()); }
+        self.send_value(crate::voice::stop(&format!("voice-stop-{}", Uuid::new_v4().simple()), &generation_id)?).await
+    }
+
     pub async fn settings_get(&self) -> Result<(), String> {
         self.send_value(crate::settings::get(&format!("settings-get-{}", Uuid::new_v4().simple()))).await
     }
@@ -627,6 +643,7 @@ impl BackendManager {
             data.startup_cancel.store(true, Ordering::SeqCst);
             data.state = BackendState::Stopping;
             data.epoch += 1;
+            data.voice = None;
             let writer = data.writer.take();
             let child = data.child.take();
             let job = data.job.take();
@@ -637,16 +654,16 @@ impl BackendManager {
         if should_emit {
             self.emit_state().await;
         }
-        if let Some(supervisor) = &self.local_model { supervisor.shutdown().await; }
         if let Some(writer) = writer {
             let request_id = format!("shutdown-{}", Uuid::new_v4().simple());
             let _ = writer
                 .send(Message::Text(shutdown(&request_id).to_string().into()))
                 .await;
-            tokio::time::sleep(SHUTDOWN_GRACE).await;
         }
         if let Some(child) = child {
             let mut child = child.lock().await;
+            // Allow Python to stop audio and join request cleanup first.
+            let _ = timeout(SHUTDOWN_GRACE, child.wait()).await;
             if child
                 .try_wait()
                 .map_err(|error| error.to_string())?
@@ -656,6 +673,7 @@ impl BackendManager {
                 let _ = timeout(Duration::from_secs(3), child.wait()).await;
             }
         }
+        if let Some(supervisor) = &self.local_model { supervisor.shutdown().await; }
         drop(job);
         let mut data = self.inner.lock().await;
         data.state = BackendState::Stopped;
@@ -686,6 +704,15 @@ impl BackendManager {
             return Err("STALE_CONNECTION".into());
         }
         match message_type {
+            "voice.get.response" | "voice.stop.response" | "voice.changed" => {
+                let snapshot = crate::voice::Snapshot::from_wire(value["payload"].clone())?;
+                let mut data = self.inner.lock().await;
+                if data.epoch != epoch { return Err("STALE_CONNECTION".into()); }
+                if data.voice.as_ref().is_some_and(|old| old.revision >= snapshot.revision) { return Ok(()); }
+                data.voice = Some(snapshot.clone());
+                drop(data);
+                self.emit(FrontendEvent::VoiceState { snapshot });
+            }
             "settings.get.response" => {
                 let request_id = require_string(&value, "request_id", None)?.to_owned();
                 let snapshot = crate::settings::Snapshot::from_wire(value["payload"].clone())?;
@@ -911,6 +938,7 @@ impl BackendManager {
             }
             data.state = BackendState::Disconnected;
             data.info.chat_enabled = false;
+            data.voice = None;
             data.writer = None;
             data.sidecar_instance_id = None;
             data.request_started.clear();
@@ -1155,6 +1183,26 @@ impl JobGuard {
 
 #[cfg(test)]
 mod tests {
+    #[tokio::test]
+    async fn voice_gateway_rejects_stale_revision_epoch_and_private_fields() {
+        let manager = BackendManager::with_mode("production".into());
+        let event = serde_json::json!({"protocol":"aurora-ipc", "version":1,
+            "type":"voice.changed", "payload":{"revision":3,"state":"speaking",
+            "enabled":true,"provider":"edge_tts","generation_id":"g2","error_code":""}});
+        manager.handle_wire(0, &event.to_string()).await.unwrap();
+        assert_eq!(manager.snapshot().await.voice.unwrap().generation_id.as_deref(), Some("g2"));
+        let mut stale = event.clone();
+        stale["payload"]["revision"] = serde_json::json!(2);
+        stale["payload"]["generation_id"] = serde_json::json!("g1");
+        manager.handle_wire(0, &stale.to_string()).await.unwrap();
+        assert_eq!(manager.snapshot().await.voice.unwrap().revision, 3);
+        assert!(manager.handle_wire(1, &event.to_string()).await.is_err());
+        stale["payload"]["endpoint"] = serde_json::json!("private");
+        assert!(manager.handle_wire(0, &stale.to_string()).await.is_err());
+        manager.inner.lock().await.state = BackendState::Ready;
+        manager.shutdown().await.unwrap();
+        assert!(manager.snapshot().await.voice.is_none());
+    }
     use super::*;
     use serde_json::json;
 

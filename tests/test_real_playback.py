@@ -128,3 +128,20 @@ def test_unavailable_pygame_emits_failed_event_without_raising(tmp_path):
     controller.play(SpeechResult(audio_path=str(audio_path)))
 
     assert events[0].event_type is PlaybackEventType.FAILED
+
+
+def test_stop_and_shutdown_join_monitor_before_reusing_mixer(tmp_path):
+    audio_path = tmp_path / "sample.mp3"
+    audio_path.write_bytes(b"fake mp3")
+    music = FakeMusic(busy_sequence=[True] * 100)
+    controller = RealPlaybackController(mixer=FakeMixer(music), poll_interval=0.01)
+    controller.play(SpeechResult(audio_path=str(audio_path)))
+    monitors = tuple(controller._monitors)
+    assert monitors
+    controller.stop()
+    controller.wait_stopped()
+    assert not any(thread.is_alive() for thread in monitors)
+    assert not controller._monitors
+    controller.shutdown()
+    controller.shutdown()
+    assert not controller.is_playing()

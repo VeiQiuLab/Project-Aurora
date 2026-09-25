@@ -258,7 +258,8 @@ exposing it to the frontend.
 
 ## Reserved Voice/PCM extension
 
-V1 implements no voice command or binary audio transport. Future voice
+V4-1 originally reserved Voice; V4-6B adds metadata-only status/stop below,
+but still implements no binary audio transport. Future PCM
 negotiation will introduce JSON metadata containing `generation_id`,
 `stream_id`, `sample_rate`, `channels`, and `sample_format`, followed by binary
 frames that carry a bounded header able to associate bytes with `stream_id`.
@@ -302,3 +303,40 @@ and [the complete ownership/runtime audit](../docs/V4_5A_SETTINGS_AUDIT.md).
 three ordered deltas and completion, cancellation with cancelled terminal,
 backend failure, and a Rust-synthesized backend-lost terminal. All text and IDs
 are synthetic.
+
+### V4-6B completed-turn Voice extension (still v1)
+
+Production advertises `voice.ipc=true`; `streaming_pcm` and `cosyvoice_local`
+remain false. Python calls the existing TTSRouter after a successful Chat
+terminal, and owns file-backed playback. No audio or TTS text crosses this IPC.
+
+- `voice.get.request`: `{}`; reply `voice.get.response` with the snapshot below.
+- `voice.stop.request`: `{ "target_generation_id": "existing-chat-generation" }`;
+  reply `voice.stop.response` with the authoritative snapshot.
+- `voice.changed`: unsolicited snapshot event, without request_id.
+
+Requests/responses carry request_id, but no envelope session/generation/seq.
+Snapshot fields (no additional fields permitted):
+
+| Field | Values |
+| --- | --- |
+| revision | Nonnegative safe integer, process-local |
+| state | idle / preparing / speaking / stopping / error |
+| enabled | Boolean, voice and playback settings both enabled |
+| provider | empty / edge_tts / remote_cosyvoice / fake |
+| generation_id | Existing Chat generation ID or null |
+| error_code | Empty except in error state |
+
+Safe error codes: VOICE_UNAVAILABLE, SYNTHESIS_FAILED, PLAYBACK_FAILED,
+VOICE_TIMEOUT, INVALID_VOICE_SETTINGS. Raw provider exceptions, endpoint,
+audio paths, worker identity and secrets are never forwarded.
+Rust drops old transport epochs and non-increasing revisions; frontend also
+drops stale revisions and resets on disconnect. Reconnect requests a fresh
+snapshot. Stop targets the current generation; stale stops are harmless.
+Voice Stop does not change Chat's terminal/history. Chat cancel suppresses
+that generation's future Voice scheduling. This is not a PCM framing protocol.
+
+Five descriptors use the existing settings authority and patch transaction:
+`voice.enabled`, `voice.playback.enabled`, `voice.tts.provider`,
+`voice.tts.voice`, `voice.tts.timeout_seconds`. Voice changes stop current speech
+and take effect next turn. Remote endpoint remains backend-private.

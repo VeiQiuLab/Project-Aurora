@@ -13,7 +13,7 @@ provider name or from files on disk.
   "knowledge": true,
   "rag": true,
   "voice": {
-    "ipc": false,
+    "ipc": true,
     "edge_tts": true,
     "cosyvoice_remote": true,
     "cosyvoice_local": false,
@@ -26,15 +26,16 @@ Top-level booleans mean the feature is callable through the v1 gateway in the
 current runtime. A false value may mean unsupported, disabled, or unavailable;
 health details may later distinguish those cases.
 
-`voice.ipc` gates all voice operations. The remaining voice booleans are an
-inventory for migration planning until `voice.ipc` becomes true. They do not
-make a v1 `voice.*` command legal. Stable Aurora implements Edge TTS and Remote
+`voice.ipc` gates all voice operations. V4-6B production enables metadata-only
+Voice status/stop commands and completed-turn playback in Python. Provider
+flags describe implementation support, not current network/device readiness.
+Mock mode keeps `voice.ipc=false`. Stable Aurora implements Edge TTS and Remote
 CosyVoice providers, so a compatible sidecar build may report those as true.
 There is no LocalCosyVoiceProvider; `cosyvoice_local` must be false. The mere
 existence of a reserved router name is not a capability.
 
 `streaming_pcm` refers specifically to binary PCM across the v4 sidecar IPC,
-not to Python's existing internal playback pipeline. It remains false in V4-1.
+not to Python's existing internal playback pipeline. It remains false in V4-6B.
 
 ## Negotiated limits
 

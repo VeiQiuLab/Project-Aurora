@@ -95,6 +95,7 @@ class ProductionComposition:
         self._conversations = None
         self._context = None
         self.post_turn = None
+        self.voice = None
         self.diagnostics = {}
         self.state = "DEGRADED"
         self.closed = False
@@ -135,7 +136,7 @@ class ProductionComposition:
             "settings": {"read": True, "update": True, "ui": False},
             "conversation": {"list": True, "get": True, "create": True, "save": True},
             "memory": False, "knowledge": False, "rag": False,
-            "voice": {"ipc": False,
+            "voice": {"ipc": True,
                       "edge_tts": exists("modules/experience/voice/providers/edge_tts.py"),
                       "cosyvoice_remote": exists("modules/experience/voice/providers/remote_cosyvoice.py"),
                       "cosyvoice_local": False, "streaming_pcm": False},
@@ -176,6 +177,8 @@ class ProductionComposition:
 
     def close(self):
         self.closed = True
+        if self.voice is not None:
+            self.voice.close()
         if self.post_turn is not None:
             self.post_turn.close()
         elif self.local_provider is not None:

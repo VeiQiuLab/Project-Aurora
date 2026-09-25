@@ -109,3 +109,12 @@ py -3.12 -m venv .venv
 The server isn't intended to be started by hand. Rust supplies its bootstrap
 environment, supervises it, and places it in a kill-on-close Windows Job Object
 so an abnormal desktop exit cannot orphan the Python child.
+
+## V4-6B optional Voice
+
+Production now integrates the existing Python TTSRouter after successful Chat
+completion. Voice settings still use the single project SettingsManager.
+The optional Edge/pygame dependencies are already declared in the root
+`requirements.txt` / `requirements-voice.lock.txt`; this stage adds no dependency
+family. Missing dependencies report a Voice-only error, not Chat failure.
+See [V4-6B ownership, lifecycle and validation](../docs/V4_6B_VOICE.md).

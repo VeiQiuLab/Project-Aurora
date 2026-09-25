@@ -15,6 +15,7 @@ import { ownsChatEvent, consumeDelta, chatErrorLabel, chatDiagnosticLabel } from
 import "./styles.css";
 import { type SettingsEvent } from "./settings_state";
 import { SettingsPanel } from "./settings_panel";
+import { VoiceState, type VoiceSnapshot } from "./voice_state";
 const settingsPanel = new SettingsPanel(invoke);
 
 type BackendState =
@@ -38,6 +39,7 @@ interface PrototypeMetrics {
 }
 
 interface BackendSnapshot {
+  voice: VoiceSnapshot | null;
   state: BackendState;
   metrics: PrototypeMetrics;
   info: BackendInfo;
@@ -65,6 +67,7 @@ interface ChatStartResult {
 }
 
 type GatewayEvent =
+  | { type: "voice_state"; snapshot: VoiceSnapshot }
   | SettingsEvent
   | { type: "backend_state"; state: BackendState; metrics: PrototypeMetrics; info: BackendInfo }
   | { type: "chat_accepted"; requestId: string; generationId: string; ipcReceivedUnixMs: number | null }
@@ -165,6 +168,30 @@ const crashButton = getElement<HTMLButtonElement>("crash-backend");
 const backendStatus = getElement<HTMLElement>("backend-status");
 const backendStatusText = getElement<HTMLElement>("backend-status-text");
 const reducedEffects = getElement<HTMLInputElement>("reduced-effects");
+const voiceState = new VoiceState();
+const voiceStatus = getElement<HTMLElement>("voice-status");
+const voiceStop = getElement<HTMLButtonElement>("voice-stop");
+let voiceConnected = false;
+let voiceStopPending = false;
+const renderVoice = () => {
+  voiceStatus.textContent = voiceState.label;
+  voiceStop.disabled = !voiceConnected || voiceStopPending || !voiceState.stopTarget;
+};
+voiceStop.addEventListener("click", () => {
+  const generationId = voiceState.stopTarget;
+  if (!generationId || voiceStopPending) return;
+  voiceStopPending = true; renderVoice();
+  void invoke("voice_stop", { generationId }).catch(() => {
+    voiceStatus.textContent = "停止语音未送达，请检查连接";
+  }).finally(() => { voiceStopPending = false; renderVoice(); });
+});
+const voiceBackend = (available: boolean) => {
+  const changed = available !== voiceConnected;
+  voiceConnected = available;
+  if (!available) { voiceState.reset(); voiceStopPending = false; }
+  if (available && changed) void invoke("voice_get").catch(() => { voiceState.reset(); renderVoice(); });
+  renderVoice();
+};
 
 let backendState: BackendState = "STARTING";
 let backendInfo: BackendInfo = { mode: "mock", chat_enabled: false, diagnostics: null, error_code: null };
@@ -460,6 +487,10 @@ const applyConversationEvent = (event: GatewayEvent): boolean => {
 };
 
 const applyGatewayEvent = (event: GatewayEvent): void => {
+  if (event.type === "voice_state") {
+    if (voiceConnected) { voiceState.accept(event.snapshot); renderVoice(); }
+    return;
+  }
   if (event.type === "settings_snapshot" || event.type === "settings_updated" ||
       event.type === "settings_changed" || event.type === "settings_error") {
     settingsPanel.accept(event);
@@ -467,6 +498,7 @@ const applyGatewayEvent = (event: GatewayEvent): void => {
   }
   if (applyConversationEvent(event)) return;
   if (event.type === "backend_state") {
+    voiceBackend(event.info.mode === "production" && ["READY", "DEGRADED"].includes(event.state));
     productionConversationMode = event.info.mode === "production";
     if (!productionConversationMode) conversationListRequested = false;
     updateBackendInfo(event.info);
@@ -663,7 +695,7 @@ bindTitlebar(getElement("titlebar"), () => desktopWindow.startDragging(),
   () => invokeWindowAction("toggle_maximize"), (error) => console.error("Window titlebar action failed", error));
 const appearance = bindGlass(getElement<HTMLInputElement>("glass-intensity"), reducedEffects, getElement("glass-status"));
 void invoke("set_reduced_effects", { enabled: appearance.store.value.lowGpu }).catch(() => {});
-observeComposer(getElement("composer"), messageViewport);
+observeComposer(getElement("composer-wrap"), messageViewport);
 const showSettings = (show: boolean) => {
   getElement("settings-pane").hidden = !show; getElement("chat-pane").hidden = show;
   getElement("open-settings").setAttribute("aria-expanded", String(show));
@@ -793,6 +825,8 @@ const initialize = async (): Promise<void> => {
     channel: gatewayChannel,
   });
   updateBackendInfo(snapshot.info);
+  voiceBackend(snapshot.info.mode === "production" && ["READY", "DEGRADED"].includes(snapshot.state));
+  if (voiceConnected && snapshot.voice) { voiceState.accept(snapshot.voice); renderVoice(); }
   updateBackendState(snapshot.state);
   updateMetrics(snapshot.metrics);
   productionConversationMode = snapshot.info.mode === "production";

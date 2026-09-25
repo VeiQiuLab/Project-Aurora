@@ -346,6 +346,80 @@
           "max": null,
           "label_id": "settings.context.warning_tokens",
           "value_valid": true
+        },
+        {
+          "key": "voice.enabled",
+          "type": "boolean",
+          "value": false,
+          "default": false,
+          "mutable": true,
+          "restart_required": false,
+          "apply": "next_request",
+          "options": null,
+          "min": null,
+          "max": null,
+          "label_id": "settings.voice.enabled",
+          "value_valid": true
+        },
+        {
+          "key": "voice.playback.enabled",
+          "type": "boolean",
+          "value": true,
+          "default": true,
+          "mutable": true,
+          "restart_required": false,
+          "apply": "next_request",
+          "options": null,
+          "min": null,
+          "max": null,
+          "label_id": "settings.voice.playback.enabled",
+          "value_valid": true
+        },
+        {
+          "key": "voice.tts.provider",
+          "type": "string",
+          "value": "edge_tts",
+          "default": "edge_tts",
+          "mutable": true,
+          "restart_required": false,
+          "apply": "next_request",
+          "options": [
+            "edge_tts",
+            "remote_cosyvoice",
+            "fake"
+          ],
+          "min": null,
+          "max": null,
+          "label_id": "settings.voice.tts.provider",
+          "value_valid": true
+        },
+        {
+          "key": "voice.tts.voice",
+          "type": "string",
+          "value": "zh-CN-XiaoxiaoNeural",
+          "default": "zh-CN-XiaoxiaoNeural",
+          "mutable": true,
+          "restart_required": false,
+          "apply": "next_request",
+          "options": null,
+          "min": null,
+          "max": null,
+          "label_id": "settings.voice.tts.voice",
+          "value_valid": true
+        },
+        {
+          "key": "voice.tts.timeout_seconds",
+          "type": "number",
+          "value": 30,
+          "default": 30,
+          "mutable": true,
+          "restart_required": false,
+          "apply": "next_request",
+          "options": null,
+          "min": 0.1,
+          "max": 120,
+          "label_id": "settings.voice.tts.timeout_seconds",
+          "value_valid": true
         }
       ]
     }

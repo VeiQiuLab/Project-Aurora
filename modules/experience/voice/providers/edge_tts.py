@@ -81,7 +81,7 @@ class EdgeTTSProvider(TextToSpeechProvider):
             try:
                 output_path = self._allocate_output_path()
                 communicator = factory(text, voice=voice, rate=rate)
-                self._run_save(communicator, output_path, timeout_seconds)
+                self._run_save(communicator, output_path, timeout_seconds, cancel_event)
                 if cancel_event is not None and cancel_event.is_set():
                     self._remove_output(output_path)
                     return self._failure("cancelled", "speech synthesis was cancelled", metrics={"attempts": attempts})
@@ -103,6 +103,9 @@ class EdgeTTSProvider(TextToSpeechProvider):
                     },
                 )
                 return SpeechResult(audio_path=str(output_path), mime_type="audio/mpeg", diagnostics=diagnostics)
+            except InterruptedError:
+                self._remove_output(output_path)
+                return self._failure("cancelled", "speech synthesis was cancelled", metrics={"attempts": attempts})
             except asyncio.TimeoutError as error:
                 last_reason, last_message, last_warning = "timeout", "Edge TTS synthesis timed out", type(error).__name__
                 self._remove_output(output_path)
@@ -112,7 +115,12 @@ class EdgeTTSProvider(TextToSpeechProvider):
             if attempt < self.max_retries:
                 if cancel_event is not None and cancel_event.is_set():
                     return self._failure("cancelled", "speech synthesis was cancelled", metrics={"attempts": attempts})
-                time.sleep(self.retry_delay_seconds * (attempt + 1))
+                delay = self.retry_delay_seconds * (attempt + 1)
+                if cancel_event is not None:
+                    if cancel_event.wait(delay):
+                        return self._failure("cancelled", "speech synthesis was cancelled", metrics={"attempts": attempts})
+                else:
+                    time.sleep(delay)
         return self._failure(
             last_reason,
             last_message,
@@ -143,13 +151,24 @@ class EdgeTTSProvider(TextToSpeechProvider):
         return Path(path)
 
     @staticmethod
-    def _run_save(communicator: Any, output_path: Path, timeout_seconds: float | None) -> None:
+    def _run_save(communicator: Any, output_path: Path, timeout_seconds: float | None,
+                  cancel_event: Event | None = None) -> None:
         async def save():
-            operation = communicator.save(str(output_path))
-            if timeout_seconds is None:
+            operation = asyncio.create_task(communicator.save(str(output_path)))
+            deadline = None if timeout_seconds is None else time.monotonic() + timeout_seconds
+            try:
+                while not operation.done():
+                    if cancel_event is not None and cancel_event.is_set():
+                        raise InterruptedError("speech synthesis was cancelled")
+                    if deadline is not None and time.monotonic() >= deadline:
+                        raise asyncio.TimeoutError()
+                    await asyncio.wait({operation}, timeout=.02)
                 await operation
-            else:
-                await asyncio.wait_for(operation, timeout=timeout_seconds)
+            finally:
+                if not operation.done():
+                    operation.cancel()
+                # Await async context cleanup, including edge-tts' HTTP session.
+                await asyncio.gather(operation, return_exceptions=True)
 
         asyncio.run(save())
 

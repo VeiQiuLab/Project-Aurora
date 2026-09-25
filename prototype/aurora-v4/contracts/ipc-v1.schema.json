@@ -4,6 +4,11 @@
   "title": "Project Aurora IPC v1",
   "description": "Bootstrap object and authenticated WebSocket JSON envelopes for Aurora IPC v1.",
   "oneOf": [
+    {"$ref": "#/$defs/voiceGetRequest"},
+    {"$ref": "#/$defs/voiceGetResponse"},
+    {"$ref": "#/$defs/voiceStopRequest"},
+    {"$ref": "#/$defs/voiceStopResponse"},
+    {"$ref": "#/$defs/voiceChanged"},
     {"$ref": "#/$defs/settings_get_request"},
     {"$ref": "#/$defs/settings_get_response"},
     {"$ref": "#/$defs/settings_update_request"},
@@ -34,6 +39,212 @@
     {"$ref": "#/$defs/error"}
   ],
   "$defs": {
+  "voiceSnapshot": {
+    "type": "object",
+    "additionalProperties": false,
+    "required": [
+      "revision",
+      "state",
+      "enabled",
+      "provider",
+      "generation_id",
+      "error_code"
+    ],
+    "properties": {
+      "revision": {
+        "type": "integer",
+        "minimum": 0,
+        "maximum": 9007199254740991
+      },
+      "state": {
+        "enum": [
+          "idle",
+          "preparing",
+          "speaking",
+          "stopping",
+          "error"
+        ]
+      },
+      "enabled": {
+        "type": "boolean"
+      },
+      "provider": {
+        "enum": [
+          "",
+          "edge_tts",
+          "remote_cosyvoice",
+          "fake"
+        ]
+      },
+      "generation_id": {
+        "anyOf": [
+          {
+            "type": "null"
+          },
+          {
+            "$ref": "#/$defs/opaqueId"
+          }
+        ]
+      },
+      "error_code": {
+        "enum": [
+          "",
+          "VOICE_UNAVAILABLE",
+          "SYNTHESIS_FAILED",
+          "PLAYBACK_FAILED",
+          "VOICE_TIMEOUT",
+          "INVALID_VOICE_SETTINGS"
+        ]
+      }
+    },
+    "allOf": [
+      {
+        "if": {
+          "properties": {
+            "state": {
+              "const": "error"
+            }
+          }
+        },
+        "then": {
+          "properties": {
+            "error_code": {
+              "minLength": 1
+            }
+          }
+        },
+        "else": {
+          "properties": {
+            "error_code": {
+              "const": ""
+            }
+          }
+        }
+      }
+    ]
+  },
+  "voiceGetRequest": {
+    "allOf": [
+      {
+        "$ref": "#/$defs/baseEnvelope"
+      },
+      {
+        "$ref": "#/$defs/noRequestContext"
+      },
+      {
+        "required": [
+          "request_id"
+        ],
+        "properties": {
+          "type": {
+            "const": "voice.get.request"
+          },
+          "payload": {
+            "type": "object",
+            "maxProperties": 0
+          }
+        }
+      }
+    ]
+  },
+  "voiceGetResponse": {
+    "allOf": [
+      {
+        "$ref": "#/$defs/baseEnvelope"
+      },
+      {
+        "$ref": "#/$defs/noRequestContext"
+      },
+      {
+        "required": [
+          "request_id"
+        ],
+        "properties": {
+          "type": {
+            "const": "voice.get.response"
+          },
+          "payload": {
+            "$ref": "#/$defs/voiceSnapshot"
+          }
+        }
+      }
+    ]
+  },
+  "voiceStopRequest": {
+    "allOf": [
+      {
+        "$ref": "#/$defs/baseEnvelope"
+      },
+      {
+        "$ref": "#/$defs/noRequestContext"
+      },
+      {
+        "required": [
+          "request_id"
+        ],
+        "properties": {
+          "type": {
+            "const": "voice.stop.request"
+          },
+          "payload": {
+            "type": "object",
+            "required": [
+              "target_generation_id"
+            ],
+            "properties": {
+              "target_generation_id": {
+                "$ref": "#/$defs/opaqueId"
+              }
+            },
+            "additionalProperties": false
+          }
+        }
+      }
+    ]
+  },
+  "voiceStopResponse": {
+    "allOf": [
+      {
+        "$ref": "#/$defs/baseEnvelope"
+      },
+      {
+        "$ref": "#/$defs/noRequestContext"
+      },
+      {
+        "required": [
+          "request_id"
+        ],
+        "properties": {
+          "type": {
+            "const": "voice.stop.response"
+          },
+          "payload": {
+            "$ref": "#/$defs/voiceSnapshot"
+          }
+        }
+      }
+    ]
+  },
+  "voiceChanged": {
+    "allOf": [
+      {
+        "$ref": "#/$defs/baseEnvelope"
+      },
+      {
+        "$ref": "#/$defs/noIdentifiers"
+      },
+      {
+        "properties": {
+          "type": {
+            "const": "voice.changed"
+          },
+          "payload": {
+            "$ref": "#/$defs/voiceSnapshot"
+          }
+        }
+      }
+    ]
+  },
   "settings_get_request": {
     "type": "object",
     "additionalProperties": false,
@@ -110,8 +321,8 @@
           },
           "descriptors": {
             "type": "array",
-            "minItems": 23,
-            "maxItems": 23,
+            "minItems": 28,
+            "maxItems": 28,
             "items": {
               "type": "object",
               "additionalProperties": false,
@@ -154,7 +365,12 @@
                     "rag.enable_optimization",
                     "rag.context_budget",
                     "rag.reserved_output",
-                    "context.warning_tokens"
+                    "context.warning_tokens",
+                    "voice.enabled",
+                    "voice.playback.enabled",
+                    "voice.tts.provider",
+                    "voice.tts.voice",
+                    "voice.tts.timeout_seconds"
                   ]
                 },
                 "type": {
@@ -278,7 +494,7 @@
           },
           "patch": {
             "type": "object",
-            "maxProperties": 23,
+            "maxProperties": 28,
             "propertyNames": {
               "maxLength": 128,
               "minLength": 1
@@ -340,7 +556,7 @@
           },
           "changed_keys": {
             "type": "array",
-            "maxItems": 23,
+            "maxItems": 28,
             "uniqueItems": true,
             "items": {
               "enum": [
@@ -366,13 +582,18 @@
                 "rag.enable_optimization",
                 "rag.context_budget",
                 "rag.reserved_output",
-                "context.warning_tokens"
+                "context.warning_tokens",
+                "voice.enabled",
+                "voice.playback.enabled",
+                "voice.tts.provider",
+                "voice.tts.voice",
+                "voice.tts.timeout_seconds"
               ]
             }
           },
           "restart_required_keys": {
             "type": "array",
-            "maxItems": 23,
+            "maxItems": 28,
             "uniqueItems": true,
             "items": {
               "enum": [
@@ -398,7 +619,12 @@
                 "rag.enable_optimization",
                 "rag.context_budget",
                 "rag.reserved_output",
-                "context.warning_tokens"
+                "context.warning_tokens",
+                "voice.enabled",
+                "voice.playback.enabled",
+                "voice.tts.provider",
+                "voice.tts.voice",
+                "voice.tts.timeout_seconds"
               ]
             }
           }
@@ -446,7 +672,7 @@
           },
           "changed_keys": {
             "type": "array",
-            "maxItems": 23,
+            "maxItems": 28,
             "uniqueItems": true,
             "items": {
               "enum": [
@@ -472,13 +698,18 @@
                 "rag.enable_optimization",
                 "rag.context_budget",
                 "rag.reserved_output",
-                "context.warning_tokens"
+                "context.warning_tokens",
+                "voice.enabled",
+                "voice.playback.enabled",
+                "voice.tts.provider",
+                "voice.tts.voice",
+                "voice.tts.timeout_seconds"
               ]
             }
           },
           "restart_required_keys": {
             "type": "array",
-            "maxItems": 23,
+            "maxItems": 28,
             "uniqueItems": true,
             "items": {
               "enum": [
@@ -504,7 +735,12 @@
                 "rag.enable_optimization",
                 "rag.context_budget",
                 "rag.reserved_output",
-                "context.warning_tokens"
+                "context.warning_tokens",
+                "voice.enabled",
+                "voice.playback.enabled",
+                "voice.tts.provider",
+                "voice.tts.voice",
+                "voice.tts.timeout_seconds"
               ]
             }
           }
@@ -843,7 +1079,7 @@
         "streaming_pcm"
       ],
       "properties": {
-        "ipc": {"const": false},
+        "ipc": {"type": "boolean"},
         "edge_tts": {"type": "boolean"},
         "cosyvoice_remote": {"type": "boolean"},
         "cosyvoice_local": {"const": false},

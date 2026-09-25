@@ -3,6 +3,9 @@ import { SettingsState, type SettingDescriptor, type SettingValue, type Settings
 // Labels and grouping only. Types, options, limits, values and mutability belong
 // exclusively to the production descriptors.
 const labels: Record<string, string> = {
+  "voice.enabled": "回复后自动朗读", "voice.playback.enabled": "播放语音",
+  "voice.tts.provider": "语音服务", "voice.tts.voice": "Edge 音色",
+  "voice.tts.timeout_seconds": "语音请求超时（秒）",
   "ollama.host": "旧服务地址", "ollama.thinking_mode": "思考模式", "ollama.keep_alive": "模型驻留时间",
   chat_model: "旧聊天模型配置", chat_model_mode: "聊天模型选择", embedding_model: "嵌入模型配置",
   embedding_model_mode: "嵌入模型选择", resolved_chat_model: "旧服务解析的聊天模型", resolved_embedding_model: "旧服务解析的嵌入模型",
@@ -11,7 +14,8 @@ const labels: Record<string, string> = {
   "rag.pipeline_enabled": "检索增强流程", "rag.enable_dedup": "去除重复内容", "rag.enable_ranking": "相关性排序", "rag.enable_optimization": "优化上下文",
   "rag.context_budget": "上下文预算", "rag.reserved_output": "预留输出空间", "context.warning_tokens": "上下文提醒阈值",
 };
-const optionLabels: Record<string, string> = { on: "开启", off: "关闭", default: "跟随服务", auto: "自动", manual: "手动" };
+const optionLabels: Record<string, string> = { on: "开启", off: "关闭", default: "跟随服务", auto: "自动", manual: "手动",
+  edge_tts: "Edge TTS（在线）", remote_cosyvoice: "Remote CosyVoice", fake: "测试 provider（无真实语音）" };
 const errorLabels: Record<string, string> = {
   CONFLICT: "设置已在其他位置改变。你的草稿已保留，请重新载入后再编辑。",
   INVALID_VALUE: "有设置值未通过服务端校验，请检查后重试。", INVALID_SETTING: "当前版本不支持这项设置。",
@@ -120,13 +124,14 @@ export class SettingsPanel {
   }
   private render(descriptors: SettingDescriptor[]) {
     this.fields.replaceChildren();
-    for (const [group, title] of [["models", "旧模型服务"], ["context", "上下文与知识"]]) {
+    for (const [group, title] of [["voice", "语音朗读"], ["models", "旧模型服务"], ["context", "上下文与知识"]]) {
       const section = document.createElement("section"); section.className = "settings-section";
       const heading = document.createElement("h3"); heading.className = "section-header"; heading.textContent = title; section.append(heading);
       for (const d of descriptors) {
         if (!labels[d.key]) continue;
         const model = d.key.startsWith("ollama.") || d.key.includes("model");
-        if (model !== (group === "models")) continue;
+        const category = d.key.startsWith("voice.") ? "voice" : model ? "models" : "context";
+        if (category !== group) continue;
         const row = document.createElement("div"); row.className = "setting-row";
         const label = document.createElement("label"); label.htmlFor = `setting-${d.key}`; label.textContent = labels[d.key];
         const copy = document.createElement("div"); copy.className = "setting-copy";

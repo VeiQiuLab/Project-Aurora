@@ -34,6 +34,11 @@ class SettingsError(ValueError):
 # Bounds for numeric values match SettingsController; caps apply only to wire
 # string/patch sizes, not model loading or product defaults.
 RULES = {
+    "voice.enabled": ("boolean", None, None, None),
+    "voice.playback.enabled": ("boolean", None, None, None),
+    "voice.tts.provider": ("string", ["edge_tts", "remote_cosyvoice", "fake"], None, None),
+    "voice.tts.voice": ("string", None, None, None),
+    "voice.tts.timeout_seconds": ("number", None, 0.1, 120),
     "ollama.host": ("string", None, None, None),
     "ollama.thinking_mode": ("string", ["off", "on", "default"], None, None),
     "ollama.keep_alive": ("nullable_string", None, None, None),
@@ -96,6 +101,8 @@ def validate_value(key, value):
     if choices and value not in choices:
         raise SettingsError("INVALID_VALUE")
     if key == "ollama.host" and not valid_host(value):
+        raise SettingsError("INVALID_VALUE")
+    if key == "voice.tts.voice" and not re.fullmatch(r"[A-Za-z0-9_-]{0,128}", value):
         raise SettingsError("INVALID_VALUE")
     if "model" in key and not key.endswith("_mode") and value:
         if not MODEL_RE.fullmatch(value):
