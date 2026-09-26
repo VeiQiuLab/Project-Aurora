@@ -1,5 +1,10 @@
 # Aurora 3.8 Windows Voice distribution
 
+Historical Tk/3.8 distribution only. After retirement, all package commands in
+this document require explicit `-Legacy`, use `legacy/requirements.txt`, and
+are not the v4 release workflow. Existing codec licensing/integrity requirements
+remain binding on those builds. v4 uses Python TTS plus Rust Audio, not pygame.
+
 ## Two portable builds
 
 | Artifact | Included | External / on demand |

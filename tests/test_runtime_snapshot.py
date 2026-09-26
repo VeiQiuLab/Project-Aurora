@@ -166,7 +166,7 @@ def test_failed_probe_finishes_and_next_check_recovers(store):
 
 def production_voice_gate(store):
     # Compile the actual production boundary, not a parallel fake implementation.
-    tree = ast.parse((ROOT / "main.py").read_text(encoding="utf-8"))
+    tree = ast.parse((ROOT / "legacy/tk_desktop.py").read_text(encoding="utf-8"))
     node = next(node for node in tree.body if isinstance(node, ast.FunctionDef) and node.name == "apply_runtime_voice")
     calls = []
     runtime = SimpleNamespace(close=lambda: calls.append("close") or True)
@@ -220,7 +220,7 @@ def test_production_does_not_create_second_audio_owner_while_old_stopping(store)
 
 
 def test_production_navigation_has_no_complete_settings_route():
-    source = (ROOT / "main.py").read_text(encoding="utf-8")
+    source = (ROOT / "legacy/tk_desktop.py").read_text(encoding="utf-8")
     assert "SettingsWindow(" not in source
     assert "RuntimeDependencyManager(" not in source
     for path in ("widgets/pages/settings_page.py", "widgets/voice_setup_wizard.py", "widgets/first_run_wizard.py", "widgets/components/dependency_center.py"):

@@ -16,7 +16,7 @@ LOCALE_FILES = {
     "en_US": PROJECT_ROOT / "locales" / "en_US.json",
 }
 SCAN_DIRS = [
-    PROJECT_ROOT / "main.py",
+    PROJECT_ROOT / "legacy" / "tk_desktop.py",
     PROJECT_ROOT / "modules",
     PROJECT_ROOT / "widgets",
 ]

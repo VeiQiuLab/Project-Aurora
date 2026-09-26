@@ -33,7 +33,7 @@ def legacy_context(composition, prompt, history):
     from modules.retrieval import retrieval_summary
     names = {"build_conversation_context", "context_warning_tokens", "build_context_package",
              "build_memory_context", "prepare_chat_prompt_context"}
-    tree = ast.parse((ROOT / "main.py").read_text(encoding="utf-8"))
+    tree = ast.parse((ROOT / "legacy/tk_desktop.py").read_text(encoding="utf-8"))
     functions = [node for node in ast.walk(tree) if isinstance(node, ast.FunctionDef) and node.name in names]
     assert len(functions) == len(names)
     namespace = {**vars(api), "settings": composition.settings, "logger": Mock(), "nullcontext": nullcontext,

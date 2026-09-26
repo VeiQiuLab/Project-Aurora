@@ -1,5 +1,24 @@
 # Project Aurora Release Checklist
 
+## Current v4 Desktop release gate
+
+- [ ] Verify branch/HEAD and scoped clean or reviewed worktree.
+- [ ] Run retirement entrypoint/import/data-isolation tests.
+- [ ] Run shared Python and v4 sidecar/contracts regressions; retain legacy tests.
+- [ ] Run Rust/Desktop and frontend tests, compileall, JSON and diff checks.
+- [ ] Build through default `build_exe.ps1` (Tauri Release, no bundle).
+- [ ] Validate root `main.py --check`, no Tk fallback on missing/failed EXE.
+- [ ] Real Release: local 4B, streaming Chat/persistence, Edge/Rust Audio,
+      cancellation and optional Live2D without Tk/pygame initialization.
+- [ ] Verify shutdown leaves no owned processes; do not count mocks as real QA.
+- [ ] Review Python/runtime/model/SDK distribution separately before claiming a
+      standalone installer. Current retirement does not create one.
+- [ ] Confirm no private data, models, SDK binaries, logs or generated artifacts
+      enter Git. Preserve production data and WIP Glass.
+
+The remaining checklist is **historical Tk/v3 packaging guidance**. Use it only
+for explicit `-Legacy` builds; it is not the default v4 release workflow.
+
 This checklist applies to the current Chat-first Windows application. Optional
 Voice validation is separated from the core release gate because text chat must
 remain usable when Voice dependencies or audio hardware are unavailable.

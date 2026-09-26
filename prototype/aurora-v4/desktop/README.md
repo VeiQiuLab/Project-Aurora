@@ -1,7 +1,7 @@
-# Aurora v4 Tauri desktop prototype
+# Aurora v4 Tauri Desktop — official product entrypoint
 
-This is an isolated Windows/Tauri 2 prototype. It does not import or replace
-the stable Tkinter application.
+This is the official Windows/Tauri 2 Desktop. Tk has retired to explicit
+legacy compatibility. The retained directory name is not an alternate product.
 
 The frontend uses native TypeScript and CSS with Vite. The visual base is
 black/grayscale, not window-wide glass. V4-5B unifies Chat, Settings, the overlay
@@ -43,4 +43,8 @@ installation is explicit, through `../runtime/bootstrap.ps1`; no model is
 downloaded. See [Built-in runtime](../docs/V4_6A_LOCAL_RUNTIME.md) for discovery,
 private configuration, lifecycle, validation and limitations. Use
 `AURORA_V4_CHAT_PROVIDER=ollama` explicitly for the legacy service path.
-Voice transport is not connected to the v4 desktop.
+Voice reuses Python TTS orchestration and Rust Audio; optional Native Live2D
+projects existing Chat/Voice state. See the repository README for full source
+setup (root requirements include Edge TTS), runtime configuration and legacy
+isolation. No Tk/pygame fallback is available. Self-contained packaging is not
+introduced by retirement; use `pnpm tauri build --no-bundle` for checkout Release.

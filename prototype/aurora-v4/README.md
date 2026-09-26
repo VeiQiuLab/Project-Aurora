@@ -1,12 +1,12 @@
-# Project Aurora v4 prototype
+# Project Aurora v4 Desktop
 
-This directory isolates Aurora v4 architecture work from the stable Tkinter
-application. Nothing here is imported by the production entry point.
+This is now the official Desktop. The root launcher starts its Tauri Release
+EXE; Tk is explicit legacy-only. See ../../README.md and the retirement audit.
 
 Current V4 desktop production default: Aurora-owned local Vulkan runtime,
 not an external Ollama/LM Studio service. See
 [V4-6A Built-in Local Model Runtime](docs/V4_6A_LOCAL_RUNTIME.md).
-The stage notes below describe historical boundaries; Stable stays unchanged.
+The stage notes below are historical checkpoints, not current launch defaults.
 
 Stage V4-1 froze the first desktop-to-sidecar contract:
 
@@ -55,5 +55,5 @@ From the repository root:
 .\.venv\Scripts\python.exe -m pytest prototype\aurora-v4\contracts\test_ipc_v1_contract.py -q
 ```
 
-The prototype's production adapter is opt-in and leaves the Stable entry point
-unchanged. Voice/PCM IPC remains disabled.
+Current default is the production adapter with built-in local chat and Rust
+Audio. Earlier opt-in/mock-only and Voice-disabled notes describe past stages.

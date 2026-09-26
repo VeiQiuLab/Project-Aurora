@@ -18,8 +18,9 @@ The sidecar never addresses the WebView. Rust validates, normalizes, checks
 request/generation ownership, and only then emits typed frontend events. It is
 not a transparent proxy.
 
-The stable Tkinter application remains unchanged while this prototype is
-developed.
+Tauri v4 is now the official Desktop. The former Tk entrypoint is retained only
+as isolated `legacy.tk_desktop` compatibility; it is never a sidecar dependency
+or fallback. See the root retirement inventory for the current entrypoint gate.
 
 ## Responsibilities
 

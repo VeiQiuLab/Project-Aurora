@@ -1,14 +1,17 @@
 param(
+    [switch]$Legacy,
     [string]$ISCC = "C:\Program Files (x86)\Inno Setup 6\ISCC.exe",
     [string]$Python = ""
 )
 
 $ErrorActionPreference = "Stop"
+if (-not $Legacy) { throw 'This Inno installer is legacy-only. Use build_exe.ps1 for the v4 Release executable; no Tk fallback.' }
 
 $installerRoot = Split-Path -Parent $MyInvocation.MyCommand.Path
 $projectRoot = Split-Path -Parent $installerRoot
 $scriptPath = Join-Path $installerRoot "Aurora.iss"
 $distRoot = Join-Path $projectRoot "dist\Aurora-Core"
+& (Join-Path $projectRoot 'legacy\verify_build.ps1') -DistRoot $distRoot
 
 if ($Python) {
     if (-not (Test-Path -LiteralPath $Python -PathType Leaf)) {
@@ -98,7 +101,7 @@ foreach ($required in @(
 
 Push-Location $installerRoot
 try {
-    & $ISCC "/DMyAppVersion=$releaseVersion" "/DMyAppWindowsVersion=$windowsVersion" $scriptPath
+    & $ISCC '/DAuroraLegacyBuild=1' "/DMyAppVersion=$releaseVersion" "/DMyAppWindowsVersion=$windowsVersion" $scriptPath
 }
 finally {
     Pop-Location

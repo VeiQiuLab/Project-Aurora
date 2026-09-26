@@ -1,5 +1,17 @@
 # Project Aurora Architecture
 
+## Current Desktop architecture
+
+The product entrypoint is now Tauri v4. Rust supervises the Python AI sidecar,
+local Vulkan model runtime, Rust Audio and optional native Live2D. Python remains
+the single settings and conversation owner. Tk is isolated compatibility only;
+see [retirement inventory](TKINTER_RETIREMENT.md) and
+[v4 architecture](../prototype/aurora-v4/ARCHITECTURE.md).
+
+The sections below preserve the **historical Tk/v3 architecture** and shared
+logic rationale; references to production AppShell or Ollama are not current
+Desktop launch instructions.
+
 ## Overview
 
 Project Aurora is a Chat-first, Local-first personal AI companion for Windows.

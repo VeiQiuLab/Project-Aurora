@@ -1,5 +1,10 @@
 # Project Aurora Development Guide
 
+Current entrypoint/setup: [root README](../README.md). Tauri v4 is the only
+official Desktop. This older guide's Tk/AppShell/PyInstaller instructions apply
+only to explicit legacy development; shared AI and privacy guidance remains
+applicable. See [retirement inventory](TKINTER_RETIREMENT.md).
+
 ## Development Scope
 
 Aurora development should be incremental, compatible, and easy to review.

@@ -1,5 +1,17 @@
 # Project Aurora Context
 
+## Current product authority — Tkinter Retirement
+
+The official Desktop is Tauri v4 under `prototype/aurora-v4/desktop`.
+Root `main.py` launches only its EXE; Python sidecar owns AI/settings/persistence,
+Rust owns lifecycle/audio, and optional native Live2D is already integrated.
+Ollama/Tk/pygame are not startup requirements. Legacy Tk is explicit and uses
+`%APPDATA%/Aurora-Legacy`, never production data. See README.md and
+docs/TKINTER_RETIREMENT.md for current entrypoints and the dependency inventory.
+
+Everything below is retained **historical v3 context**, not current product
+entrypoint or release instructions. Shared AI semantics remain valuable.
+
 ## Product Goal
 
 Project Aurora is a Chat-first, Local-first personal AI companion for Windows.

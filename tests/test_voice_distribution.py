@@ -318,7 +318,7 @@ def test_chinese_voice_plan_and_tts_details_are_translated():
 
 def test_runtime_diagnostic_entry_remains_after_instance_gate_before_services():
     root = Path(__file__).resolve().parents[1]
-    source = (root / "main.py").read_text(encoding="utf-8")
+    source = (root / "legacy/tk_desktop.py").read_text(encoding="utf-8")
     assert source.index("single_instance_guard = enforce_single_instance()") < source.index('"--voice-runtime-check"') < source.index("import customtkinter")
     from modules import voice_runtime_check
     source = inspect.getsource(voice_runtime_check)

@@ -1,4 +1,5 @@
 param(
+    [switch]$Legacy,
     [string]$Python = "",
     [switch]$FullVoice,
     [string]$VoiceCodecOverlay = "build\voice-codec-overlay"
@@ -8,6 +9,19 @@ $ErrorActionPreference = "Stop"
 
 $projectRoot = Split-Path -Parent $MyInvocation.MyCommand.Path
 Set-Location $projectRoot
+
+if (-not $Legacy) {
+    if ($Python -or $FullVoice -or $PSBoundParameters.ContainsKey('VoiceCodecOverlay')) {
+        throw 'Python/FullVoice packaging options are legacy-only. Pass -Legacy for historical Tk builds.'
+    }
+    Push-Location (Join-Path $projectRoot 'prototype\aurora-v4\desktop')
+    try {
+        & pnpm tauri build --no-bundle
+        if ($LASTEXITCODE -ne 0) { throw 'Aurora v4 Release build failed; no Tk fallback.' }
+    } finally { Pop-Location }
+    return
+}
+Write-Warning 'LEGACY Tk development package only; data uses Aurora-Legacy. Not the v4 product release.'
 
 if ($Python) {
     if (-not (Test-Path -LiteralPath $Python -PathType Leaf)) {
@@ -91,8 +105,11 @@ if ($FullVoice) {
     Write-Host "FFmpeg/PyAV codec libraries and optional Voice runtimes are not bundled in this Core-only test package."
 }
 
-& $Python -m PyInstaller --noconfirm --clean "Project Aurora.spec"
-$buildExitCode = $LASTEXITCODE
+$env:AURORA_LEGACY_BUILD = '1'
+try {
+    & $Python -m PyInstaller --noconfirm --clean "Project Aurora.spec"
+    $buildExitCode = $LASTEXITCODE
+} finally { $env:AURORA_LEGACY_BUILD = $null }
 $env:AURORA_FULL_VOICE_BUILD = $null
 $env:AURORA_VOICE_CODEC_OVERLAY = $null
 if ($buildExitCode -ne 0) {
@@ -121,6 +138,14 @@ foreach ($required in @(
 }
 
 Write-Host "Build complete: $distRoot\Aurora.exe"
+
+# Historical dist directories may contain a pre-retirement EXE which writes
+# production data. Only freshly built isolated legacy artifacts may be packed.
+@{
+    entrypoint = 'legacy.tk_desktop'
+    data_directory = 'Aurora-Legacy'
+    exe_sha256 = (Get-FileHash -LiteralPath (Join-Path $distRoot 'Aurora.exe') -Algorithm SHA256).Hash
+} | ConvertTo-Json | Set-Content -LiteralPath (Join-Path $distRoot 'legacy-build.json') -Encoding UTF8
 
 if ($FullVoice) {
     $integrityPath = Join-Path $distRoot "voice-runtime-integrity.json"

@@ -1,8 +1,4 @@
-customtkinter
+# Official v4 Python sidecar / TTS; no Tk or Python playback engine.
+-r prototype/aurora-v4/sidecar/requirements.txt
 psutil
-pyinstaller
-pygame
 edge-tts
-faster-whisper
-sounddevice
-websocket-client

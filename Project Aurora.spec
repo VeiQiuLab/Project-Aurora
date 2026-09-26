@@ -1,5 +1,7 @@
 from pathlib import Path
 import os
+if os.environ.get("AURORA_LEGACY_BUILD") != "1":
+    raise RuntimeError("Legacy-only PyInstaller recipe. Use build_exe.ps1 for Aurora v4.")
 import sys
 import json
 import hashlib
@@ -139,7 +141,7 @@ version_info = VSVersionInfo(
 
 
 a = Analysis(
-    [str(project_root / "main.py")],
+    [str(project_root / "legacy" / "tk_desktop.py")],
     pathex=[*voice_paths, str(project_root)],
     binaries=[(str(unicodedata_binary), "."), *voice_binaries],
     datas=datas,

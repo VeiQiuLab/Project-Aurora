@@ -114,9 +114,10 @@ so an abnormal desktop exit cannot orphan the Python child.
 
 Production now integrates the existing Python TTSRouter after successful Chat
 completion. Voice settings still use the single project SettingsManager.
-The optional Edge/pygame dependencies are already declared in the root
-`requirements.txt` / `requirements-voice.lock.txt`; this stage adds no dependency
-family. Missing dependencies report a Voice-only error, not Chat failure.
+The optional Edge dependency is declared in the root `requirements.txt`.
+Tk/pygame and historical microphone/package extras are now isolated in
+`legacy/requirements.txt`; the older Voice lockfile is retained for those tools.
+Missing dependencies report a Voice-only error, not Chat failure.
 See [V4-6B ownership, lifecycle and validation](../docs/V4_6B_VOICE.md).
 
 B-3 replaces only v4 production's pygame execution with private Rust playback.

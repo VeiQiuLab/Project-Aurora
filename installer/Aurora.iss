@@ -1,4 +1,7 @@
-#define MyAppName "Project Aurora"
+#ifndef AuroraLegacyBuild
+  #error Explicit legacy build required; this is not the v4 installer
+#endif
+#define MyAppName "Project Aurora Legacy"
 #ifndef MyAppVersion
   #error MyAppVersion must be supplied by build_installer.ps1
 #endif
@@ -9,15 +12,16 @@
 #define MyAppExeName "Aurora.exe"
 
 [Setup]
-AppId={{B8E983B4-31F8-43A4-8C22-A8F2F68A28F7}
+; Separate compatibility product identity; never upgrade a production install.
+AppId={{3A2D7748-0BF4-4D85-ABAE-14B60E04538B}
 AppName={#MyAppName}
 AppVersion={#MyAppVersion}
 VersionInfoVersion={#MyAppWindowsVersion}
 VersionInfoTextVersion={#MyAppVersion}
 VersionInfoProductTextVersion={#MyAppVersion}
 AppPublisher={#MyAppPublisher}
-DefaultDirName={localappdata}\Aurora
-DefaultGroupName=Project Aurora
+DefaultDirName={localappdata}\Aurora-Legacy
+DefaultGroupName=Project Aurora Legacy
 DisableProgramGroupPage=no
 OutputDir=.
 OutputBaseFilename=Aurora-v{#MyAppVersion}-Setup
@@ -38,8 +42,8 @@ Name: "desktopicon"; Description: "{cm:CreateDesktopIcon}"; GroupDescription: "{
 Source: "..\dist\Aurora-Core\*"; DestDir: "{app}"; Flags: ignoreversion recursesubdirs createallsubdirs
 
 [Icons]
-Name: "{group}\Project Aurora"; Filename: "{app}\{#MyAppExeName}"
-Name: "{autodesktop}\Project Aurora"; Filename: "{app}\{#MyAppExeName}"; Tasks: desktopicon
+Name: "{group}\Project Aurora Legacy"; Filename: "{app}\{#MyAppExeName}"
+Name: "{autodesktop}\Project Aurora Legacy"; Filename: "{app}\{#MyAppExeName}"; Tasks: desktopicon
 
 [Run]
 Filename: "{app}\{#MyAppExeName}"; Description: "{cm:LaunchProgram,{#StringChange(MyAppName, '&', '&&')}}"; Flags: nowait postinstall skipifsilent

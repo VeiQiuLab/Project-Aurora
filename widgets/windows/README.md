@@ -27,7 +27,7 @@ window-module layout. Existing window classes are still located directly under
 - `memory_window.py`
 - `persona_window.py`
 
-Some classes remain imported or referenced by legacy callbacks in `main.py`;
+Some classes remain imported or referenced by legacy callbacks in `legacy/tk_desktop.py`;
 others may remain useful as focused editors or diagnostics. They are not current
 primary navigation and must not be declared dead or deleted without a dedicated
 reachability, packaging, and callback review.

@@ -145,7 +145,7 @@ def test_activation_listener_receives_request_from_second_instance():
 
 
 def test_single_instance_gate_precedes_application_imports_and_services():
-    source = Path("main.py").read_text(encoding="utf-8")
+    source = Path("legacy/tk_desktop.py").read_text(encoding="utf-8")
     tree = ast.parse(source)
     gate_line = next(
         node.lineno

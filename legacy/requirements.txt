@@ -1,0 +1,8 @@
+# Explicit legacy UI and historical voice/package development only.
+-r ../requirements.txt
+customtkinter
+pyinstaller
+pygame
+faster-whisper
+sounddevice
+websocket-client

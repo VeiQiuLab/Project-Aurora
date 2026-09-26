@@ -1,4 +1,5 @@
 param(
+    [switch]$Legacy,
     [string]$Python = "",
     [string]$OutputPath = "",
     [switch]$SkipBuild,
@@ -7,6 +8,8 @@ param(
 )
 
 $ErrorActionPreference = "Stop"
+if (-not $Legacy) { throw 'This portable packager is legacy-only. v4 Release: build_exe.ps1. A self-contained v4 installer is not provided by this script.' }
+Write-Warning 'LEGACY Tk compatibility package, not an Aurora v4 release.'
 
 $projectRoot = Split-Path -Parent $MyInvocation.MyCommand.Path
 $buildScript = Join-Path $projectRoot "build_exe.ps1"
@@ -46,11 +49,13 @@ function Resolve-BuildPython {
 
 $Python = Resolve-BuildPython -PreferredPath $Python
 if (-not $SkipBuild) {
-    & $buildScript -Python $Python -FullVoice:$FullVoice -VoiceCodecOverlay $VoiceCodecOverlay
+    & $buildScript -Legacy -Python $Python -FullVoice:$FullVoice -VoiceCodecOverlay $VoiceCodecOverlay
     if ($LASTEXITCODE -ne 0) {
         Write-Error "Aurora executable build failed."
     }
 }
+
+& (Join-Path $projectRoot 'legacy\verify_build.ps1') -DistRoot $distRoot
 
 foreach ($required in @(
     "Aurora.exe",

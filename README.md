@@ -1,149 +1,65 @@
 # Project Aurora
 
-Project Aurora is a Local-first, Chat-first personal AI companion for Windows.
-It uses Ollama for local model inference and brings together conversation,
-Persona, Memory, Knowledge/RAG, and an optional Voice Experience in one desktop
-application.
+Aurora is a local-first AI companion for Windows. **Aurora v4 / Tauri Desktop is
+the only official Desktop entrypoint.** The directory name `prototype/aurora-v4`
+is retained for path compatibility; it does not mean Tk is still the product UI.
 
-Aurora is not an Open WebUI frontend, Docker control center, remote-access
-platform, general-purpose Agent, or desktop automation framework.
+## Run from this checkout
 
-## Features
-
-### Chat
-
-- Local chat through Ollama
-- Streaming responses
-- Persistent Conversations and history search
-- Conversation restore, rename, and delete
-- Chat-first desktop UI
-
-### Context and Intelligence
-
-- Persona context
-- User-controlled Memory and Memory candidates
-- Local Knowledge base and retrieval
-- Optional RAG normalization and ranking
-- ContextBuilder-based prompt context
-- Asynchronous Conversation Intelligence metadata
-
-Semantic Conversation Titles are included in the v3.8.0-alpha release
-candidate. They remain subject to alpha validation.
-
-### Voice (Experimental)
-
-The optional Voice flow is turn-based:
-
-```text
-Speech
-  -> Faster-Whisper
-  -> shared Chat Pipeline
-  -> text response
-  -> Edge-TTS
-  -> Playback
-```
-
-Voice currently targets natural turn-based interaction. It is experimental and
-should not be treated as realtime, full-duplex, or production-ready voice.
-Text chat remains available when optional Voice components are unavailable.
-
-### Local-first Data
-
-Ollama inference and Aurora user data are primarily local. Some optional
-providers may require network access; Edge-TTS is an online TTS provider.
-
-## Current UI
-
-The production AppShell has two top-level pages:
-
-- Chat
-- Settings
-
-Persona, Memory, and Knowledge/RAG are available through Settings. Older Home,
-Library, Dashboard, Remote, and Mobile surfaces are not current top-level pages.
-
-## Requirements
-
-- Windows for the portable application
-- Python 3.12 with Tcl/Tk only for source development
-- CustomTkinter and the dependencies in `requirements.txt` only for source development
-- Ollama and a Chat model only when local AI chat is wanted
-
-Optional Voice dependencies include:
-
-- Faster-Whisper
-- Edge-TTS
-- pygame
-- FFmpeg
-
-FFmpeg is optional and is not bundled in the portable test package. The portable
-test package also excludes the optional Voice Python runtimes (including PyAV's
-FFmpeg codec libraries) until a separate compliant Voice distribution is
-prepared. Missing Voice components are reported clearly while Aurora Core and
-text/data surfaces continue to open. Source developers can install the current
-Voice dependencies from `requirements.txt`.
-
-## Running from Source
-
-1. Install Python 3.12 with Tcl/Tk support.
-2. Install the dependencies from `requirements.txt`.
-3. Optionally install/start Ollama and make a Chat model available.
-4. Start Aurora:
+Use Windows, Python 3.12, Node/pnpm, Rust and Visual Studio C++ build tools.
+Python does not need Tcl/Tk for v4.
 
 ```powershell
-python main.py
+python -m venv .venv
+.\.venv\Scripts\python.exe -m pip install -r requirements.txt
+pnpm --dir prototype/aurora-v4/desktop install --frozen-lockfile
+.\build_exe.ps1
+.\.venv\Scripts\python.exe main.py --check
+.\.venv\Scripts\python.exe main.py
 ```
 
-Select the actual Python interpreter appropriate for the local development
-environment; Aurora does not assume that the Windows Python Launcher is usable.
+`main.py` starts only `aurora-v4-desktop.exe`. Missing/failed v4 builds produce
+an error, never Tk fallback. `AURORA_DESKTOP_EXE` may explicitly select an
+absolute path to the v4 EXE. You can also launch that EXE directly or create a
+Windows shortcut to it. No existing user shortcuts are changed automatically.
 
-## Data and Privacy
+Build and runtime installation are separate. Configure the existing local GGUF
+and Aurora-owned Vulkan llama-server as described in
+[Built-in runtime](prototype/aurora-v4/docs/V4_6A_LOCAL_RUNTIME.md).
+There is no automatic model download. Ollama and LM Studio are not required;
+Ollama remains an explicitly selected compatibility provider, not a fallback.
 
-Release builds store user data under `%APPDATA%/Aurora/`, including:
+## Product boundaries
 
-```text
-config/settings.json
-conversations/
-memory/
-knowledge/
-persona/
-logs/
-```
+- Tauri/Rust owns Desktop, supervised processes, IPC and Rust Audio playback.
+- Python owns chat, conversation persistence, context, Memory, Persona,
+  Knowledge/RAG, post-turn intelligence and the single settings authority.
+- Optional Voice uses existing TTS routing (Edge / Remote CosyVoice) and Rust
+  Audio. Edge TTS requires network access. v4 does not initialize pygame or Tk.
+- Optional [Native Live2D](prototype/aurora-v4/docs/LIVE2D_NATIVE_RUNTIME.md)
+  uses external read-only SDK/model configuration. Missing optional capabilities
+  do not prevent text chat. SDK/model redistribution is not implied.
 
-Do not commit Conversations, Memory data, Knowledge data, private Persona data,
-logs, device identifiers, or user settings containing private information.
+Shared AI modules are retained. The retirement does not claim new UI for every
+historical Memory/Knowledge editing operation, microphone feature or legacy tool.
 
-## Project Status
+## Data and packaging
 
-- Release tag: `v3.8.0-alpha`
-- Release version: `3.8.0-alpha`
-- Release state: alpha pre-release
+Production data remains in `%APPDATA%/Aurora` (or the existing explicit
+`AURORA_USER_DATA_DIR`). No settings, conversations or assets are migrated or
+deleted by retirement. Rust does not become a second persistence owner.
 
-Version 3.8.0-alpha is an alpha pre-release and must not be described as stable.
-The Windows installer is `Aurora-v3.8.0-alpha-Setup.exe` with SHA256
-`7DEEB26723B7182B2475734438D61A3E26C101CCAFB2E3438F3F4F907FCF81A2`.
-It is currently unsigned, so Windows SmartScreen may display a warning.
-Uninstall removes application files while preserving user data under
-`%APPDATA%\Aurora`. That historical installer bundled FFmpeg for Voice. The
-`Aurora-Windows-Test.zip` produced by this branch is instead Core-only and does
-not include FFmpeg/PyAV codec libraries or optional Voice runtimes. Ollama and
-models remain independently managed; none of these optional components is
-required for Aurora Core to open.
+`build_exe.ps1` builds the v4 Release EXE with `--no-bundle`. It is a developer
+checkout build, **not a new self-contained installer**: Python, sidecar sources,
+local runtime and model discovery retain their existing requirements. The old
+portable/Inno/PyInstaller recipes are blocked unless explicitly selected as
+legacy. Historical v3 installers are not v4 distributions.
 
-## Removed and Historical Features
+## Development and legacy
 
-Earlier Aurora versions explored Remote/LAN access, Mobile Chat, and Open
-WebUI/Docker-related integration. These remain part of the historical record but
-are not part of the current product direction.
+- [Desktop development](prototype/aurora-v4/desktop/README.md)
+- [Tkinter retirement audit and boundaries](docs/TKINTER_RETIREMENT.md)
+- [Explicit legacy compatibility](legacy/README.md)
+- [Release checklist](RELEASE_CHECKLIST.md)
 
-## Development
-
-Start with:
-
-- [Project context](PROJECT_CONTEXT.md)
-- [Current architecture](docs/ARCHITECTURE.md)
-- [Changelog](CHANGELOG.md)
-
-Aurora development favors small incremental changes, one shared Chat Pipeline
-for text and voice, local-first data ownership, and privacy-conscious release
-practices.
+Do not commit personal settings, conversations, model/SDK binaries, audio or logs.

@@ -1,5 +1,9 @@
 # Project Aurora Codex Workflow
 
+Current Desktop authority is Tauri v4, not Tk/AppShell. Use the root README and
+TKINTER_RETIREMENT.md for current launch/build/data isolation. Tk-specific
+instructions below are historical compatibility guidance, not product defaults.
+
 ## Purpose
 
 This is the general development workflow for Project Aurora. It is not tied to
