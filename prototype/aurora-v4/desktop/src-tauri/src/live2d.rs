@@ -8,7 +8,7 @@ use serde_json::Value;
 use std::{
     path::PathBuf,
     process::Stdio,
-    sync::{Arc, Mutex},
+    sync::{Arc, Mutex, Weak},
     time::Instant,
 };
 use tokio::{
@@ -25,6 +25,7 @@ pub struct Snapshot {
     pub visible: bool,
     pub fps: f64,
     pub error_code: String,
+    pub mouth: f32,
 }
 #[derive(Clone, Debug, PartialEq, Serialize)]
 struct Input {
@@ -34,6 +35,7 @@ struct Input {
     x: Option<i32>,
     y: Option<i32>,
     shutdown: bool,
+    mouth: f32,
 }
 #[derive(Clone, Debug, PartialEq)]
 struct Desired {
@@ -48,6 +50,7 @@ struct Projection {
     cancelled: bool,
     chat_active: bool,
     voice_state: String,
+    playback: Option<crate::audio::Identity>,
 }
 impl Default for Projection {
     fn default() -> Self {
@@ -61,6 +64,7 @@ impl Default for Projection {
                     x: None,
                     y: None,
                     shutdown: false,
+                    mouth: 0.0,
                 },
             },
             generation: None,
@@ -69,10 +73,16 @@ impl Default for Projection {
             cancelled: false,
             chat_active: false,
             voice_state: "idle".into(),
+            playback: None,
         }
     }
 }
 impl Projection {
+    fn allows_audio(&self, id: &crate::audio::Identity) -> bool {
+        !self.cancelled && self.desired.enabled && self.desired.input.visible
+            && self.desired.input.state == "speaking" && self.playback.as_ref() == Some(id)
+            && self.generation.as_ref() == Some(&id.generation_id)
+    }
     fn accept(&mut self, event: &FrontendEvent) -> bool {
         let old = self.desired.clone();
         match event {
@@ -112,6 +122,7 @@ impl Projection {
                 self.cancelled = false;
                 self.chat_active = true;
                 self.voice_state = "idle".into();
+                self.playback = None;
                 self.desired.input.state = "thinking".into();
             }
             FrontendEvent::ChatTerminal {
@@ -121,6 +132,7 @@ impl Projection {
             } if self.generation.as_ref() == Some(generation_id) => {
                 self.chat_active = false;
                 self.cancelled = terminal_state != "completed";
+                if self.cancelled {self.playback=None;}
                 self.desired.input.state = if matches!(
                     terminal_state.as_str(),
                     "failed" | "rejected" | "backend_lost"
@@ -138,8 +150,12 @@ impl Projection {
             FrontendEvent::VoiceState { snapshot } if snapshot.revision > self.voice_revision => {
                 self.voice_revision = snapshot.revision;
                 if self.generation == snapshot.generation_id && !self.cancelled {
-                    self.voice_state = snapshot.state.clone();
-                    self.desired.input.state = match snapshot.state.as_str() {
+                    self.voice_state = if snapshot.enabled {snapshot.state.clone()} else {"idle".into()};
+                    if self.voice_state == "preparing" {
+                        self.playback=snapshot.generation_id.clone().map(|generation_id|
+                            crate::audio::Identity{generation_id,revision:snapshot.revision});
+                    } else if self.voice_state != "speaking" {self.playback=None;}
+                    self.desired.input.state = match self.voice_state.as_str() {
                         "speaking" => "speaking",
                         "preparing" => "thinking",
                         "error" => "error",
@@ -161,6 +177,7 @@ impl Projection {
                 self.cancelled = true;
                 self.chat_active = false;
                 self.voice_state = "idle".into();
+                self.playback = None;
                 self.desired.input.state = "idle".into();
             }
             _ => {}
@@ -215,6 +232,7 @@ pub struct Live2d {
     snapshot: Arc<Mutex<Snapshot>>,
     notify: Arc<Mutex<Option<Notify>>>,
     task: Arc<Mutex<Option<tauri::async_runtime::JoinHandle<()>>>>,
+    audio: Arc<Mutex<Option<Weak<crate::audio::AudioOwner>>>>,
 }
 impl Default for Live2d {
     fn default() -> Self {
@@ -230,10 +248,23 @@ impl Default for Live2d {
             })),
             notify: Default::default(),
             task: Default::default(),
+            audio: Default::default(),
         }
     }
 }
 impl Live2d {
+    pub fn attach_audio(&self, audio: Option<Weak<crate::audio::AudioOwner>>) {
+        // The backend replaces this at connection setup; N's cleanup only owns
+        // N's AudioOwner, so it cannot clear or publish through N+1's meter.
+        *self.audio.lock().unwrap_or_else(|e| e.into_inner()) = audio;
+    }
+    fn mouth(&self) -> f32 {
+        let audio = self.audio.lock().unwrap_or_else(|e| e.into_inner()).as_ref().and_then(Weak::upgrade);
+        let Some((id, value)) = audio.and_then(|audio| audio.envelope()) else { return 0.0; };
+        let p = self.projection.lock().unwrap_or_else(|e| e.into_inner());
+        if !p.allows_audio(&id) { return 0.0; }
+        value
+    }
     pub fn start(&self, notify: impl Fn(Snapshot) + Send + Sync + 'static) {
         let mut task = self.task.lock().unwrap_or_else(|e| e.into_inner());
         if task.is_some() {
@@ -265,6 +296,7 @@ impl Live2d {
             visible: status == "ready" && input.visible,
             fps,
             error_code: error.into(),
+            mouth: if status == "ready" { input.mouth } else { 0.0 },
         };
         *self.snapshot.lock().unwrap_or_else(|e| e.into_inner()) = value.clone();
         let notify = self
@@ -356,6 +388,13 @@ impl Live2d {
         let mut ready = false;
         let started = Instant::now();
         let mut sent = 0;
+        let mut acknowledged = 0;
+        let mut last_input: Option<Input> = None;
+        let mut control_ready = true;
+        let mut projected_revision = 0;
+        let mut last_send = Instant::now();
+        let mut control = tokio::time::interval(Duration::from_millis(33));
+        control.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
         let mut line = Vec::new();
         let mut bytes = [0u8; 1024];
         let outcome = loop {
@@ -363,17 +402,35 @@ impl Live2d {
             if desired.input.shutdown || !desired.enabled {
                 break Ok(());
             }
-            if ready && sent != desired.input.revision {
-                if send(&mut writer, &desired.input).await.is_err() {
+            let mut input = desired.input.clone();
+            // Never cache a bare amplitude across ownership/state changes.
+            input.mouth = self.mouth();
+            // Reuse the private command revision, independent of Python Voice's
+            // revision. Compare values before assigning the next wire revision.
+            input.revision = 0;
+            if ready && sent != acknowledged && last_send.elapsed() >= Duration::from_millis(500) {
+                break Err("LIVE2D_CONTROL_TIMEOUT");
+            }
+            // At most one unacknowledged command in the pipe. While the host is
+            // busy, overwrite the local latest value rather than queueing frames.
+            if ready && sent == acknowledged && (projected_revision != desired.input.revision
+                || (control_ready && (last_input.as_ref() != Some(&input) || last_send.elapsed() >= Duration::from_millis(100)))) {
+                sent += 1;
+                let mut wire = input.clone(); wire.revision = sent;
+                if send(&mut writer, &wire).await.is_err() {
                     break Err("LIVE2D_TRANSPORT_FAILED");
                 }
-                sent = desired.input.revision;
+                last_input = Some(input.clone());
+                last_send = Instant::now();
+                projected_revision = desired.input.revision;
+                control_ready = false;
             }
             if !ready && started.elapsed() > Duration::from_secs(20) {
                 break Err("LIVE2D_START_TIMEOUT");
             }
             tokio::select! {
                 changed=rx.changed()=>{if changed.is_err(){break Ok(())}},
+                _=control.tick()=>{control_ready=true;},
                 n=reader.read(&mut bytes)=>{
                     let Ok(n)=n else{break Err("LIVE2D_TRANSPORT_FAILED")};if n==0{break Err("LIVE2D_EXITED")}
                     line.extend_from_slice(&bytes[..n]);if line.len()>4096{break Err("LIVE2D_PROTOCOL_FAILED")}
@@ -384,16 +441,24 @@ impl Live2d {
                         match value["type"].as_str(){
                             Some("ready") if value["protocol"]==1=>{ready=true;self.publish("ready",&desired.input,0.0,"");}
                             Some("applied") if ready=>{
-                                if value["revision"].as_u64()==Some(desired.input.revision)
+                                if value["revision"].as_u64()==Some(sent) {acknowledged=sent;}
+                                if value["revision"].as_u64()==Some(sent)
                                     && value["state"].as_str()==Some(desired.input.state.as_str())
                                     && value["visible"].as_bool()==Some(desired.input.visible) {
-                                    self.publish("ready",&desired.input,self.snapshot().fps,"");
+                                    // Acknowledged native value, no 30 Hz frontend event stream.
+                                    let mut snapshot=self.snapshot.lock().unwrap_or_else(|e|e.into_inner());
+                                    snapshot.state=input.state.clone(); snapshot.visible=input.visible;
+                                    snapshot.mouth=value["mouth"].as_f64().filter(|v|v.is_finite()).unwrap_or(0.0) as f32;
                                 }
                             }
                             Some("metrics") if ready=>{
-                                if value["revision"].as_u64()==Some(desired.input.revision){
+                                if value["revision"].as_u64()==Some(sent) {acknowledged=sent;}
+                                if value["revision"].as_u64().is_some_and(|r| r<=sent)
+                                    && value["state"].as_str()==Some(input.state.as_str()) {
                                     let fps=value["frames"].as_f64().unwrap_or(0.0)/value["seconds"].as_f64().unwrap_or(1.0).max(0.001);
-                                    self.publish("ready",&desired.input,if fps.is_finite(){fps.min(1000.0)}else{0.0},"");
+                                    let mut measured=input.clone();
+                                    measured.mouth=value["mouth"].as_f64().filter(|v|v.is_finite()).unwrap_or(0.0) as f32;
+                                    self.publish("ready",&measured,if fps.is_finite(){fps.min(1000.0)}else{0.0},"");
                                 }
                             }
                             Some("error")=>{error=Some("LIVE2D_RENDER_FAILED");break},
@@ -407,7 +472,8 @@ impl Live2d {
             }
         };
         let mut stop = rx.borrow().input.clone();
-        stop.revision = stop.revision.saturating_add(1);
+        stop.revision = sent.saturating_add(1);
+        stop.mouth = 0.0;
         stop.shutdown = true;
         let _ = send(&mut writer, &stop).await;
         drop(writer);
@@ -556,6 +622,33 @@ mod tests {
         });
         assert_eq!(p.desired.input.state, "thinking");
     }
+    #[test]
+    fn voice_disabled_chat_terminal_never_implies_speaking() {
+        let mut p=Projection::default();p.accept(&accepted("a"));
+        p.accept(&FrontendEvent::ChatTerminal {request_id:"r".into(),generation_id:"a".into(),
+            terminal_state:"completed".into(),error_code:None,diagnostics:None});
+        assert_eq!(p.desired.input.state,"idle");
+        let mut disabled=voice("a",2,"speaking");
+        if let FrontendEvent::VoiceState{snapshot}=&mut disabled {snapshot.enabled=false;}
+        p.accept(&disabled);assert_eq!(p.desired.input.state,"idle");
+        let owner=Live2d::default();owner.observe(&accepted("a"));owner.observe(&voice("a",1,"speaking"));
+        // No actual AudioOwner/output: a Voice flag cannot fabricate amplitude.
+        assert_eq!(owner.mouth(),0.0);
+    }
+    #[test]
+    fn same_generation_replay_requires_current_preparing_identity() {
+        let mut p=Projection::default();p.desired.enabled=true;p.accept(&accepted("a"));
+        let old=crate::audio::Identity{generation_id:"a".into(),revision:1};
+        p.accept(&voice("a",1,"preparing"));p.accept(&voice("a",2,"speaking"));
+        assert!(p.allows_audio(&old));
+        p.accept(&voice("a",3,"stopping"));assert!(!p.allows_audio(&old));
+        p.accept(&voice("a",4,"preparing"));p.accept(&voice("a",5,"speaking"));
+        let new=crate::audio::Identity{generation_id:"a".into(),revision:4};
+        assert!(!p.allows_audio(&old));assert!(p.allows_audio(&new));
+        p.accept(&voice("a",3,"idle"));assert!(p.allows_audio(&new));
+        p.desired.input.visible=false;assert!(!p.allows_audio(&new));
+        p.accept(&accepted("b"));assert!(!p.allows_audio(&new));
+    }
     #[tokio::test]
     async fn missing_executable_fails_only_optional_session() {
         let host = Live2d::default();
@@ -598,6 +691,8 @@ if mode == 'hang':
 print('{"type":"ready","protocol":1}', flush=True)
 for raw in sys.stdin:
     v = json.loads(raw)
+    if mode == 'noack':
+        time.sleep(30)
     if v['shutdown']:
         print('{"type":"closed"}', flush=True)
         break
@@ -667,6 +762,12 @@ for raw in sys.stdin:
                 Err(expected)
             );
         }
+    }
+    #[tokio::test]
+    async fn unacknowledged_control_is_bounded_and_does_not_backlog() {
+        let owner=Live2d::default();let (_tx,mut rx)=watch::channel(enabled());
+        assert_eq!(timeout(Duration::from_secs(6),owner.run_child(fixture("noack"),&mut rx)).await.unwrap(),
+            Err("LIVE2D_CONTROL_TIMEOUT"));
     }
     #[tokio::test]
     async fn shutdown_while_initializing_is_bounded() {

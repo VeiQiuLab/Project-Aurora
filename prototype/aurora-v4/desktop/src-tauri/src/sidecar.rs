@@ -391,6 +391,7 @@ impl BackendManager {
             data.child = Some(child);
             data.job = Some(job);
             data.writer = Some(writer.clone());
+            if let Some(character) = &self.live2d { character.attach_audio(audio.as_ref().map(Arc::downgrade)); }
             data.audio = audio;
             data.sidecar_instance_id = Some(sidecar_instance_id);
             data.negotiated_chat_input_max_bytes = negotiated_limit;

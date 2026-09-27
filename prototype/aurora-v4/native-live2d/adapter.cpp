@@ -20,6 +20,9 @@
 #include <Motion/CubismMotion.hpp>
 #include <Physics/CubismPhysics.hpp>
 #include <Id/CubismIdManager.hpp>
+#include <Effect/CubismEyeBlink.hpp>
+#include <Effect/CubismBreath.hpp>
+#include "behavior.h"
 #include <Rendering/D3D11/CubismRenderer_D3D11.hpp>
 #include <Rendering/D3D11/CubismDeviceInfo_D3D11.hpp>
 using namespace Live2D::Cubism::Framework;
@@ -70,7 +73,14 @@ class Model final : public CubismUserModel {
     std::unique_ptr<CubismModelSettingJson> settings;
     std::vector<ComPtr<ID3D11ShaderResourceView>> textures;
     ACubismMotion* idle=nullptr;
-    float elapsed=0;
+    float tilt=0;
+    int mouth=-1, angle=-1;
+    int parameter(const char* name) {
+        auto id=CubismFramework::GetIdManager()->GetId(name);
+        // GetParameterIndex creates phantom parameters for missing names. Only
+        // real moc parameters may be used by this presentation adapter.
+        return aurora::parameterIndex(GetModel()->GetParameterCount(),id,[&](int i){return GetModel()->GetParameterId(i);});
+    }
 public:
     ~Model() { _motionManager->StopAllMotions(); if(idle) ACubismMotion::Delete(idle); DeleteRenderer(); }
     void load(const fs::path& path, ID3D11Device* device) {
@@ -79,12 +89,24 @@ public:
         auto moc=read(asset(root,settings->GetModelFileName()));
         LoadModel(moc.data(),static_cast<csmSizeInt>(moc.size()),true);
         if(!GetModel()) throw std::runtime_error("moc invalid");
+        mouth=parameter("ParamMouthOpenY"); angle=parameter("ParamAngleZ");
         auto physics=settings->GetPhysicsFileName();
         if(physics&&*physics) { auto bytes=read(asset(root,physics)); LoadPhysics(bytes.data(),static_cast<csmSizeInt>(bytes.size())); }
-        if(settings->GetMotionCount("Idle")>0) {
+        idle=aurora::optionalMotion([&]() -> ACubismMotion* {
+            if(settings->GetMotionCount("Idle")==0)return nullptr;
             auto bytes=read(asset(root,settings->GetMotionFileName("Idle",0)));
-            idle=LoadMotion(bytes.data(),static_cast<csmSizeInt>(bytes.size()),"Idle");
-            if(!idle) throw std::runtime_error("motion invalid");
+            return LoadMotion(bytes.data(),static_cast<csmSizeInt>(bytes.size()),"Idle");
+        }); // Optional motion: static/breath fallback.
+        if(!idle) {
+            if(parameter("ParamEyeLOpen")>=0 && parameter("ParamEyeROpen")>=0) _eyeBlink=CubismEyeBlink::Create(settings.get());
+            int breath=parameter("ParamBreath");
+            if(breath>=0) {
+                _breath=CubismBreath::Create();
+                csmVector<CubismBreath::BreathParameterData> values;
+                float min=GetModel()->GetParameterMinimumValue(breath), max=GetModel()->GetParameterMaximumValue(breath);
+                values.PushBack(CubismBreath::BreathParameterData(GetModel()->GetParameterId(breath),(min+max)*0.5f,(max-min)*0.5f,6.0f,1.0f));
+                _breath->SetParameters(values);
+            }
         }
         CubismRenderer_D3D11::SetConstantSettings(2,device); CreateRenderer(480,640);
         auto renderer=GetRenderer<CubismRenderer_D3D11>();
@@ -114,15 +136,25 @@ public:
         GetModelMatrix()->SetHeight(1.8f); GetModelMatrix()->SetPosition(0,0);
         GetModel()->SaveParameters();
     }
-    void draw(ID3D11DeviceContext* context,float delta,int state,UINT width,UINT height) {
-        elapsed+=delta; GetModel()->LoadParameters();
+    void setMouth(float value,bool active) {
+        if(mouth>=0) GetModel()->SetParameterValue(mouth,aurora::mouthValue(value,
+            GetModel()->GetParameterMinimumValue(mouth),GetModel()->GetParameterMaximumValue(mouth),active));
+    }
+    float mouthValue() {return mouth>=0?GetModel()->GetParameterValue(mouth):0.0f;}
+    void draw(ID3D11DeviceContext* context,float delta,int state,UINT width,UINT height,float mouthInput) {
+        GetModel()->LoadParameters();
         if(idle&&_motionManager->IsFinished()) _motionManager->StartMotionPriority(idle,false,1);
         _motionManager->UpdateMotion(GetModel(),delta); GetModel()->SaveParameters();
-        auto ids=CubismFramework::GetIdManager();
-        // Small high-level pose only. No amplitude mouth animation or lip-sync claim.
-        float tilt=state==1?5.0f:state==2?2.0f*std::sin(elapsed*3):0.0f;
-        GetModel()->AddParameterValue(ids->GetId("ParamAngleZ"),tilt);
+        // One motion manager; audited Idle already contains breath and blink.
+        // No expression resources exist in the current model: keep neutral.
+        if(!idle && _eyeBlink) _eyeBlink->UpdateParameters(GetModel(),delta);
+        if(!idle && _breath) _breath->UpdateParameters(GetModel(),delta);
+        tilt=aurora::approach(tilt,aurora::tiltTarget(state),delta);
+        if(angle>=0)GetModel()->AddParameterValue(angle,tilt);
         if(_physics) _physics->Evaluate(GetModel(),delta);
+        // Final mouth writer, after motions/physics; never persist it into the
+        // base parameter snapshot. Stop, silence and missing resources close it.
+        setMouth(mouthInput,state==2);
         GetModel()->Update();
         CubismMatrix44 projection; projection.Scale(float(height)/width,1); projection.MultiplyByMatrix(GetModelMatrix());
         auto renderer=GetRenderer<CubismRenderer_D3D11>(); renderer->SetRenderTargetSize(width,height);
@@ -174,7 +206,7 @@ struct Surface {
         if(!CubismFramework::StartUp(&allocator,&options))throw std::runtime_error("cubism startup");
         CubismFramework::Initialize();framework=true;model=std::make_unique<Model>();model->load(fs::canonical(modelFile),device.Get());
     }
-    int tick(float delta,int state,bool show,int x,int y) {
+    int tick(float delta,int state,bool show,int x,int y,float mouth) {
         if(owner!=GetCurrentThreadId())throw std::runtime_error("thread affinity");
         MSG msg;while(PeekMessageW(&msg,nullptr,0,0,PM_REMOVE)){TranslateMessage(&msg);DispatchMessageW(&msg);}
         if(!IsWindow(window))return 1;
@@ -183,13 +215,13 @@ struct Surface {
             RECT old;GetWindowRect(window,&old);int nx=std::clamp<LONG>(x,info.rcWork.left, std::max(info.rcWork.left,info.rcWork.right-int(width)));
             int ny=std::clamp<LONG>(y,info.rcWork.top,std::max(info.rcWork.top,info.rcWork.bottom-int(height)));
             if(old.left!=nx||old.top!=ny)SetWindowPos(window,nullptr,nx,ny,0,0,SWP_NOSIZE|SWP_NOACTIVATE|SWP_NOZORDER);}
-        if(!show)return 0;
+        if(!show){model->setMouth(0,false);return 0;}
         RECT bounds;GetClientRect(window,&bounds);UINT w=std::max(1L,bounds.right),h=std::max(1L,bounds.bottom);
         if(w!=width||h!=height){context->OMSetRenderTargets(0,nullptr,nullptr);target.Reset();check(swap->ResizeBuffers(2,w,h,DXGI_FORMAT_UNKNOWN,0));width=w;height=h;}
         if(!target){ComPtr<ID3D11Texture2D> buffer;check(swap->GetBuffer(0,IID_PPV_ARGS(&buffer)));check(device->CreateRenderTargetView(buffer.Get(),nullptr,&target));}
         ID3D11RenderTargetView* rt=target.Get();context->OMSetRenderTargets(1,&rt,nullptr);
         float clear[4]{};context->ClearRenderTargetView(rt,clear);D3D11_VIEWPORT viewport{0,0,float(width),float(height),0,1};context->RSSetViewports(1,&viewport);
-        model->draw(context.Get(),std::clamp(delta,0.0f,0.1f),state,width,height);
+        model->draw(context.Get(),std::clamp(delta,0.0f,0.1f),state,width,height,mouth);
         if(!capturePath.empty()) {capture();capturePath.clear();}
         check(swap->Present(1,0));return 0;
     }
@@ -216,8 +248,9 @@ struct Surface {
 extern "C" __declspec(dllexport) void* aurora_create(const wchar_t* model,const wchar_t* shaders) noexcept {
     try{auto surface=std::make_unique<Surface>();surface->init(model,shaders);return surface.release();}catch(...){return nullptr;}
 }
-extern "C" __declspec(dllexport) int aurora_frame(void* handle,float delta,int state,int visible,int x,int y) noexcept {
-    try{return static_cast<Surface*>(handle)->tick(delta,state,visible!=0,x,y);}catch(...){return -1;}
+extern "C" __declspec(dllexport) int aurora_frame_v2(void* handle,float delta,int state,int visible,int x,int y,float mouth) noexcept {
+    try{return static_cast<Surface*>(handle)->tick(delta,state,visible!=0,x,y,mouth);}catch(...){return -1;}
 }
+extern "C" __declspec(dllexport) float aurora_mouth_value(void* handle) noexcept {try{return static_cast<Surface*>(handle)->model->mouthValue();}catch(...){return 0;}}
 extern "C" __declspec(dllexport) void aurora_destroy(void* handle) noexcept {try{delete static_cast<Surface*>(handle);}catch(...){}}
 extern "C" __declspec(dllexport) void aurora_capture_next(void* handle,const wchar_t* path) noexcept {try{static_cast<Surface*>(handle)->capturePath=path;}catch(...){}}

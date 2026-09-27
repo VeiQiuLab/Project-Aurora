@@ -82,13 +82,15 @@ trait Output {
     fn finished(&self) -> bool;
     fn failed(&self) -> bool;
     fn stop(&mut self);
+    fn meter(&self) -> Option<Arc<crate::audio_envelope::Meter>> { None }
 }
-struct DeviceOutput { sink: Sink, _stream: OutputStream, failed: Arc<AtomicBool> }
+struct DeviceOutput { sink: Sink, _stream: OutputStream, failed: Arc<AtomicBool>, meter: Arc<crate::audio_envelope::Meter> }
 impl Output for DeviceOutput {
     fn start(&mut self) { self.sink.play(); }
     fn finished(&self) -> bool { self.sink.empty() }
     fn failed(&self) -> bool { self.failed.load(Ordering::SeqCst) }
     fn stop(&mut self) { self.sink.stop(); }
+    fn meter(&self) -> Option<Arc<crate::audio_envelope::Meter>> { Some(self.meter.clone()) }
 }
 type Factory = Box<dyn Fn(Vec<u8>) -> Result<Box<dyn Output>, &'static str> + Send>;
 fn device(bytes: Vec<u8>) -> Result<Box<dyn Output>, &'static str> {
@@ -101,8 +103,9 @@ fn device(bytes: Vec<u8>) -> Result<Box<dyn Output>, &'static str> {
         .open_stream().map_err(|_| "AUDIO_DEVICE_UNAVAILABLE")?;
     stream.log_on_drop(false);
     let sink = Sink::connect_new(stream.mixer());
-    sink.pause(); sink.append(decoder);
-    Ok(Box::new(DeviceOutput { sink, _stream: stream, failed }))
+    let meter = Arc::new(crate::audio_envelope::Meter::default());
+    sink.pause(); sink.append(crate::audio_envelope::Tap::new(decoder, meter.clone()));
+    Ok(Box::new(DeviceOutput { sink, _stream: stream, failed, meter }))
 }
 
 #[derive(Default)]
@@ -110,6 +113,7 @@ struct State {
     generation: Option<String>,
     closed: bool, allowed: Option<Identity>, consumed: Option<Identity>,
     pending: Option<(Play, Arc<AtomicBool>)>, cancel: Option<Arc<AtomicBool>>,
+    active_meter: Option<(Identity, Arc<crate::audio_envelope::Meter>)>,
 }
 type Shared = Arc<(Mutex<State>, Condvar)>;
 type Notify = Arc<dyn Fn(&Identity, &str, &str) -> bool + Send + Sync>;
@@ -121,6 +125,14 @@ impl std::fmt::Debug for AudioOwner {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result { f.write_str("AudioOwner(private)") }
 }
 impl AudioOwner {
+    // Request-local meter + existing playback identity. Old callbacks write only
+    // their retired atomic; cancelling authorization hides that value immediately.
+    pub fn envelope(&self) -> Option<(Identity, f32)> {
+        let state = self.shared.0.lock().unwrap_or_else(|e| e.into_inner());
+        if state.closed || state.cancel.as_ref().is_some_and(|v| v.load(Ordering::SeqCst)) { return None; }
+        let (id, meter) = state.active_meter.as_ref()?;
+        (state.allowed.as_ref() == Some(id)).then(|| (id.clone(), meter.value()))
+    }
     pub fn new(root: tempfile::TempDir, writer: mpsc::Sender<Message>) -> Result<Self, String> {
         let notify: Notify = Arc::new(move |id, state, error| {
             // Bounded channel; never block resource release on an unresponsive peer.
@@ -217,11 +229,12 @@ fn run_worker(shared: Shared, root: PathBuf, notify: Notify, factory: Factory) {
             if cancel.load(Ordering::SeqCst) { return Ok("stopped"); }
             let mut output = factory(bytes)?; // paused, no audio before ownership recheck
             {
-                let state = shared.0.lock().unwrap_or_else(|e| e.into_inner());
+                let mut state = shared.0.lock().unwrap_or_else(|e| e.into_inner());
                 if state.closed || state.allowed.as_ref()!=Some(&id) || cancel.load(Ordering::SeqCst) {
                     output.stop(); return Ok("stopped");
                 }
                 output.start();
+                state.active_meter = output.meter().map(|meter| (id.clone(), meter));
             }
             eprintln!("[aurora-v4] event=rust_audio_started backend=rodio");
             if !notify(&id,"started","") { output.stop(); return Ok("stopped"); }
@@ -242,6 +255,10 @@ fn run_worker(shared: Shared, root: PathBuf, notify: Notify, factory: Factory) {
             output.stop(); drop(output); // device/decoder released before terminal
             result
         }));
+        {
+            let mut state = shared.0.lock().unwrap_or_else(|e| e.into_inner());
+            if state.active_meter.as_ref().is_some_and(|(active, _)| active == &id) { state.active_meter = None; }
+        }
         let (state,error) = if cancel.load(Ordering::SeqCst) { ("stopped","") } else {
             match outcome { Ok(Ok(state)) => (state,""), Ok(Err(error)) => ("failed",error), Err(_) => ("failed","AUDIO_INTERNAL_ERROR") }
         };
@@ -376,5 +393,52 @@ mod tests {
         let events:Events=Default::default();let owner=AudioOwner::with_factory(root(),notifier(&events),Box::new(|_|panic!("must not open device"))).unwrap();
         owner.voice(&voice("g",1));let mut request=play("g",1);request.file="run/missing.wav".into();owner.play(request);
         wait(||!events.lock().unwrap().is_empty());assert_eq!(events.lock().unwrap()[0].2,"AUDIO_FILE_UNAVAILABLE");owner.join();
+    }
+    fn energize(meter: Arc<crate::audio_envelope::Meter>) {
+        use crate::audio_envelope::Tap;
+        // Consume a bounded part of a deterministic source, not EOF.
+        let source=rodio::buffer::SamplesBuffer::new(1,24000,vec![0.1;4800]);
+        Tap::new(source,meter).take(2400).for_each(drop);
+    }
+    #[test]
+    fn envelope_cancel_terminal_error_and_old_meter_cannot_affect_new_playback() {
+        struct MeterOutput { meter:Arc<crate::audio_envelope::Meter>, done:Arc<AtomicBool>, fail:Arc<AtomicBool> }
+        impl Output for MeterOutput {
+            fn start(&mut self) {energize(self.meter.clone());}
+            fn finished(&self)->bool {self.done.load(Ordering::SeqCst)}
+            fn failed(&self)->bool {self.fail.load(Ordering::SeqCst)}
+            fn stop(&mut self) {}
+            fn meter(&self)->Option<Arc<crate::audio_envelope::Meter>> {Some(self.meter.clone())}
+        }
+        for terminal in ["cancel","complete","failure","shutdown"] {
+            let events:Events=Default::default();
+            let done=Arc::new(AtomicBool::new(false));let fail=Arc::new(AtomicBool::new(false));
+            let meters:Arc<Mutex<Vec<Arc<crate::audio_envelope::Meter>>>>=Default::default();
+            let (d,f,m)=(done.clone(),fail.clone(),meters.clone());
+            let owner=AudioOwner::with_factory(root(),notifier(&events),Box::new(move |_| {
+                let meter=Arc::new(crate::audio_envelope::Meter::default());m.lock().unwrap().push(meter.clone());
+                Ok(Box::new(MeterOutput{meter,done:d.clone(),fail:f.clone()}))
+            })).unwrap();
+            owner.new_generation("a");owner.voice(&voice("a",1));owner.play(play("a",1));
+            wait(||owner.envelope().is_some_and(|(_,v)|v>0.0));
+            let old=meters.lock().unwrap()[0].clone();
+            match terminal {
+                "cancel"=>owner.stop(&play("a",1).identity()),
+                "complete"=>done.store(true,Ordering::SeqCst),
+                "failure"=>fail.store(true,Ordering::SeqCst),
+                _=>owner.halt(),
+            }
+            if terminal=="cancel" || terminal=="shutdown" {assert!(owner.envelope().is_none());}
+            wait(||events.lock().unwrap().len()>=2);assert!(owner.envelope().is_none());
+            if terminal!="shutdown" {
+                done.store(false,Ordering::SeqCst);fail.store(false,Ordering::SeqCst);
+                owner.new_generation("b");owner.voice(&voice("b",5));owner.play(play("b",5));
+                wait(||owner.envelope().is_some_and(|(id,v)|id.generation_id=="b"&&v>0.0));
+                let before=owner.envelope().unwrap();
+                energize(old);owner.stop(&play("a",1).identity());
+                assert_eq!(owner.envelope().unwrap(),before);
+            }
+            owner.join();assert!(owner.envelope().is_none());
+        }
     }
 }

@@ -14,10 +14,13 @@ struct Command {
     x: Option<i32>,
     y: Option<i32>,
     shutdown: bool,
+    #[serde(default)]
+    mouth: f32,
 }
 impl Command {
     fn valid(&self) -> bool {
         self.revision <= 9_007_199_254_740_991
+            && self.mouth.is_finite() && (0.0..=1.0).contains(&self.mouth)
             && matches!(
                 self.state.as_str(),
                 "idle" | "thinking" | "speaking" | "error"
@@ -28,6 +31,11 @@ impl Command {
                 .into_iter()
                 .chain(self.y)
                 .all(|p| (-32768..=32767).contains(&p))
+    }
+    fn mouth_at(&self, age: std::time::Duration) -> f32 {
+        if self.visible && !self.shutdown && self.state == "speaking" && age < std::time::Duration::from_millis(200) {
+            self.mouth
+        } else { 0.0 }
     }
     fn state_number(&self) -> i32 {
         match self.state.as_str() {
@@ -85,13 +93,17 @@ mod native {
         },
     };
     type Create = unsafe extern "C" fn(*const u16, *const u16) -> *mut c_void;
-    type Frame = unsafe extern "C" fn(*mut c_void, f32, i32, i32, i32, i32) -> i32;
+    type Frame = unsafe extern "C" fn(*mut c_void, f32, i32, i32, i32, i32, f32) -> i32;
+    type Mouth = unsafe extern "C" fn(*mut c_void) -> f32;
+    type Capture = unsafe extern "C" fn(*mut c_void, *const u16);
     type Destroy = unsafe extern "C" fn(*mut c_void);
     struct Adapter {
         library: HMODULE,
         handle: *mut c_void,
         frame: Frame,
         destroy: Destroy,
+        mouth: Mouth,
+        capture: Capture,
     }
     impl Drop for Adapter {
         fn drop(&mut self) {
@@ -119,9 +131,11 @@ mod native {
                     return Err("ADAPTER_UNAVAILABLE");
                 }
                 let create = GetProcAddress(library, c"aurora_create".as_ptr().cast());
-                let frame = GetProcAddress(library, c"aurora_frame".as_ptr().cast());
+                let frame = GetProcAddress(library, c"aurora_frame_v2".as_ptr().cast());
                 let destroy = GetProcAddress(library, c"aurora_destroy".as_ptr().cast());
-                let (Some(create), Some(frame), Some(destroy)) = (create, frame, destroy) else {
+                let mouth = GetProcAddress(library, c"aurora_mouth_value".as_ptr().cast());
+                let capture = GetProcAddress(library, c"aurora_capture_next".as_ptr().cast());
+                let (Some(create), Some(frame), Some(destroy), Some(mouth), Some(capture)) = (create, frame, destroy, mouth, capture) else {
                     FreeLibrary(library);
                     return Err("ADAPTER_ABI");
                 };
@@ -145,6 +159,8 @@ mod native {
                     handle,
                     frame: std::mem::transmute(frame),
                     destroy: std::mem::transmute(destroy),
+                    mouth: std::mem::transmute(mouth),
+                    capture: std::mem::transmute(capture),
                 })
             }
         }
@@ -165,11 +181,18 @@ mod native {
             x: None,
             y: None,
             shutdown: false,
+            mouth: 0.0,
         };
         let mut last = Instant::now();
         let mut metrics = last;
         let mut frames = 0u64;
         let mut applied_revision = 0u64;
+        let mut received = Instant::now();
+        let evidence = std::env::var_os("AURORA_LIVE2D_EVIDENCE_DIR").map(PathBuf::from)
+            .filter(|p| p.is_absolute() && p.is_dir());
+        let mut captures = 0;
+        let mut last_capture = Instant::now();
+        let mut captured_mouth = -1.0_f32;
         loop {
             let start = Instant::now();
             let mut available = 0u32;
@@ -204,13 +227,21 @@ mod native {
                 {
                     break;
                 }
+                let previous = current.revision;
                 ingest(&mut buffer, &bytes[..n as usize], &mut current)?;
+                if current.revision != previous { received = Instant::now(); }
                 if current.shutdown {
                     break;
                 }
             }
             let dt = start.duration_since(last).as_secs_f32();
             last = start;
+            let mouth = current.mouth_at(received.elapsed());
+            let capture = evidence.as_ref().filter(|_| current.visible && captures < 16
+                && last_capture.elapsed() >= Duration::from_millis(500)
+                && (mouth - captured_mouth).abs() >= 0.10)
+                .map(|dir| dir.join(format!("mouth-{}-{captures:02}.png",std::process::id())));
+            if let Some(path) = &capture { unsafe { (adapter.capture)(adapter.handle, wide(path).as_ptr()); } }
             let outcome = unsafe {
                 (adapter.frame)(
                     adapter.handle,
@@ -219,6 +250,7 @@ mod native {
                     current.visible as i32,
                     current.x.unwrap_or(i32::MIN),
                     current.y.unwrap_or(i32::MIN),
+                    mouth,
                 )
             };
             if outcome < 0 {
@@ -227,9 +259,19 @@ mod native {
             if outcome > 0 {
                 break;
             }
+            let actual_mouth = unsafe { (adapter.mouth)(adapter.handle) };
+            if let Some(path) = &capture {
+                // Opt-in engineering evidence: actual GPU readback plus the real
+                // Cubism parameter after frame update, never event logs alone.
+                std::fs::write(path.with_extension("json"), serde_json::json!({
+                    "revision":current.revision,"state":current.state,"input_mouth":mouth,
+                    "actual_mouth":actual_mouth,"elapsed_seconds":start.duration_since(metrics).as_secs_f64()
+                }).to_string()).map_err(|_| "EVIDENCE_WRITE_FAILED")?;
+                captures += 1; captured_mouth = mouth; last_capture = Instant::now();
+            }
             if current.revision != applied_revision {
                 emit(
-                    serde_json::json!({"type":"applied","revision":current.revision,"state":current.state,"visible":current.visible}),
+                    serde_json::json!({"type":"applied","revision":current.revision,"state":current.state,"visible":current.visible,"mouth":actual_mouth}),
                 )?;
                 applied_revision = current.revision;
             }
@@ -238,7 +280,7 @@ mod native {
             }
             if metrics.elapsed() >= Duration::from_secs(1) {
                 emit(
-                    serde_json::json!({"type":"metrics","frames":frames,"seconds":metrics.elapsed().as_secs_f64(),"revision":current.revision,"state":current.state,"visible":current.visible}),
+                    serde_json::json!({"type":"metrics","frames":frames,"seconds":metrics.elapsed().as_secs_f64(),"revision":current.revision,"state":current.state,"visible":current.visible,"mouth":actual_mouth}),
                 )?;
                 metrics = Instant::now();
                 frames = 0;
@@ -272,6 +314,7 @@ mod tests {
             x: None,
             y: None,
             shutdown: false,
+            mouth: 0.0,
         }
     }
     #[test]
@@ -302,5 +345,16 @@ mod tests {
         assert!(s.valid());
         s.state = "phonemes".into();
         assert!(!s.valid());
+    }
+    #[test]
+    fn mouth_only_during_visible_speaking_with_fresh_input() {
+        use std::time::Duration;
+        let mut s=state(); s.mouth=0.7;
+        assert_eq!(s.mouth_at(Duration::ZERO),0.0);
+        s.state="speaking".into(); s.visible=true;
+        assert_eq!(s.mouth_at(Duration::ZERO),0.7);
+        assert_eq!(s.mouth_at(Duration::from_millis(200)),0.0);
+        s.shutdown=true; assert_eq!(s.mouth_at(Duration::ZERO),0.0);
+        for value in [f32::NAN,f32::INFINITY,-0.1,1.1] {s.mouth=value;assert!(!s.valid());}
     }
 }

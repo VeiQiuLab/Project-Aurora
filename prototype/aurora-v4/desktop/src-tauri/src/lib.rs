@@ -5,6 +5,7 @@ mod settings;
 mod local_model;
 mod voice;
 mod audio;
+mod audio_envelope;
 mod live2d;
 
 use protocol::{BackendSnapshot, CancelTarget, ChatStartResult, FrontendEvent};

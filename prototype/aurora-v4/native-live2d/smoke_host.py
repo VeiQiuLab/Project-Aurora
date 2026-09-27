@@ -66,8 +66,8 @@ def main():
             if e['type']=='error':raise RuntimeError(e['code'])
             if e['type']==kind:return e
         raise TimeoutError(kind)
-    def send(revision,state='idle',visible=True,shutdown=False):
-        child.stdin.write(json.dumps(dict(revision=revision,state=state,visible=visible,x=None,y=None,shutdown=shutdown))+'\n');child.stdin.flush()
+    def send(revision,state='idle',visible=True,shutdown=False,mouth=0.0):
+        child.stdin.write(json.dumps(dict(revision=revision,state=state,visible=visible,x=None,y=None,shutdown=shutdown,mouth=mouth))+'\n');child.stdin.flush()
     try:
         event('ready');send(1)
         for rev,state,visible in [(1,'idle',True),(2,'thinking',True),(3,'speaking',True),(4,'idle',False),(5,'idle',True)]:
@@ -81,7 +81,14 @@ def main():
             value=event('metrics')
             assert value['frames']>0 if visible else value['frames']==0
             assert value['frames']/value['seconds']<=61
-        send(6,shutdown=True);event('closed');assert child.wait(10)==0
+        # Synthetic control verifies native parameter plumbing/watchdog, not real
+        # audio. Actual Edge/rodio audio is covered by the Desktop avatar smoke.
+        send(6,state='speaking',mouth=.7)
+        value=event('applied');assert value['revision']==6 and abs(value['mouth']-.7)<.001
+        event('metrics');value=event('metrics');assert value['mouth']==0
+        report['mouth_control_and_watchdog']=True
+        send(7,state='idle');value=event('applied');assert value['mouth']==0
+        send(8,shutdown=True);event('closed');assert child.wait(10)==0
         report['surface']=surface_info(args.output/'frame.png')
         report['status']='passed'
     finally:

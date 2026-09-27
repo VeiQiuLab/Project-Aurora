@@ -14,7 +14,9 @@ const repo=fileURLToPath(new URL("../../../..",import.meta.url));
 const exe=fileURLToPath(new URL("../src-tauri/target/release/aurora-v4-desktop.exe",import.meta.url));
 assert.ok(process.env.AURORA_LIVE2D_CONFIG,"Provide private AURORA_LIVE2D_CONFIG");
 const lifecycleOnly=process.argv.includes("--lifecycle-only");
-const output=repo+"/tests/output/"+(lifecycleOnly?"live2d-desktop-lifecycle":"live2d-desktop");
+const avatar=process.argv.includes("--avatar");
+const avatarPerformance=process.argv.includes("--avatar-performance");
+const output=repo+"/tests/output/"+(avatar?"avatar-behavior":avatarPerformance?"avatar-performance":lifecycleOnly?"live2d-desktop-lifecycle":"live2d-desktop");
 await mkdir(output,{recursive:true});
 const sandbox=await mkdtemp(output+"/run-");
 const ps=async code=>(await exec("powershell.exe",["-NoProfile","-Command",code],{windowsHide:true})).stdout.trim();
@@ -28,8 +30,10 @@ await writeFile(sandbox+"/app/config/settings.json",JSON.stringify({
 const portServer=createServer();portServer.listen(0,"127.0.0.1");await once(portServer,"listening");
 const port=portServer.address().port;await new Promise(r=>portServer.close(r));
 const env={...process.env,AURORA_USER_DATA_DIR:sandbox+"/app",WEBVIEW2_USER_DATA_FOLDER:sandbox+"/webview",WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS:`--remote-debugging-port=${port}`};
+if(avatar){await mkdir(sandbox+"/frames");env.AURORA_LIVE2D_EVIDENCE_DIR=sandbox+"/frames";}
 delete env.AURORA_V4_BACKEND;delete env.AURORA_V4_CHAT_PROVIDER;
 const report={release:true,externalServicesClosed:true,route:"NEW MINIMAL NATIVE HOST",measurements:[],manual:"NOT MANUALLY VERIFIED",remoteRealPlayback:"NOT TESTED IN THIS STAGE"};
+report.evidenceDirectory=avatar?sandbox+"/frames":null;
 let child,browser,page,stderr="",owned=new Map();
 const delay=ms=>new Promise(r=>setTimeout(r,ms));
 async function wait(fn,ms=90000){const end=Date.now()+ms;while(Date.now()<end){const v=await fn();if(v)return v;await delay(50);}throw Error("Smoke deadline exceeded");}
@@ -75,18 +79,26 @@ async function settings(patch){
   assert.ok(Object.entries(patch).every(([k,v])=>k.split(".").reduce((o,p)=>o?.[p],saved)===v));
   await page.locator("#close-settings").click();
 }
-async function turn(){
+async function turn(measureThinking=false){
   await page.locator("#new-conversation").click();await page.waitForSelector(".conversation.active");
   const prior=(await marks()).at(-1)?.generationId;
-  await page.locator("#prompt-input").fill("请用四十个汉字左右介绍安静阅读的好处，不用列表，不用标题。");
+  await page.locator("#prompt-input").fill(measureThinking?
+    "请用六百个汉字详细介绍安静阅读的好处、日常实践和环境布置，分三个自然段，不用列表，不用标题。":
+    "请用四十个汉字左右介绍安静阅读的好处，不用列表，不用标题。");
   await page.locator("#send-button").click();
   const states=new Set();
+  let thinkingResources,thinkingCharacter;
+  if(measureThinking){
+    await wait(async()=>(await character()).state==="thinking");states.add("thinking");
+    thinkingResources=await sample();thinkingCharacter=await character();
+    assert.equal(thinkingCharacter.state,"thinking","Resource interval must stay within generation");
+  }
   const result=await wait(async()=>{
     states.add((await character()).state);
     const m=(await marks()).at(-1);return m&&m.generationId!==prior?m:null;
   });
   assert.equal(result.status,"completed");assert.ok(result.delta_count>1);
-  return {...result,characterStates:[...states]};
+  return {...result,characterStates:[...states],thinkingResources,thinkingCharacter};
 }
 async function sample(){
   const script=fileURLToPath(new URL("./live2d_resources.ps1",import.meta.url));
@@ -97,8 +109,19 @@ async function speaking(g){
   await wait(async()=>{const v=(await snapshot()).voice;if(v?.generation_id===g&&v.state==="error")throw Error(v.error_code);return v?.generation_id===g&&v.state==="speaking";});
 }
 async function stopVoice(){
+  if(avatar){
+    const c=await character();
+    if(c.status==="ready"&&c.visible&&c.state==="speaking")
+      await wait(async()=>(await character()).mouth>0.05,5000);
+  }
+  const before=avatar?await character():null;
+  const start=performance.now();
   await page.locator("#voice-stop").click();
   await wait(async()=>(await snapshot()).voice.state==="idle",10000);
+  if(avatar){
+    await wait(async()=>(await character()).mouth===0,1000);report.stopMouthResetMs=performance.now()-start;
+    (report.stopSamples??=[]).push({before,after:await character(),requestToObservedZeroMs:report.stopMouthResetMs});
+  }
 }
 async function shutdown(){
   await children();
@@ -118,7 +141,7 @@ try{
   assert.ok(!(await children()).some(p=>p.Name==="aurora-live2d-host.exe"));
   report.disabledNoHost=true;
   await turn(); // warm-up excluded from comparisons
-  for(const mode of (lifecycleOnly?["speaking"]:["disabled","visible_idle","speaking"])){
+  for(const mode of (lifecycleOnly?["speaking"]:avatarPerformance?["disabled","visible_idle","thinking","speaking"]:["disabled","visible_idle","speaking"])){
     if(mode==="visible_idle"||lifecycleOnly){
       await settings({"live2d.enabled":true});
       await characterReady();
@@ -126,9 +149,9 @@ try{
     }
     if(mode==="speaking")await settings({"voice.enabled":true});
     for(let n=0;n<(lifecycleOnly?1:3);n++){
-      const t=await turn();
+      const t=await turn(mode==="thinking");
       if(mode==="speaking"){await speaking(t.generationId);await wait(async()=>(await character()).state==="speaking");}
-      const resources=lifecycleOnly?null:await sample(),state=await character();
+      const resources=lifecycleOnly?null:t.thinkingResources??await sample(),state=t.thinkingCharacter??await character();
       report.measurements.push({mode,round:n,turn:t,character:state,resources});
       console.log(`Measured ${mode} round ${n + 1}`);
       if(mode==="speaking"){
@@ -138,15 +161,33 @@ try{
   }
   assert.ok(report.measurements.some(m=>m.mode!=="disabled"&&m.turn.characterStates.includes("thinking")));
   report.thinking=true;report.speaking=true;
+  if(avatar){
+    const t=await turn();await speaking(t.generationId);
+    const amplitudes=[];
+    await wait(async()=>{
+      const c=await character();amplitudes.push({time:performance.now(),mouth:c.mouth});
+      return (await snapshot()).voice.state==="idle";
+    },60000);
+    await wait(async()=>(await character()).mouth===0,1000);
+    assert.ok(amplitudes.some(a=>a.mouth>0.05),"Real playback must move actual Cubism mouth");
+    assert.ok(new Set(amplitudes.map(a=>a.mouth)).size>5,"Not a static speaking flag");
+    report.realAudioMouth=amplitudes;report.naturalCompletionMouthZero=true;
+    await settings({"voice.enabled":false});
+    const silent=await turn();assert.ok(!silent.characterStates.includes("speaking"));
+    await wait(async()=>{const c=await character();return c.state==="idle"&&c.mouth===0;});
+    report.voiceDisabledNoSpeaking=true;await settings({"voice.enabled":true});
+  }
   await settings({"live2d.visible":false,"live2d.x":120,"live2d.y":80});
   await wait(async()=>{const c=await character();return c.status==="ready"&&!c.visible&&c.fps===0;},10000);
   const hidden=await turn();await speaking(hidden.generationId);await stopVoice();report.hiddenVoice=true;
   await settings({"live2d.visible":true});
   await wait(async()=>{const c=await character();return c.visible&&c.fps>0;},10000);
   const host=(await children()).find(p=>p.Name==="aurora-live2d-host.exe");assert.ok(host);
+  if(avatar){const t=await turn();await speaking(t.generationId);}
   // Kill only the verified child created by this smoke; inject native crash.
   await ps(`Stop-Process -Id ${host.ProcessId} -Force`);
   await wait(async()=>(await character()).status==="error",10000);
+  if(avatar){assert.equal((await snapshot()).voice.state,"speaking");report.hostCrashDuringVoice=true;await stopVoice();}
   const recovery=await turn();await speaking(recovery.generationId);await stopVoice();
   assert.equal((await snapshot()).info.diagnostics.local_model.state,"READY");
   assert.equal((await character()).status,"error");report.rendererCrashIsolation=true;
@@ -165,11 +206,19 @@ try{
   assert.ok(stderr.includes("event=rust_audio_started backend=rodio"));
   assert.ok(stderr.includes("python_audio_loaded=False"));
   assert.ok(!stderr.includes("event=sidecar_shutdown forced=true"));
+  if(avatar){
+    const captures=[];
+    for(const f of await readdir(sandbox+"/frames"))if(f.endsWith(".json"))captures.push(JSON.parse(await readFile(sandbox+"/frames/"+f,"utf8")));
+    assert.ok(captures.some(c=>c.actual_mouth>0.05));assert.ok(captures.some(c=>c.actual_mouth===0));
+    report.gpuFrameMetadata=captures;
+  }
   report.rustAudio=true;report.status="passed";
 }catch(e){report.status="failed";report.error=String(e);report.lastCharacter=await character().catch(()=>null);throw e;}
 finally{
   if(child?.exitCode===null&&child?.signalCode===null)await shutdown().catch(()=>child.kill());
   await browser?.close().catch(()=>{});
+  await writeFile(sandbox+"/report.json",JSON.stringify(report,null,2));
+  await writeFile(sandbox+"/stderr.log",stderr);
   await writeFile(output+"/report.json",JSON.stringify(report,null,2));
   await writeFile(output+"/stderr.log",stderr);
   console.log(JSON.stringify(report,null,2));
