@@ -2,7 +2,7 @@ export interface VoiceSnapshot {
   revision: number;
   state: "idle" | "preparing" | "speaking" | "stopping" | "error";
   enabled: boolean;
-  provider: "" | "edge_tts" | "remote_cosyvoice" | "fake";
+  provider: "" | "edge_tts" | "local_sherpa_melo" | "remote_cosyvoice" | "fake";
   generation_id: string | null;
   error_code: string;
 }

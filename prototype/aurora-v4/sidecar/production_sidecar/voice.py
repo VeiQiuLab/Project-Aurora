@@ -14,7 +14,7 @@ from pathlib import Path
 from time import monotonic
 
 LOGGER = logging.getLogger("aurora-v4-voice")
-PROVIDERS = {"edge_tts", "remote_cosyvoice", "fake"}
+PROVIDERS = {"edge_tts", "local_sherpa_melo", "remote_cosyvoice", "fake"}
 
 
 @dataclass(eq=False)
@@ -224,6 +224,11 @@ class VoiceExecution:
                 return
             if run.cancel.is_set():
                 return
+            provider = router.provider_for()
+            bind_provider = getattr(provider, "bind", None)
+            if callable(bind_provider):
+                bind_provider(run.generation_id, run.revision)
+            LOGGER.info("event=voice_provider_request provider=%s", router.default_provider)
             speech = router.synthesize(run.text,
                 VoiceOptions(voice=run.settings.get("voice.tts.voice", "")),
                 timeout_seconds=timeout, cancel_event=run.cancel)

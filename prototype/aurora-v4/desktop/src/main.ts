@@ -19,6 +19,13 @@ import { type SettingsEvent } from "./settings_state";
 import { SettingsPanel } from "./settings_panel";
 import { VoiceState, type VoiceSnapshot } from "./voice_state";
 const settingsPanel = new SettingsPanel(invoke);
+const voiceRuntimeLabel = (value: unknown) => {
+  const state = (value as { state?: string })?.state;
+  return state === "READY" ? "离线语音已就绪" : ["STARTING", "LOADING_MODEL"].includes(state ?? "") ? "离线语音正在启动" : state === "FAILED" ? "离线语音错误" : "离线语音不可用";
+};
+void listen("local-voice-status", event => settingsPanel.voiceRuntime(voiceRuntimeLabel(event.payload)))
+  .then(() => invoke("local_voice_snapshot").then(value => settingsPanel.voiceRuntime(voiceRuntimeLabel(value))))
+  .catch(() => settingsPanel.voiceRuntime("离线语音状态不可用"));
 void listen("live2d-status", event => settingsPanel.character(characterLabel(event.payload)))
   .then(() => invoke("live2d_snapshot").then(value => settingsPanel.character(characterLabel(value))))
   .catch(() => settingsPanel.character("角色状态不可用"));

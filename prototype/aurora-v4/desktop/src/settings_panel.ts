@@ -17,7 +17,7 @@ const labels: Record<string, string> = {
   "rag.context_budget": "上下文预算", "rag.reserved_output": "预留输出空间", "context.warning_tokens": "上下文提醒阈值",
 };
 const optionLabels: Record<string, string> = { on: "开启", off: "关闭", default: "跟随服务", auto: "自动", manual: "手动",
-  edge_tts: "Edge TTS（在线）", remote_cosyvoice: "Remote CosyVoice", fake: "测试 provider（无真实语音）" };
+  edge_tts: "Edge TTS（在线）", local_sherpa_melo: "Local Melo（离线 · 固定音色）", remote_cosyvoice: "Remote CosyVoice（兼容）", fake: "测试 provider（无真实语音）" };
 const errorLabels: Record<string, string> = {
   CONFLICT: "设置已在其他位置改变。你的草稿已保留，请重新载入后再编辑。",
   INVALID_VALUE: "有设置值未通过服务端校验，请检查后重试。", INVALID_SETTING: "当前版本不支持这项设置。",
@@ -53,6 +53,12 @@ export class SettingsPanel {
   private save = document.getElementById("settings-save") as HTMLButtonElement;
   private reload = document.getElementById("settings-reload") as HTMLButtonElement;
   private fields = document.getElementById("descriptor-fields")!;
+  private voiceRuntimeStatus = "离线语音未启动";
+  voiceRuntime(status: string) {
+    this.voiceRuntimeStatus = status;
+    const label = this.fields.querySelector("[data-voice-runtime-status]");
+    if (label) label.textContent = status;
+  }
   private characterStatus = "角色未启用";
   character(status: string) {
     this.characterStatus = status;
@@ -135,6 +141,10 @@ export class SettingsPanel {
     for (const [group, title] of [["live2d", "桌面角色"], ["voice", "语音朗读"], ["models", "旧模型服务"], ["context", "上下文与知识"]]) {
       const section = document.createElement("section"); section.className = "settings-section";
       const heading = document.createElement("h3"); heading.className = "section-header"; heading.textContent = title; section.append(heading);
+      if (group === "voice") {
+        const status = document.createElement("small");
+        status.dataset.voiceRuntimeStatus = ""; status.textContent = this.voiceRuntimeStatus; section.append(status);
+      }
       if (group === "live2d") {
         const status = document.createElement("small");
         status.dataset.characterStatus = ""; status.textContent = this.characterStatus; section.append(status);

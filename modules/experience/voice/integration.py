@@ -28,6 +28,7 @@ from .tts_router import TTSRouter
 from .orchestrator import VoiceOrchestrator
 from .session import VoiceSessionManager
 from .providers.edge_tts import EdgeTTSProvider
+from .providers.local_sherpa_melo import LocalSherpaMeloProvider
 from .providers.faster_whisper import FasterWhisperProvider
 from .providers.remote_cosyvoice import RemoteCosyVoiceProvider
 from .runtime import RuntimeService, StateCallback
@@ -306,6 +307,8 @@ def _create_tts(settings: Any) -> TextToSpeechProvider:
         )
     elif provider_name == "fake":
         provider = FakeTextToSpeechProvider()
+    elif provider_name == "local_sherpa_melo":
+        provider = LocalSherpaMeloProvider()
     elif provider_name == "remote_cosyvoice":
         provider = RemoteCosyVoiceProvider(
             str(_get_setting(settings, "voice.tts.remote_cosyvoice.url", "")),

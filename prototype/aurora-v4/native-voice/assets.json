@@ -1,0 +1,165 @@
+{
+  "schema": "aurora-local-voice-assets-v1",
+  "assets": [
+    {
+      "name": "aurora-local-voice-host.exe",
+      "version": "aurora-1",
+      "sha256": "9b901a02cd178565bec0efb5aa84c7d3152748857b05a30054f8c168e0c81fc4",
+      "bytes": 92672,
+      "license": "Aurora first-party",
+      "purpose": "isolated synthesis host",
+      "location": "runtime"
+    },
+    {
+      "name": "sherpa-onnx-c-api.dll",
+      "version": "sherpa-1.13.8-clean",
+      "sha256": "bb146780c7b946755810f28a5fb7dcf6321ae0d6bf18f7b507461a79c3396a3b",
+      "bytes": 878592,
+      "license": "Apache-2.0 with OpenFst and kaldifst notices",
+      "purpose": "native CPU synthesis dependency",
+      "location": "runtime"
+    },
+    {
+      "name": "onnxruntime.dll",
+      "version": "ORT-1.28.2",
+      "sha256": "422d776ab0e3218260f7f628fcb84606aaa5c21116f720c8619a6da5e0b2e0f9",
+      "bytes": 17136128,
+      "license": "MIT with exact-version transitive notices including Eigen MPL-2.0",
+      "purpose": "native CPU synthesis dependency",
+      "location": "runtime"
+    },
+    {
+      "name": "onnxruntime_providers_shared.dll",
+      "version": "ORT-1.28.2",
+      "sha256": "0190137dee4933261c065c5d030c3568a68c7aa43cad942b4726a07011738bc2",
+      "bytes": 10752,
+      "license": "MIT with exact-version transitive notices including Eigen MPL-2.0",
+      "purpose": "native CPU synthesis dependency",
+      "location": "runtime"
+    },
+    {
+      "name": "model.onnx",
+      "version": "melo-vits-zh_en-v2",
+      "sha256": "bf30582eb1b012250a35b1a4a80e7dfbcf8485e7bb9de0d95efbbeef0e4ad86d",
+      "bytes": 170429550,
+      "license": "MIT",
+      "purpose": "model/phoneme/lexicon data and attribution",
+      "location": "model"
+    },
+    {
+      "name": "tokens.txt",
+      "version": "melo-vits-zh_en-v2",
+      "sha256": "d18664a7e12bd7ea1022ddaf951e534e136815016c5a809d6b64156bffb4369d",
+      "bytes": 655,
+      "license": "MIT",
+      "purpose": "model/phoneme/lexicon data and attribution",
+      "location": "model"
+    },
+    {
+      "name": "lexicon.txt",
+      "version": "melo-vits-zh_en-v2",
+      "sha256": "7236884b02435ac5d10cf69b4be40a61b45aa676b5300f0e412f185748fee528",
+      "bytes": 6837671,
+      "license": "MIT; generated lexicon includes CMU dictionary notice",
+      "purpose": "model/phoneme/lexicon data and attribution",
+      "location": "model"
+    },
+    {
+      "name": "date.fst",
+      "version": "aishell3-vits-low-2024-04-06@57345c0",
+      "sha256": "eb8aa079ae3cb81d8f4404992f39d61a0cb990947512b5b8d1e54d1f6980e718",
+      "bytes": 59154,
+      "license": "Apache-2.0",
+      "purpose": "date/number normalization",
+      "location": "model"
+    },
+    {
+      "name": "number.fst",
+      "version": "aishell3-vits-low-2024-04-06@57345c0",
+      "sha256": "743f402181fcfebf76cc2f0546b71fa26476e626fbe4e460fb7b4c3a7a8bd5bd",
+      "bytes": 64482,
+      "license": "Apache-2.0",
+      "purpose": "date/number normalization",
+      "location": "model"
+    },
+    {
+      "name": "LICENSE",
+      "version": "melo-vits-zh_en-v2",
+      "sha256": "88a50e5a02bbc2a5c2f084dc19da751aa97b1690f5fda76cd8005c8634d1ca70",
+      "bytes": 1053,
+      "license": "MIT",
+      "purpose": "model/phoneme/lexicon data and attribution",
+      "location": "model"
+    },
+    {
+      "name": "notices/KALDIFST-LICENSE",
+      "version": "pinned exact source version",
+      "sha256": "a682d6efd1ee5dee08a8e405c233c2c198ea70ae0718129daa83ab58cfe31c5d",
+      "bytes": 11728,
+      "license": "component license/third-party notices",
+      "purpose": "attribution and future distribution license closure",
+      "location": "runtime"
+    },
+    {
+      "name": "notices/OPENFST-COPYING",
+      "version": "pinned exact source version",
+      "sha256": "4300529197035fd3452350718a0b8cee984e9412c9932d7f35fcde849fc97a4b",
+      "bytes": 559,
+      "license": "component license/third-party notices",
+      "purpose": "attribution and future distribution license closure",
+      "location": "runtime"
+    },
+    {
+      "name": "notices/ORT-LICENSE",
+      "version": "pinned exact source version",
+      "sha256": "2f07c72751aed99790b8a4869cf2311df85a860b22ded05fa22803587a48922c",
+      "bytes": 1073,
+      "license": "component license/third-party notices",
+      "purpose": "attribution and future distribution license closure",
+      "location": "runtime"
+    },
+    {
+      "name": "notices/ORT-ThirdPartyNotices.txt",
+      "version": "pinned exact source version",
+      "sha256": "0e07b95f3a8d6230037707c5c4a2b554d12c4cb67369669ac255635528ffcee2",
+      "bytes": 325054,
+      "license": "component license/third-party notices",
+      "purpose": "attribution and future distribution license closure",
+      "location": "runtime"
+    },
+    {
+      "name": "notices/SHERPA-LICENSE",
+      "version": "pinned exact source version",
+      "sha256": "cfc7749b96f63bd31c3c42b5c471bf756814053e847c10f3eb003417bc523d30",
+      "bytes": 11358,
+      "license": "component license/third-party notices",
+      "purpose": "attribution and future distribution license closure",
+      "location": "runtime"
+    }
+  ],
+  "threads": 4,
+  "speaker": "melo-fixed-0",
+  "normalization_order": [
+    "date.fst",
+    "number.fst"
+  ],
+  "excluded": [
+    "espeak",
+    "espeak-ng",
+    "piper-phonemize",
+    "official broad sherpa TTS DLL",
+    "cppjieba dict",
+    "model.int8.onnx LFS stub",
+    "phone.fst",
+    "new_heteronym.fst"
+  ],
+  "legal_review": "LEGAL REVIEW RECOMMENDED",
+  "distribution_obligations": [
+    "Apache notices and adapted-source attribution",
+    "model and lexicon MIT / CMU provenance",
+    "ORT exact-version MIT LICENSE and full ThirdPartyNotices",
+    "Eigen MPL-2.0 covered-source availability",
+    "Microsoft redistributable terms"
+  ],
+  "ort_notices_sha256": "0e07b95f3a8d6230037707c5c4a2b554d12c4cb67369669ac255635528ffcee2"
+}

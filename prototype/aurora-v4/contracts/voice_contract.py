@@ -22,7 +22,7 @@ def validate_voice(kind, payload):
         require(set(payload) == SNAPSHOT_KEYS)
         require(type(payload["revision"]) is int and 0 <= payload["revision"] <= 9007199254740991)
         require(payload["state"] in STATES and type(payload["enabled"]) is bool)
-        require(payload["provider"] in {"", "edge_tts", "remote_cosyvoice", "fake"})
+        require(payload["provider"] in {"", "edge_tts", "local_sherpa_melo", "remote_cosyvoice", "fake"})
         require(payload["generation_id"] is None or identifier(payload["generation_id"]))
         require(payload["error_code"] in ERRORS)
         require((payload["state"] == "error") == bool(payload["error_code"]))

@@ -108,6 +108,7 @@ pub struct BackendManager {
     mode: String,
     local_model: Option<crate::local_model::LocalModelSupervisor>,
     pub live2d: Option<crate::live2d::Live2d>,
+    pub local_voice: Option<crate::local_voice::LocalVoiceSupervisor>,
     #[cfg(test)]
     test_data_directory: Option<PathBuf>,
 }
@@ -118,6 +119,7 @@ impl BackendManager {
         // Mock transport remains an explicit test/development opt-in.
         let mut manager = Self::with_mode(std::env::var("AURORA_V4_BACKEND").unwrap_or_else(|_| "production".into()));
         manager.live2d = Some(Default::default());
+        if manager.mode == "production" && std::env::var("AURORA_LOCAL_VOICE_DISABLE").as_deref() != Ok("1") { manager.local_voice = Some(Default::default()); }
         if manager.mode == "production" && std::env::var("AURORA_V4_CHAT_PROVIDER").as_deref() != Ok("ollama") {
             manager.local_model = Some(Default::default());
         }
@@ -131,6 +133,7 @@ impl BackendManager {
             desktop_started: Instant::now(),
             mode,
             local_model: None,
+            local_voice: None,
             live2d: None,
             #[cfg(test)]
             test_data_directory: None,
@@ -226,6 +229,7 @@ impl BackendManager {
             // behind. Keep the owner epoch locked until cleanup finishes so an
             // old startup cannot tear down a newer instance.
             if let Some(supervisor) = &self.local_model { supervisor.shutdown().await; }
+        if let Some(supervisor) = &self.local_voice { supervisor.shutdown().await; }
             drop(data);
             self.emit_state().await;
         }
@@ -236,6 +240,7 @@ impl BackendManager {
         if startup_cancel.load(Ordering::SeqCst) { return Err("STALE_STARTUP".into()); }
         let spawn_started = Instant::now();
         let launch = find_sidecar_launch(&self.mode)?;
+        let voice_handoff = if let Some(supervisor) = &self.local_voice { supervisor.start().await.ok() } else { None };
         let handoff = if let Some(supervisor) = &self.local_model { Some(supervisor.start(startup_cancel).await?) } else { None };
         if self.inner.lock().await.epoch != epoch { return Err("STALE_STARTUP".into()); }
         let token = format!("{}{}", Uuid::new_v4().simple(), Uuid::new_v4().simple());
@@ -264,6 +269,10 @@ impl BackendManager {
         #[cfg(test)]
         if let Some(directory) = &self.test_data_directory {
             command.env("AURORA_USER_DATA_DIR", directory);
+        }
+        for name in ["AURORA_LOCAL_VOICE_ENDPOINT", "AURORA_LOCAL_VOICE_TOKEN"] { command.env_remove(name); }
+        if let Some(private) = voice_handoff {
+            command.env("AURORA_LOCAL_VOICE_ENDPOINT", private.endpoint).env("AURORA_LOCAL_VOICE_TOKEN", private.token);
         }
         // Always clear inherited private values before selecting this instance's provider.
         for name in ["AURORA_LOCAL_ENDPOINT", "AURORA_LOCAL_TOKEN", "AURORA_LOCAL_MODEL"] { command.env_remove(name); }
@@ -711,6 +720,7 @@ impl BackendManager {
             }
         }
         if let Some(supervisor) = &self.local_model { supervisor.shutdown().await; }
+        if let Some(supervisor) = &self.local_voice { supervisor.shutdown().await; }
         drop(job);
         if let Some(audio) = audio {
             // Python has exited: now join and delete only this owned handoff root.

@@ -40,7 +40,7 @@ RULES = {
     "live2d.y": ("integer", None, -32768, 32767),
     "voice.enabled": ("boolean", None, None, None),
     "voice.playback.enabled": ("boolean", None, None, None),
-    "voice.tts.provider": ("string", ["edge_tts", "remote_cosyvoice", "fake"], None, None),
+    "voice.tts.provider": ("string", ["edge_tts", "local_sherpa_melo", "remote_cosyvoice", "fake"], None, None),
     "voice.tts.voice": ("string", None, None, None),
     "voice.tts.timeout_seconds": ("number", None, 0.1, 120),
     "ollama.host": ("string", None, None, None),

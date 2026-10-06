@@ -28,7 +28,7 @@ impl Snapshot {
             )
             || !matches!(
                 result.provider.as_str(),
-                "" | "edge_tts" | "remote_cosyvoice" | "fake"
+                "" | "edge_tts" | "local_sherpa_melo" | "remote_cosyvoice" | "fake"
             )
             || result
                 .generation_id

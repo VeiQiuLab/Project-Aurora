@@ -3,6 +3,7 @@ mod registry;
 mod sidecar;
 mod settings;
 mod local_model;
+mod local_voice;
 mod voice;
 mod audio;
 mod audio_envelope;
@@ -18,6 +19,11 @@ use tauri::{Emitter, Manager};
 #[tauri::command]
 fn live2d_snapshot(manager: tauri::State<'_, BackendManager>) -> live2d::Snapshot {
     manager.live2d.as_ref().map(|host| host.snapshot()).unwrap_or_default()
+}
+
+#[tauri::command]
+async fn local_voice_snapshot(manager: tauri::State<'_, BackendManager>) -> Result<local_voice::Snapshot, String> {
+    Ok(match &manager.local_voice { Some(owner) => owner.snapshot().await, None => Default::default() })
 }
 
 #[derive(Clone, Copy, Debug, Deserialize, Serialize)]
@@ -159,7 +165,11 @@ pub fn run() {
                 let handle = app.handle().clone();
                 host.start(move |snapshot| { let _ = handle.emit("live2d-status", snapshot); });
             }
+            let handle = app.handle().clone();
             tauri::async_runtime::spawn(async move {
+                if let Some(owner) = &startup_manager.local_voice {
+                    owner.observe(move |snapshot| { let _ = handle.emit("local-voice-status", snapshot); }).await;
+                }
                 let _ = startup_manager.start(false).await;
             });
             Ok(())
@@ -173,6 +183,7 @@ pub fn run() {
             conversation_list,
             settings_get,
             live2d_snapshot,
+            local_voice_snapshot,
             voice_get,
             voice_stop,
             settings_update,

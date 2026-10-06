@@ -1,0 +1,167 @@
+{
+  "starting_head": "dd1ceb24b59d2ad26a934055c7d6554528828bbb",
+  "original_untracked": [
+    {
+      "path": "prototype/aurora-v4/desktop/tests/clean_melo_feasibility.mjs",
+      "category": "B",
+      "disposition": "preserve historical experiment untracked; no deletion",
+      "sha256": "3ed7f00001498756ed3f01fb7405ca6a945939b873b3947b68522636df8485bd",
+      "bytes": 968
+    },
+    {
+      "path": "prototype/aurora-v4/desktop/tests/local_voice_feasibility.mjs",
+      "category": "B",
+      "disposition": "preserve historical experiment untracked; no deletion",
+      "sha256": "f32b2525f86be719787678c6d5103829006bcc047ec95315dd7c4f6842ab4878",
+      "bytes": 8185
+    },
+    {
+      "path": "prototype/aurora-v4/desktop/tests/local_voice_performance.mjs",
+      "category": "B",
+      "disposition": "preserve historical experiment untracked; no deletion",
+      "sha256": "ed7509648870a34400198af0ade03432827ecce935fdfe97e91e06cb46710e8f",
+      "bytes": 15455
+    },
+    {
+      "path": "prototype/aurora-v4/desktop/tests/sherpa_melo_feasibility.mjs",
+      "category": "B",
+      "disposition": "preserve historical experiment untracked; no deletion",
+      "sha256": "898b90e8d31b0c0f6628535c1353a948d0543640545bc63d2e68f2b1ceca228e",
+      "bytes": 13818
+    },
+    {
+      "path": "prototype/aurora-v4/docs/LICENSE_CLEAN_MELO_FEASIBILITY.md",
+      "category": "A",
+      "disposition": "retain as formal audit/reproducible build source",
+      "sha256": "37ddb294be780a691c63fed168afcac7762db9c447067267b0dd3ae225e41e19",
+      "bytes": 38349
+    },
+    {
+      "path": "prototype/aurora-v4/docs/LOCAL_VOICE_LICENSE_CLOSURE.md",
+      "category": "A",
+      "disposition": "retain as formal audit/reproducible build source",
+      "sha256": "a7df95bc327206291ce0b7e4f5885dbbff0908182cf4443b85cb76ebc2a5e7d3",
+      "bytes": 21524
+    },
+    {
+      "path": "prototype/aurora-v4/docs/LOCAL_VOICE_PERFORMANCE_FEASIBILITY.md",
+      "category": "A",
+      "disposition": "retain as formal audit/reproducible build source",
+      "sha256": "b27261118ad926e25b558388a83e30337df808d1e6a92996de47c037b1d61e18",
+      "bytes": 35400
+    },
+    {
+      "path": "prototype/aurora-v4/docs/LOCAL_VOICE_RUNTIME_AUDIT.md",
+      "category": "A",
+      "disposition": "retain as formal audit/reproducible build source",
+      "sha256": "f66956bf6e73aa61b01cec37131a123211d17a2386f8c78af633e59b34de712e",
+      "bytes": 25479
+    },
+    {
+      "path": "prototype/aurora-v4/docs/SHERPA_MELO_LOCAL_VOICE_FEASIBILITY.md",
+      "category": "A",
+      "disposition": "retain as formal audit/reproducible build source",
+      "sha256": "d324d61fc8a0075d25e24a1dc702c894da12390c189c41bd3e38633b1207d444",
+      "bytes": 34980
+    },
+    {
+      "path": "scripts/audit_clean_melo.py",
+      "category": "A",
+      "disposition": "retain as formal audit/reproducible build source",
+      "sha256": "5f9e060a2db975a6c8afb9c665b9d898fe6bf0ff9a8fda6b89a97b5767721f43",
+      "bytes": 3859
+    },
+    {
+      "path": "scripts/benchmark_sherpa_melo.cpp",
+      "category": "A",
+      "disposition": "retain as formal audit/reproducible build source",
+      "sha256": "de89f308b2d6ec9c17d6489c4d6237088bca26557ffdc46ce2fd3c632ec135a1",
+      "bytes": 9777
+    },
+    {
+      "path": "scripts/probe_clean_melo.py",
+      "category": "B",
+      "disposition": "preserve historical experiment untracked; no deletion",
+      "sha256": "41c71a9a4b6719ae52415e6075ea20a8af183da35927dfc0e7f7a5a952355e7c",
+      "bytes": 5304
+    },
+    {
+      "path": "scripts/probe_local_cosyvoice.py",
+      "category": "B",
+      "disposition": "preserve historical experiment untracked; no deletion",
+      "sha256": "22be9e34c772c7594f71cf323d5ec325022354584e7c35cf9d7c025f4d1c3ee4",
+      "bytes": 14996
+    },
+    {
+      "path": "scripts/probe_permissive_phonemizer.py",
+      "category": "B",
+      "disposition": "preserve historical experiment untracked; no deletion",
+      "sha256": "0afdaaf8da889781415ba1db415f26c3e3d109e786c28928a07445d780ed590c",
+      "bytes": 2053
+    },
+    {
+      "path": "scripts/probe_sherpa_melo.py",
+      "category": "B",
+      "disposition": "preserve historical experiment untracked; no deletion",
+      "sha256": "f7f6f56e2e1baa63cf8aedcd9347cd63345eb8b65ea2e1e16b6aa406b5280382",
+      "bytes": 8851
+    },
+    {
+      "path": "scripts/sherpa_melo_clean/CMakeLists.txt",
+      "category": "A",
+      "disposition": "retain as formal audit/reproducible build source",
+      "sha256": "268e97d9a45e1667a54b96029d76a470b218cd1cefff1deac84367537ca07d56",
+      "bytes": 6696
+    },
+    {
+      "path": "scripts/sherpa_melo_clean/clean_c_api.cpp",
+      "category": "A",
+      "disposition": "retain as formal audit/reproducible build source",
+      "sha256": "02494f3659a6a7b3e420996ca9f11cc0eb84dc4a9f7a6c161b0898d2bc329b5d",
+      "bytes": 6496
+    },
+    {
+      "path": "scripts/sherpa_melo_clean/cpu_session.cpp",
+      "category": "A",
+      "disposition": "retain as formal audit/reproducible build source",
+      "sha256": "852c17a23d3e301a4a2e22fc07a8e6d3a97800afc01866d24ea86ad4d3bc838d",
+      "bytes": 539
+    },
+    {
+      "path": "scripts/sherpa_melo_clean/oracle_trace.cpp",
+      "category": "A",
+      "disposition": "retain as formal audit/reproducible build source",
+      "sha256": "42d332d6b98dfe600b04479bf392204f13dd75116c3dffd0e2739687241373fd",
+      "bytes": 3883
+    },
+    {
+      "path": "scripts/voice_feasibility_sidecar/production_sidecar/server.py",
+      "category": "B",
+      "disposition": "preserve historical experiment untracked; no deletion",
+      "sha256": "15b42220f6ea9b55f9ca461db22c2b4ff3e7900247ad05f6986fc5e72f6c3009",
+      "bytes": 4408
+    },
+    {
+      "path": "tests/test_clean_melo_feasibility.py",
+      "category": "B",
+      "disposition": "preserve historical experiment untracked; no deletion",
+      "sha256": "2a1f52eebd4074d0527a6ac7bd844a42ba326d30d1f1c13f068fd153c43171bf",
+      "bytes": 3043
+    },
+    {
+      "path": "tests/test_sherpa_melo_probe.py",
+      "category": "B",
+      "disposition": "preserve historical experiment untracked; no deletion",
+      "sha256": "5f51ec063ff70f2a309d84ffe3ce3b0aa180275819b2aac1233a79e5244fc856",
+      "bytes": 2117
+    },
+    {
+      "path": "tests/test_voice_feasibility_fixture.py",
+      "category": "B",
+      "disposition": "preserve historical experiment untracked; no deletion",
+      "sha256": "ebe66f77f4c2cb5a586f6620f2862eef0d96f1719598157aebef6fdd1f9af22e",
+      "bytes": 4573
+    }
+  ],
+  "C_policy": "runtime/model/binary/output stay external or ignored; none of the original 23 are C assets"
+}
