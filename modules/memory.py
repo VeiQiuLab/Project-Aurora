@@ -357,6 +357,24 @@ class MemoryStore:
             self._write(normalized)
         return normalized
 
+    def inspect_records(self, collection):
+        """Read raw existing records and source without normalization or repair.
+
+        Visibility must not synthesize IDs/timestamps, mutate metadata, restore a
+        backup, or call candidate approval. Use the same storage reader/lock as
+        context and post-turn, while keeping their existing behavior unchanged.
+        """
+        from copy import deepcopy
+        if collection not in {"saved", "pending"}:
+            raise ValueError("Invalid Memory inspection collection.")
+        path = self.file_path if collection == "saved" else self.candidates_file
+        data, source = self._load_json_list(path)
+        if source == "corrupt":
+            raise OSError("Memory inspection storage unavailable.")
+        if collection == "pending":
+            data = [item for item in data if item.get("status", "pending") == "pending"]
+        return deepcopy(data), source
+
     def create(self, memory_type, content, importance="normal", metadata=None):
         item = self._new_memory(memory_type, content, importance, metadata)
         memories = self.list_memories()

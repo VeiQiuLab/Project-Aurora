@@ -135,7 +135,7 @@ class ProductionComposition:
             "chat_streaming": True, "chat_cancel": True,
             "settings": {"read": True, "update": True, "ui": False},
             "conversation": {"list": True, "get": True, "create": True, "save": True},
-            "memory": False, "knowledge": False, "rag": False,
+            "memory": True, "knowledge": False, "rag": False,
             "voice": {"ipc": True,
                       "edge_tts": exists("modules/experience/voice/providers/edge_tts.py"),
                       "cosyvoice_remote": exists("modules/experience/voice/providers/remote_cosyvoice.py"),

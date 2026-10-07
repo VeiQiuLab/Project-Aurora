@@ -336,3 +336,14 @@ select.setting-input option { color: #eee; background: #171717; }
 .voice-controls { pointer-events: auto; display: flex; align-items: center; justify-content: flex-end; gap: 12px; padding-block: 4px; }
 .voice-controls .settings-note { margin: 0; white-space: nowrap; }
 .voice-controls .ghost-button { width: auto; flex: none; font-size: 12px; padding: 4px 8px; }
+.memory-section > summary { cursor: pointer; }
+.memory-section section { padding-block: 12px; border-top: 1px solid rgba(255,255,255,.08); }
+.memory-section h3 { margin-block: 8px; font-size: 14px; }
+.memory-list { list-style: none; margin: 12px 0; padding: 0; }
+.memory-list li { margin-block: 8px; }
+.memory-list small { display: block; opacity: .65; padding-inline: 8px; }
+.memory-record { width: 100%; text-align: left; white-space: pre-wrap; overflow-wrap: anywhere; }
+.memory-body, .memory-metadata dd { white-space: pre-wrap; overflow-wrap: anywhere; }
+.memory-metadata { font-size: 12px; }
+.memory-metadata dt { opacity: .65; margin-top: 12px; }
+.memory-metadata dd { margin: 4px 0 12px; }

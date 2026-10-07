@@ -615,6 +615,10 @@ impl BackendManager {
         self.send_value(crate::settings::get(&format!("settings-get-{}", Uuid::new_v4().simple()))).await
     }
 
+    pub async fn memory_read(&self, request_id: String, collection: String, record_id: Option<String>, offset: u32) -> Result<(), String> {
+        self.send_value(crate::memory::read(&request_id, &collection, record_id.as_deref(), offset)?).await
+    }
+
     pub async fn settings_update(&self, expected_revision: u64, patch: Value) -> Result<(), String> {
         self.send_value(crate::settings::update(&format!("settings-update-{}", Uuid::new_v4().simple()), expected_revision, patch)?).await
     }
@@ -771,6 +775,11 @@ impl BackendManager {
             return Err("STALE_CONNECTION".into());
         }
         match message_type {
+            "memory.read.response" => {
+                let request_id = require_string(&value, "request_id", None)?.to_owned();
+                let snapshot = crate::memory::Snapshot::from_wire(value["payload"].clone())?;
+                self.emit(FrontendEvent::MemorySnapshot { request_id, snapshot });
+            }
             "audio.play.request" | "audio.stop.request" => {
                 let data = self.inner.lock().await;
                 if data.epoch != epoch { return Err("STALE_CONNECTION".into()); }
@@ -990,7 +999,10 @@ impl BackendManager {
                     .and_then(Value::as_str)
                     .unwrap_or("BACKEND_WARNING")
                     .to_owned();
-                if message_type == "error" && crate::settings::ERRORS.contains(&code.as_str()) {
+                if message_type == "error" && value.get("request_id").and_then(Value::as_str).is_some_and(|id| id.starts_with("memory-")) {
+                    let request_id = require_string(&value, "request_id", None)?.to_owned();
+                    self.emit(FrontendEvent::MemoryError { request_id, code });
+                } else if message_type == "error" && crate::settings::ERRORS.contains(&code.as_str()) {
                     let request_id = require_string(&value, "request_id", None)?.to_owned();
                     self.emit(FrontendEvent::SettingsError { request_id, code });
                 } else if message_type == "error"

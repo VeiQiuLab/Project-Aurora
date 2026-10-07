@@ -14,6 +14,7 @@ from typing import Any, Iterable, Mapping
 from settings_contract import ERRORS as SETTINGS_ERRORS, validate_settings
 from voice_contract import SNAPSHOT_KEYS as VOICE_KEYS, validate_voice
 from audio_contract import IDENTITY as AUDIO_IDENTITY, validate_audio
+from memory_contract import ERRORS as MEMORY_ERRORS, REQUEST_KEYS as MEMORY_REQUEST_KEYS, RESPONSE_KEYS as MEMORY_RESPONSE_KEYS, validate_memory
 
 
 PROTOCOL = "aurora-ipc"
@@ -41,6 +42,7 @@ STATES = {
 }
 TERMINAL_STATES = {"completed", "cancelled", "failed", "backend_lost", "rejected"}
 ERROR_CODES = {
+    *MEMORY_ERRORS,
     *SETTINGS_ERRORS,
     "PROTOCOL_ERROR",
     "PROTOCOL_VERSION_MISMATCH",
@@ -86,6 +88,10 @@ def _rule(
 _NO_CONTEXT = {"session_id", "generation_id", "seq"}
 _CHAT_IDS = {"request_id", "session_id", "generation_id"}
 MESSAGE_RULES: dict[str, MessageRule] = {
+    "memory.read.request": _rule(required={"request_id"}, forbidden=_NO_CONTEXT,
+        payload_required=MEMORY_REQUEST_KEYS, payload_allowed=MEMORY_REQUEST_KEYS),
+    "memory.read.response": _rule(required={"request_id"}, forbidden=_NO_CONTEXT,
+        payload_required=MEMORY_RESPONSE_KEYS, payload_allowed=MEMORY_RESPONSE_KEYS),
     "audio.play.request": _rule(forbidden=_NO_CONTEXT | {"request_id"},
         payload_required=AUDIO_IDENTITY | {"file"}, payload_allowed=AUDIO_IDENTITY | {"file"}),
     "audio.stop.request": _rule(forbidden=_NO_CONTEXT | {"request_id"},
@@ -505,6 +511,12 @@ def validate_chat_diagnostics(value):
 
 
 def _validate_payload(message_type: str, payload: Mapping[str, Any]) -> None:
+    if message_type.startswith("memory."):
+        try:
+            validate_memory(message_type, payload)
+        except (ValueError, TypeError, KeyError):
+            raise ContractError("Invalid Memory inspection payload.") from None
+        return
     if message_type.startswith("audio."):
         try:
             validate_audio(message_type, payload)

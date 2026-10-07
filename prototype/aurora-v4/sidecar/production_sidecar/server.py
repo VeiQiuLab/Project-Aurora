@@ -22,6 +22,7 @@ from production_sidecar.post_turn import PostTurnCoordinator
 from production_sidecar.voice import VoiceExecution
 from production_sidecar.rust_playback import RustPlayback
 from modules.settings_service import SettingsError
+from production_sidecar.memory_inspection import InspectionError, read_memory
 
 LOGGER = logging.getLogger("aurora-v4-production")
 
@@ -87,6 +88,18 @@ class ProductionSidecar(MockSidecar):
 
     async def dispatch(self, connection, message):
         kind = message["type"]
+        if kind == "memory.read.request":
+            try:
+                result = await asyncio.to_thread(read_memory, self.composition.context.memory, message["payload"])
+                await self.send(connection, {"protocol": "aurora-ipc", "version": 1,
+                    "type": "memory.read.response", "request_id": message["request_id"], "payload": result})
+            except (InspectionError, OSError, ValueError, TypeError, UnicodeError) as error:
+                code = error.code if isinstance(error, InspectionError) else "MEMORY_READ_FAILED"
+                # No exception text, paths, IDs, or memory body in logs/errors.
+                LOGGER.info("event=memory_inspection_failed code=%s", code)
+                await self.send_error(connection, code=code, message="Memory inspection could not complete.",
+                    retryable=True, envelope=message)
+            return
         if kind == "audio.event":
             if connection is self._audio_connection:
                 self.audio.accept(message["payload"])

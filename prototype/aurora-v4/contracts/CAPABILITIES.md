@@ -26,6 +26,10 @@ Top-level booleans mean the feature is callable through the v1 gateway in the
 current runtime. A false value may mean unsupported, disabled, or unavailable;
 health details may later distinguish those cases.
 
+V4-8B production reports `memory=true` for **read-only** saved-memory and
+pending-candidate inspection. This does not authorize approve/reject/edit/delete
+or imply that any such operations exist in the gateway. Mock keeps it false.
+
 `voice.ipc` gates all voice operations. V4-6B production enables metadata-only
 Voice status/stop commands and completed-turn playback in Python. Provider
 flags describe implementation support, not current network/device readiness.

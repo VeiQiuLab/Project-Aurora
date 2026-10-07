@@ -17,9 +17,12 @@ import { ownsChatEvent, consumeDelta, chatErrorLabel, chatDiagnosticLabel } from
 import "./styles.css";
 import { type SettingsEvent } from "./settings_state";
 import { SettingsPanel } from "./settings_panel";
+import { MemoryPanel } from "./memory_panel";
+import { type MemoryEvent } from "./memory_state";
 import { VoiceState, type VoiceSnapshot } from "./voice_state";
 import { ConversationWorkflow, mayFocusComposer, voiceRuntimeLabel } from "./workflow_policy";
 const settingsPanel = new SettingsPanel(invoke);
+const memoryPanel = new MemoryPanel(invoke);
 void listen("local-voice-status", event => settingsPanel.voiceRuntime(voiceRuntimeLabel(event.payload)))
   .then(() => invoke("local_voice_snapshot").then(value => settingsPanel.voiceRuntime(voiceRuntimeLabel(value))))
   .catch(() => settingsPanel.voiceRuntime("离线语音状态不可用"));
@@ -371,6 +374,7 @@ const updateBackendState = (state: BackendState): void => {
   const modelReady = modelConnectionAvailable(state, backendInfo);
   backendStatus.hidden = modelReady;
   settingsPanel.backend(connected && backendInfo.mode === "production");
+  memoryPanel.backend(connected && backendInfo.mode === "production");
   const local = backendInfo.diagnostics?.local_model;
   getElement("settings-model-status").textContent = local ? `内置本地模型 · ${local.configured_model} · Vulkan · ${modelReady ? "已就绪" : "不可用"}（旧服务设置不适用于内置模型）` : backendInfo.mode === "mock" ? "界面演示 · 未连接模型" : modelReady ? "旧服务已连接" : "旧模型服务不可用";
   const labels: Record<BackendState, string> = {
@@ -572,7 +576,8 @@ const applyConversationEvent = (event: GatewayEvent): boolean => {
   return false;
 };
 
-const applyGatewayEvent = (event: GatewayEvent): void => {
+const applyGatewayEvent = (event: GatewayEvent | MemoryEvent): void => {
+  if (event.type === "memory_snapshot" || event.type === "memory_error") { memoryPanel.accept(event); return; }
   if (event.type === "voice_state") {
     if (voiceConnected) { voiceState.accept(event.snapshot); renderVoice(); }
     return;
@@ -787,8 +792,8 @@ const showSettings = (show: boolean, focus = true) => {
   getElement("open-settings").setAttribute("aria-expanded", String(show));
   getElement("open-settings").classList.toggle("active", show);
   document.querySelector<HTMLDetailsElement>(".developer-menu")!.open = false;
-  if (show) { settingsPanel.open(); if (focus) getElement("settings-title").focus(); }
-  else { settingsPanel.close(); if (focus) void focusComposer(true); }
+  if (show) { settingsPanel.open(); memoryPanel.open(); if (focus) getElement("settings-title").focus(); }
+  else { settingsPanel.close(); memoryPanel.close(); if (focus) void focusComposer(true); }
 };
 getElement("open-settings").addEventListener("click", () => showSettings(Boolean(getElement("settings-pane").hidden)));
 getElement("close-settings").addEventListener("click", () => showSettings(false));

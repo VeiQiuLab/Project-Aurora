@@ -374,3 +374,27 @@ generation. Missing device/file, decoder failure and bounded-queue failure are
 audio errors, never Chat errors. Frontend still consumes only voice.changed.
 
 See [B-3 ownership and validation](../docs/B3_RUST_AUDIO.md).
+
+## V4-8B read-only Memory inspection
+
+`memory.read.request` and `memory.read.response` use only `request_id`, with no
+chat/session/generation/seq ownership. Authentication and connection epoch checks
+are unchanged. Request payload is exactly `collection` (`saved` or `pending`),
+`record_id` (null for list, a 64-character lowercase fingerprint for detail) and
+`offset` (0..1,000,000; detail requires 0). A list page holds at most 20 records.
+
+Response payload: `collection`, `operation` (`list`/`detail`), `records`, `total`,
+`offset`, `source` (`primary`/`missing`/`backup`). Each record contains
+`inspection_id`, `content`, `preview`, and allowlisted `fields`. List content is
+a 160-character preview; detail is complete, up to 32,768 characters with at most
+16 KiB of serialized metadata. Larger details return `MEMORY_RECORD_TOO_LARGE`
+instead of claiming truncated content is complete. Fingerprints are read handles
+only and are never persisted. If the record changes, detail returns
+`MEMORY_NOT_FOUND`, requiring a list refresh. Legacy absent metadata is not
+manufactured. Backup reads are marked and never repaired by this operation.
+
+Errors use the existing `error` envelope with `MEMORY_READ_FAILED`,
+`MEMORY_INVALID_DATA`, `MEMORY_NOT_FOUND`, or `MEMORY_RECORD_TOO_LARGE`; messages
+and logs exclude memory bodies. Rust emits correlated `memory_snapshot` or
+`memory_error` frontend events. UI invalidates requests on close/disconnect and
+does not accept stale responses. No Memory mutation command is defined.

@@ -4,6 +4,8 @@
   "title": "Project Aurora IPC v1",
   "description": "Bootstrap object and authenticated WebSocket JSON envelopes for Aurora IPC v1.",
   "oneOf": [
+    {"$ref": "#/$defs/memoryReadRequest"},
+    {"$ref": "#/$defs/memoryReadResponse"},
     {"$ref": "#/$defs/audioPlay"},
     {"$ref": "#/$defs/audioStop"},
     {"$ref": "#/$defs/audioEvent"},
@@ -42,6 +44,183 @@
     {"$ref": "#/$defs/error"}
   ],
   "$defs": {
+  "memoryReadRequest": {
+    "type": "object",
+    "required": [
+      "protocol",
+      "version",
+      "type",
+      "request_id",
+      "payload"
+    ],
+    "properties": {
+      "protocol": {
+        "const": "aurora-ipc"
+      },
+      "version": {
+        "const": 1
+      },
+      "type": {
+        "const": "memory.read.request"
+      },
+      "request_id": {
+        "$ref": "#/$defs/opaqueId"
+      },
+      "payload": {
+        "type": "object",
+        "required": [
+          "collection",
+          "record_id",
+          "offset"
+        ],
+        "properties": {
+          "collection": {
+            "enum": [
+              "saved",
+              "pending"
+            ]
+          },
+          "record_id": {
+            "anyOf": [
+              {
+                "type": "null"
+              },
+              {
+                "type": "string",
+                "pattern": "^[a-f0-9]{64}$"
+              }
+            ]
+          },
+          "offset": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 1000000
+          }
+        },
+        "additionalProperties": false
+      }
+    },
+    "additionalProperties": false
+  },
+  "memoryReadResponse": {
+    "type": "object",
+    "required": [
+      "protocol",
+      "version",
+      "type",
+      "request_id",
+      "payload"
+    ],
+    "properties": {
+      "protocol": {
+        "const": "aurora-ipc"
+      },
+      "version": {
+        "const": 1
+      },
+      "type": {
+        "const": "memory.read.response"
+      },
+      "request_id": {
+        "$ref": "#/$defs/opaqueId"
+      },
+      "payload": {
+        "type": "object",
+        "required": [
+          "collection",
+          "operation",
+          "records",
+          "total",
+          "offset",
+          "source"
+        ],
+        "properties": {
+          "collection": {
+            "enum": [
+              "saved",
+              "pending"
+            ]
+          },
+          "operation": {
+            "enum": [
+              "list",
+              "detail"
+            ]
+          },
+          "records": {
+            "type": "array",
+            "maxItems": 20,
+            "items": {
+              "type": "object",
+              "required": [
+                "inspection_id",
+                "content",
+                "preview",
+                "fields"
+              ],
+              "properties": {
+                "inspection_id": {
+                  "type": "string",
+                  "pattern": "^[a-f0-9]{64}$"
+                },
+                "content": {
+                  "type": "string",
+                  "maxLength": 32768
+                },
+                "preview": {
+                  "type": "boolean"
+                },
+                "fields": {
+                  "type": "object",
+                  "propertyNames": {
+                    "enum": [
+                      "id",
+                      "type",
+                      "importance",
+                      "enabled",
+                      "status",
+                      "created_time",
+                      "updated_time",
+                      "source",
+                      "score",
+                      "category",
+                      "confidence",
+                      "importance_score",
+                      "risk",
+                      "explanation",
+                      "source_detail",
+                      "analysis_version",
+                      "metadata"
+                    ]
+                  }
+                }
+              },
+              "additionalProperties": false
+            }
+          },
+          "total": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 1000000
+          },
+          "offset": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 1000000
+          },
+          "source": {
+            "enum": [
+              "primary",
+              "missing",
+              "backup"
+            ]
+          }
+        },
+        "additionalProperties": false
+      }
+    },
+    "additionalProperties": false
+  },
     "audioIdentity": {
       "type":"object", "required":["generation_id","revision"],
       "properties":{"generation_id":{"$ref":"#/$defs/opaqueId"},"revision":{"type":"integer","minimum":0,"maximum":9007199254740991}}
@@ -1081,6 +1260,7 @@
         "MODEL_UNAVAILABLE",
         "REQUEST_TIMEOUT",
         "REQUEST_CANCELLED",
+        "MEMORY_READ_FAILED", "MEMORY_INVALID_DATA", "MEMORY_NOT_FOUND", "MEMORY_RECORD_TOO_LARGE",
         "INTERNAL_ERROR",
         "NOT_FOUND",
         "INVALID_CONVERSATION",

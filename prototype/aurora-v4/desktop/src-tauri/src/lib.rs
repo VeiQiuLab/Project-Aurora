@@ -2,6 +2,7 @@ mod protocol;
 mod registry;
 mod sidecar;
 mod settings;
+mod memory;
 mod local_model;
 mod local_voice;
 mod voice;
@@ -110,6 +111,11 @@ async fn settings_get(manager: tauri::State<'_, BackendManager>) -> Result<(), S
 }
 
 #[tauri::command]
+async fn memory_read(manager: tauri::State<'_, BackendManager>, request_id: String, collection: String, record_id: Option<String>, offset: u32) -> Result<(), String> {
+    manager.memory_read(request_id, collection, record_id, offset).await
+}
+
+#[tauri::command]
 async fn settings_update(manager: tauri::State<'_, BackendManager>, expected_revision: u64, patch: serde_json::Value) -> Result<(), String> {
     manager.settings_update(expected_revision, patch).await
 }
@@ -191,6 +197,7 @@ pub fn run() {
             chat_start,
             conversation_list,
             settings_get,
+            memory_read,
             live2d_snapshot,
             local_voice_snapshot,
             voice_get,

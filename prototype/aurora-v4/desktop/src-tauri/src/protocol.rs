@@ -312,6 +312,8 @@ pub enum FrontendEvent {
     SettingsUpdated { request_id: String, change: crate::settings::Change },
     SettingsChanged { change: crate::settings::Change },
     SettingsError { request_id: String, code: String },
+    MemorySnapshot { request_id: String, snapshot: crate::memory::Snapshot },
+    MemoryError { request_id: String, code: String },
     VoiceState { snapshot: crate::voice::Snapshot },
 }
 
@@ -580,6 +582,7 @@ pub fn validate_sidecar_event(value: &Value) -> Result<&str, String> {
         .and_then(Value::as_str)
         .ok_or_else(|| "missing event type".to_string())?;
     let allowed = [
+        "memory.read.response",
         "audio.play.request", "audio.stop.request",
         "settings.get.response", "settings.update.response", "settings.changed",
         "voice.get.response", "voice.stop.response", "voice.changed",
@@ -622,6 +625,14 @@ pub fn validate_sidecar_event(value: &Value) -> Result<&str, String> {
             .ok_or_else(|| "chat.delta has empty content".to_string())?;
     }
     let payload = object(value, "payload")?;
+    if message_type == "memory.read.response" {
+        let keys = ["protocol", "version", "type", "request_id", "payload"];
+        if value.as_object().is_none_or(|root| root.len() != keys.len() || root.keys().any(|key| !keys.contains(&key.as_str()))) {
+            return Err("INVALID_MEMORY_RESPONSE".into());
+        }
+        require_string(value, "request_id", None)?;
+        crate::memory::Snapshot::from_wire(value["payload"].clone())?;
+    }
     if message_type == "conversation.changed" {
         if ["request_id", "session_id", "generation_id", "seq"].iter().any(|key| value.get(key).is_some())
             || payload.len() != 1 {
