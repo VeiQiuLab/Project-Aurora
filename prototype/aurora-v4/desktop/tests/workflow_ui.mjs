@@ -1,0 +1,101 @@
+// Actual frontend with controlled IPC; this does not certify Windows foreground behavior.
+import assert from "node:assert/strict";
+import { createRequire } from "node:module";
+import { fileURLToPath } from "node:url";
+import { createServer } from "vite";
+const {chromium}=createRequire(import.meta.url)("playwright");
+const server=await createServer({root:fileURLToPath(new URL("..",import.meta.url)),server:{host:"127.0.0.1",port:0}});
+await server.listen();
+const browser=await chromium.launch({channel:"msedge",headless:true});
+try {
+  const page=await browser.newPage();
+  const errors=[];page.on("pageerror",e=>errors.push(String(e)));
+  await page.addInitScript(()=>{
+    let next=0;
+    window.calls=[];window.events={};window.callbacks={};window.visible=true;window.focused=true;
+    window.fixture={state:"READY",info:{mode:"production",chat_enabled:true,error_code:null,diagnostics:{settings_status:"ready",ollama:{reachable:false,model_available:false},local_model:{state:"READY",configured_model:"Qwen3.5-4B",reachable:true,model_available:true}}},metrics:{desktopStartupMs:0,spawnToBootstrapMs:null,bootstrapToReadyMs:0,commandToFirstDeltaMs:null,cancelToTerminalMs:null,crashToDisconnectedMs:null,restartToReadyMs:null}};
+    window.__TAURI_INTERNALS__={metadata:{currentWindow:{label:"main"},currentWebview:{label:"main"}},
+      transformCallback:fn=>{const id=++next;window.callbacks[id]=fn;return id;},unregisterCallback:()=>{},
+      invoke:async(cmd,args)=>{
+        window.calls.push({cmd,args});
+        if(cmd==="plugin:event|listen"){window.events[args.event]=args.handler;return ++next;}
+        if(cmd==="plugin:window|is_visible")return window.visible;
+        if(cmd==="plugin:window|is_focused")return window.focused;
+        if(cmd==="plugin:window|is_maximized")return false;
+        if(cmd==="backend_subscribe"){window.gateway=args.channel;return window.fixture;}
+        if(cmd==="desktop_workflow_snapshot")return {trayReady:true,shortcutReady:true,error:""};
+        if(cmd==="local_voice_snapshot")return {state:"READY"};
+        if(cmd==="live2d_snapshot")return {status:"disabled"};
+        if(cmd==="window_action"){if(args.action==="hide")window.visible=false;return false;}
+        if(cmd==="chat_start")return {requestId:"r",sessionId:"s",generationId:"g"};
+        return null;
+      }};
+    window.emitDesktop=(name,payload)=>window.callbacks[window.events[name]]({event:name,id:1,payload});
+    window.send=e=>window.gateway.onmessage(e);
+  });
+  await page.goto(server.resolvedUrls.local[0]);
+  await page.waitForFunction(()=>window.calls.some(c=>c.cmd==="conversation_list"));
+  assert.equal(await page.locator("#send-button").isDisabled(),true);
+  await page.evaluate(()=>window.send({type:"conversation_list",requestId:"conversation-list-1",conversations:[]}));
+  assert.match(await page.locator("#conversation-status").textContent(),/新建对话/);
+  assert.equal(await page.locator("#prompt-input").isDisabled(),true);
+  await page.locator("#new-conversation").click();
+  assert.equal(await page.locator("#new-conversation").isDisabled(),true);
+  await page.evaluate(()=>window.send({type:"conversation_created",requestId:"conversation-create-1",conversation:{conversation_id:"a",title:"A",message_count:0}}));
+  await page.locator("#prompt-input").fill("A 的草稿");
+  await page.locator("#window-hide").click();
+  await page.evaluate(()=>{window.visible=true;window.emitDesktop("desktop-show",null);});
+  await page.waitForFunction(()=>document.activeElement?.id==="prompt-input");
+  assert.equal(await page.locator("#prompt-input").inputValue(),"A 的草稿");
+  await page.evaluate(()=>window.send({type:"conversation_list",requestId:"conversation-list-2",conversations:[{conversation_id:"a",title:"A",message_count:0},{conversation_id:"b",title:"B",message_count:1}]}));
+  await page.locator('[data-conversation-id="b"]').click();
+  assert.equal(await page.locator("#send-button").isDisabled(),true);
+  assert.equal(await page.locator("#prompt-input").inputValue(),"");
+  await page.evaluate(()=>window.send({type:"conversation_loaded",requestId:"conversation-get-1",conversation:{conversation_id:"a",title:"A",message_count:0,messages:[]}}));
+  assert.equal(await page.locator("#send-button").isDisabled(),true,"stale history cannot unlock another owner");
+  await page.evaluate(()=>window.send({type:"conversation_loaded",requestId:"conversation-get-2",conversation:{conversation_id:"b",title:"B",message_count:1,messages:[{role:"assistant",content:"旧消息"}]}}));
+  await page.locator("#prompt-input").fill("B 的草稿");
+  await page.locator('[data-conversation-id="a"]').click();
+  await page.evaluate(()=>window.send({type:"conversation_loaded",requestId:"conversation-get-3",conversation:{conversation_id:"a",title:"A",message_count:0,messages:[]}}));
+  assert.equal(await page.locator("#prompt-input").inputValue(),"A 的草稿");
+  await page.locator("#send-button").click();
+  assert.deepEqual(await page.evaluate(()=>window.calls.find(c=>c.cmd==="chat_start").args),{input:"A 的草稿",conversationId:"a"});
+  await page.waitForSelector("#stop-button:not([disabled])");
+  await page.locator("#stop-button").click();
+  assert.equal(await page.evaluate(()=>window.calls.find(c=>c.cmd==="chat_cancel").args.target.generationId),"g");
+  await page.locator("#message-viewport").focus();
+  await page.evaluate(()=>{window.focused=false;window.send({type:"chat_terminal",requestId:"r",generationId:"g",terminalState:"cancelled",errorCode:null,diagnostics:null});});
+  assert.equal(await page.evaluate(()=>document.activeElement.id),"message-viewport","completion must not focus composer");
+  await page.evaluate(()=>window.send({type:"voice_state",snapshot:{revision:1,state:"speaking",enabled:true,provider:"local_sherpa_melo",generation_id:"g",error_code:""}}));
+  await page.locator("#voice-stop").click();
+  assert.equal(await page.evaluate(()=>window.calls.find(c=>c.cmd==="voice_stop").args.generationId),"g");
+  await page.evaluate(()=>window.send({type:"voice_state",snapshot:{revision:2,state:"idle",enabled:true,provider:"local_sherpa_melo",generation_id:"g",error_code:""}}));
+  assert.equal(await page.locator("#voice-stop").isDisabled(),true);
+  await page.locator('[data-conversation-id="b"]').click();
+  await page.evaluate(()=>window.send({type:"conversation_error",requestId:"conversation-get-4",code:"NOT_FOUND"}));
+  assert.equal(await page.locator("#send-button").isDisabled(),true);
+  assert.match(await page.locator("#conversation-status").textContent(),/草稿已保留/);
+  await page.locator("#retry-conversation").click();
+  await page.evaluate(()=>window.send({type:"conversation_loaded",requestId:"conversation-get-5",conversation:{conversation_id:"b",title:"B",message_count:1,messages:[{role:"assistant",content:"旧消息"}]}}));
+  assert.equal(await page.locator("#prompt-input").inputValue(),"B 的草稿");
+  assert.equal(await page.locator("#send-button").isDisabled(),false);
+  assert.equal(await page.evaluate(()=>window.calls.some(c=>c.cmd==="voice_synthesize")),false,"history never replays voice");
+  await page.locator("#open-settings").click();
+  await page.evaluate(()=>window.emitDesktop("desktop-workflow-status",{trayReady:true,shortcutReady:false,error:"Ctrl+Alt+Space 注册失败，可能被其他应用占用。请使用托盘显示 Aurora。"}));
+  assert.match(await page.locator("#workflow-status").textContent(),/占用/);
+  await page.evaluate(()=>{window.emitDesktop("local-voice-status",{state:"DEGRADED",error_code:"VOICE_MODEL_MISSING"});window.emitDesktop("live2d-status",{status:"error"});window.fixture.info.diagnostics.local_model.model_available=false;window.send({type:"backend_state",...window.fixture,state:"DEGRADED"});});
+  assert.match(await page.locator("#settings-model-status").textContent(),/不可用/);
+  await page.locator("#close-settings").click();
+  assert.equal(await page.locator("#send-button").isDisabled(),true);
+  await page.evaluate(()=>{window.fixture.info.diagnostics.local_model.model_available=true;window.send({type:"backend_state",...window.fixture});});
+  assert.equal(await page.locator("#send-button").isDisabled(),false);
+  await page.reload();
+  await page.waitForFunction(()=>window.calls.some(c=>c.cmd==="conversation_list"));
+  await page.evaluate(()=>window.send({type:"conversation_list",requestId:"conversation-list-cold",conversations:[{conversation_id:"a",title:"A",message_count:0},{conversation_id:"b",title:"B",message_count:1}]}));
+  assert.equal(await page.locator(".conversation.active").getAttribute("data-conversation-id"),"b","cold start restores a valid remembered conversation");
+  assert.equal(await page.locator("#send-button").isDisabled(),true,"metadata does not mean history is ready");
+  await page.evaluate(()=>window.send({type:"conversation_loaded",requestId:"conversation-get-cold",conversation:{conversation_id:"b",title:"B",message_count:1,messages:[{role:"assistant",content:"保留的历史"}]}}));
+  assert.match(await page.locator("#messages").textContent(),/保留的历史/);
+  assert.deepEqual(errors,[]);
+  console.log("PASS: cold start, guards, drafts, stale history, focus decisions, both stops, recovery and shortcut failure feedback");
+} finally {await browser.close();await server.close();}

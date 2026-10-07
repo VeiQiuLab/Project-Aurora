@@ -24,7 +24,7 @@ export const chatErrorLabel = (state: string, code: string | null): string => {
   if (state === "cancelled") return "已取消";
   if (state === "backend_lost" || code === "BACKEND_LOST") return "后端连接已断开。";
   return ({
-    PROVIDER_UNAVAILABLE: "Ollama 当前不可用。",
+    PROVIDER_UNAVAILABLE: "当前模型服务不可用。",
     MODEL_UNAVAILABLE: "配置的模型未安装。",
     REQUEST_TIMEOUT: "请求超时，请稍后重试。",
     BACKEND_NOT_READY: "后端正在忙，请稍后重试。",

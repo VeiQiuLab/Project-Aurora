@@ -6,9 +6,9 @@ const idle = { ready: true, active: false, starting: false, cancelling: false, c
 
 test("idle composer exposes send, including empty and disconnected states", () => {
   assert.deepEqual(composerPresentation(idle), {
-    showStop: false, sendDisabled: false, stopDisabled: true, stopLabel: "停止生成",
+    showStop: false, sendDisabled: false, stopDisabled: true, stopLabel: "停止回复",
   });
-  for (const change of [{ hasText: false }, { ready: false }, { composing: true }]) {
+  for (const change of [{ hasText: false }, { ready: false }, { composing: true }, { conversationReady: false }]) {
     const view = composerPresentation({ ...idle, ...change });
     assert.equal(view.showStop, false);
     assert.equal(view.sendDisabled, true);

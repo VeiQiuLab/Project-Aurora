@@ -23,7 +23,7 @@ test("terminal ownership is unique, including completion beating a late Stop", (
   assert.equal(ownsChatEvent(owner(), { requestId: "old", generationId: "g" }), false);
 });
 test("main chat errors are Chinese and never echo raw backend data", () => {
-  assert.equal(chatErrorLabel("failed", "PROVIDER_UNAVAILABLE"), "Ollama 当前不可用。");
+  assert.equal(chatErrorLabel("failed", "PROVIDER_UNAVAILABLE"), "当前模型服务不可用。");
   assert.equal(chatErrorLabel("failed", "MODEL_UNAVAILABLE"), "配置的模型未安装。");
   assert.equal(chatErrorLabel("cancelled", "INTERNAL_ERROR"), "已取消");
   assert.equal(chatErrorLabel("backend_lost", null), "后端连接已断开。");

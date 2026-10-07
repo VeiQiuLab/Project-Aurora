@@ -4,7 +4,7 @@ export function characterLabel(value: unknown): string {
   const s = value as Record<string, unknown>;
   const labels: Record<string, string> = {
     disabled: "角色未启用", starting: "角色加载中…", stopped: "角色已停止",
-    error: "角色暂不可用 · 聊天与语音不受影响",
+    error: "角色暂不可用 · 聊天与语音不受影响。检查角色文件后关闭再开启桌面角色以恢复。",
   };
   if (s.status !== "ready") return labels[String(s.status)] ?? "角色状态不可用";
   if (s.visible !== true) return "角色已隐藏";

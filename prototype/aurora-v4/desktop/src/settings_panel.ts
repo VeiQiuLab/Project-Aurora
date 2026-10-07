@@ -17,7 +17,7 @@ const labels: Record<string, string> = {
   "rag.context_budget": "上下文预算", "rag.reserved_output": "预留输出空间", "context.warning_tokens": "上下文提醒阈值",
 };
 const optionLabels: Record<string, string> = { on: "开启", off: "关闭", default: "跟随服务", auto: "自动", manual: "手动",
-  edge_tts: "Edge TTS（在线）", local_sherpa_melo: "Local Melo（离线 · 固定音色）", remote_cosyvoice: "Remote CosyVoice（兼容）", fake: "测试 provider（无真实语音）" };
+  edge_tts: "Edge TTS（在线）", local_sherpa_melo: "Local Melo（离线 · 固定音色）", remote_cosyvoice: "Remote CosyVoice（Compatibility / Legacy）", fake: "测试 provider（无真实语音）" };
 const errorLabels: Record<string, string> = {
   CONFLICT: "设置已在其他位置改变。你的草稿已保留，请重新载入后再编辑。",
   INVALID_VALUE: "有设置值未通过服务端校验，请检查后重试。", INVALID_SETTING: "当前版本不支持这项设置。",

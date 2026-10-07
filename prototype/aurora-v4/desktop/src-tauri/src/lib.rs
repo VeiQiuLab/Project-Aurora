@@ -8,6 +8,7 @@ mod voice;
 mod audio;
 mod audio_envelope;
 mod live2d;
+mod workflow;
 
 use protocol::{BackendSnapshot, CancelTarget, ChatStartResult, FrontendEvent};
 use serde::{Deserialize, Serialize};
@@ -32,10 +33,16 @@ enum WindowAction {
     Minimize,
     ToggleMaximize,
     Close,
+    Hide,
+    Show,
 }
 
 #[tauri::command]
 async fn window_action(window: tauri::WebviewWindow, action: WindowAction) -> Result<bool, String> {
+    if matches!(action, WindowAction::Show | WindowAction::Hide) {
+        match action { WindowAction::Show => workflow::show(window.app_handle())?, _ => workflow::hide(window.app_handle())? }
+        return window.is_maximized().map_err(|error| error.to_string());
+    }
     match action {
         WindowAction::Minimize => window.minimize(),
         WindowAction::ToggleMaximize => {
@@ -46,10 +53,16 @@ async fn window_action(window: tauri::WebviewWindow, action: WindowAction) -> Re
             }
         }
         WindowAction::Close => window.close(),
+        WindowAction::Hide | WindowAction::Show => unreachable!(),
     }
     .map_err(|error| error.to_string())?;
 
     window.is_maximized().map_err(|error| error.to_string())
+}
+
+#[tauri::command]
+fn desktop_workflow_snapshot(state: tauri::State<'_, workflow::Workflow>) -> workflow::Snapshot {
+    state.0.lock().unwrap().clone()
 }
 
 #[tauri::command]
@@ -150,17 +163,12 @@ pub fn run() {
     let app = tauri::Builder::default()
         // Must precede setup: a secondary process never starts another sidecar.
         .plugin(tauri_plugin_single_instance::init(|app, _args, _cwd| {
-            if let Some(window) = app.get_webview_window("main") {
-                // Attempt every step even if one fails; retain maximized state.
-                if window.is_minimized().unwrap_or(false) {
-                    let _ = window.unminimize();
-                }
-                let _ = window.show();
-                let _ = window.set_focus();
-            }
+            let _ = workflow::show(app);
         }))
         .manage(manager)
+        .manage(workflow::Workflow::default())
         .setup(move |app| {
+            workflow::setup(app.handle());
             if let Some(host) = &startup_manager.live2d {
                 let handle = app.handle().clone();
                 host.start(move |snapshot| { let _ = handle.emit("live2d-status", snapshot); });
@@ -176,6 +184,7 @@ pub fn run() {
         })
         .invoke_handler(tauri::generate_handler![
             window_action,
+            desktop_workflow_snapshot,
             set_reduced_effects,
             backend_subscribe,
             backend_snapshot,

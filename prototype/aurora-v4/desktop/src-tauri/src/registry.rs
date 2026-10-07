@@ -22,6 +22,11 @@ pub struct RequestRegistry {
 }
 
 impl RequestRegistry {
+    // Read the existing owner, never create another cancellation authority.
+    pub fn active_owner(&self) -> Option<RequestOwner> {
+        self.entries.values().find(|e| e.terminal_state.is_none()).map(|e| e.owner.clone())
+    }
+
     pub fn start(&mut self, owner: RequestOwner) -> Result<(), String> {
         if self
             .entries
@@ -126,6 +131,24 @@ mod tests {
             session_id: "session-1".into(),
             generation_id: generation.into(),
         }
+    }
+
+    #[test]
+    fn tray_stop_targets_only_current_owner_after_completion_or_backend_loss() {
+        let mut registry = RequestRegistry::default();
+        assert_eq!(registry.active_owner(), None);
+        let first = owner("first");
+        registry.start(first.clone()).unwrap();
+        assert_eq!(registry.active_owner(), Some(first.clone()));
+        registry.terminal(&first, "completed").unwrap();
+        assert_eq!(registry.active_owner(), None);
+        let next = owner("next");
+        registry.start(next.clone()).unwrap();
+        assert!(!registry.request_cancel(&first).unwrap());
+        assert_eq!(registry.active_owner(), Some(next.clone()));
+        assert!(!registry.is_cancel_requested(&next));
+        registry.backend_lost();
+        assert_eq!(registry.active_owner(), None);
     }
 
     #[test]

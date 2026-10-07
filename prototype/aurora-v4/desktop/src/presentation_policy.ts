@@ -5,13 +5,14 @@ interface ComposerState {
   cancelling: boolean;
   composing: boolean;
   hasText: boolean;
+  conversationReady?: boolean;
 }
 
 export const composerPresentation = (state: ComposerState) => ({
   showStop: state.starting || state.active,
-  sendDisabled: !state.ready || state.starting || state.active || state.composing || !state.hasText,
+  sendDisabled: !state.ready || state.conversationReady === false || state.starting || state.active || state.composing || !state.hasText,
   stopDisabled: !state.active || state.cancelling,
-  stopLabel: state.cancelling ? "正在停止…" : state.starting ? "正在发送…" : "停止生成",
+  stopLabel: state.cancelling ? "正在停止…" : state.starting ? "正在发送…" : "停止回复",
 });
 
 export const captionLabel = (maximized: boolean): string => maximized ? "还原" : "最大化";

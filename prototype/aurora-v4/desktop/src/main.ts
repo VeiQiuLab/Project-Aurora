@@ -18,11 +18,8 @@ import "./styles.css";
 import { type SettingsEvent } from "./settings_state";
 import { SettingsPanel } from "./settings_panel";
 import { VoiceState, type VoiceSnapshot } from "./voice_state";
+import { ConversationWorkflow, mayFocusComposer, voiceRuntimeLabel } from "./workflow_policy";
 const settingsPanel = new SettingsPanel(invoke);
-const voiceRuntimeLabel = (value: unknown) => {
-  const state = (value as { state?: string })?.state;
-  return state === "READY" ? "离线语音已就绪" : ["STARTING", "LOADING_MODEL"].includes(state ?? "") ? "离线语音正在启动" : state === "FAILED" ? "离线语音错误" : "离线语音不可用";
-};
 void listen("local-voice-status", event => settingsPanel.voiceRuntime(voiceRuntimeLabel(event.payload)))
   .then(() => invoke("local_voice_snapshot").then(value => settingsPanel.voiceRuntime(voiceRuntimeLabel(value))))
   .catch(() => settingsPanel.voiceRuntime("离线语音状态不可用"));
@@ -157,7 +154,7 @@ interface ActiveGeneration extends ChatStartResult {
   timings: Record<string, number | null>;
 }
 
-type WindowAction = "minimize" | "toggle_maximize" | "close";
+type WindowAction = "minimize" | "toggle_maximize" | "close" | "hide";
 
 const getElement = <T extends HTMLElement>(id: string): T => {
   const element = document.getElementById(id);
@@ -220,6 +217,37 @@ let creatingConversation = false;
 let loadingConversationId: string | null = null;
 
 const conversations = new ConversationStore(initialConversations());
+const workflow = new ConversationWorkflow();
+let conversationFocusRequested = false;
+let conversationNotice = "正在连接会话服务…";
+const focusComposer = async (requested: boolean): Promise<void> => {
+  // Browser focus never restores the native window. Only explicit entry points do that.
+  const [visible, focused] = await Promise.all([desktopWindow.isVisible(), desktopWindow.isFocused()]);
+  if (mayFocusComposer(requested, visible, focused, !getElement("settings-pane").hidden)) promptInput.focus();
+};
+const rememberConversation = (): void => {
+  try { localStorage.setItem("aurora.active-conversation", conversations.activeId); } catch { /* optional continuity hint */ }
+};
+const restoreDraft = (): void => {
+  promptInput.value = workflow.draft(conversations.activeId);
+  promptInput.style.height = "auto";
+};
+const conversationFailure = (): void => {
+  loadingConversationId = null;
+  creatingConversation = false;
+  conversationFocusRequested = false;
+  workflow.phase = "error";
+  conversationNotice = "会话暂不可用。草稿已保留，请重试连接或重新选择对话。";
+  renderConversation(); updateControls();
+};
+const loadConversation = (id: string, requested: boolean): void => {
+  loadingConversationId = id;
+  workflow.phase = "loading";
+  conversationFocusRequested = requested;
+  conversationNotice = "正在载入对话…";
+  restoreDraft(); renderConversation(); updateControls();
+  void invoke("conversation_get", { conversationId: id }).catch(conversationFailure);
+};
 
 const productionRecord = (item: {
   conversation_id: string;
@@ -235,8 +263,14 @@ const productionRecord = (item: {
 const requestProductionConversationList = (): void => {
   if (!productionConversationMode || conversationListRequested) return;
   conversationListRequested = true;
+  if (!conversations.activeId || workflow.phase === "none") {
+    workflow.phase = "loading";
+    conversationNotice = "正在载入会话列表…";
+    renderMessages(); updateControls();
+  }
   void invoke("conversation_list").catch(() => {
     conversationListRequested = false;
+    conversationFailure();
   });
 };
 
@@ -309,6 +343,7 @@ const updateControls = (): void => {
     ready, active, starting: startingGeneration,
     cancelling: Boolean(activeGeneration?.cancelRequested),
     composing: compositionActive, hasText: Boolean(promptInput.value.trim()),
+    conversationReady: workflow.canSend(conversations.activeId) && !creatingConversation,
   });
   sendButton.hidden = presentation.showStop;
   stopButton.hidden = !presentation.showStop;
@@ -316,8 +351,18 @@ const updateControls = (): void => {
   stopButton.disabled = presentation.stopDisabled;
   stopButton.title = presentation.stopLabel;
   stopButton.setAttribute("aria-label", presentation.stopLabel);
+  promptInput.disabled = !conversations.activeId || workflow.phase === "loading" || workflow.phase === "none";
   crashButton.disabled = !["READY", "DEGRADED"].includes(backendState);
   restartButton.disabled = !["READY", "DEGRADED", "DISCONNECTED", "STOPPED"].includes(backendState);
+  getElement<HTMLButtonElement>("recover-connection").disabled = restartButton.disabled || active || startingGeneration;
+  newConversationButton.disabled = creatingConversation || Boolean(loadingConversationId) || active || startingGeneration ||
+    !["READY", "DEGRADED"].includes(backendState);
+  getElement("conversation-status").textContent = conversationNotice;
+  getElement("conversation-status").parentElement!.hidden = !conversationNotice;
+  getElement<HTMLButtonElement>("retry-conversation").hidden = workflow.phase !== "error";
+  for (const button of conversationList.querySelectorAll<HTMLButtonElement>("button")) {
+    button.disabled = creatingConversation || Boolean(loadingConversationId) || active || startingGeneration;
+  }
 };
 
 const updateBackendState = (state: BackendState): void => {
@@ -339,6 +384,10 @@ const updateBackendState = (state: BackendState): void => {
     STOPPING: "正在停止",
   };
   backendStatusText.textContent = connected && !modelReady ? "模型服务不可用 · 仍可查看对话与设置" : labels[state];
+  if (!connected) {
+    conversationListRequested = false;
+    if (loadingConversationId || creatingConversation) conversationFailure();
+  }
   promptInput.placeholder = connected && !modelReady ? "模型服务暂不可用，你仍可编辑消息" : "和 Aurora 说点什么……";
   updateControls();
 };
@@ -393,6 +442,7 @@ const renderMessages = (): void => {
     const empty = document.createElement("div");
     empty.className = "empty-conversation";
     empty.textContent = "从一句话开始。";
+    if (workflow.phase !== "ready") empty.textContent = conversationNotice;
     messages.append(empty);
   }
   messageViewport.scrollTop = messageViewport.scrollHeight;
@@ -463,16 +513,35 @@ const applyConversationEvent = (event: GatewayEvent): boolean => {
     if (!productionConversationMode) return true;
     conversations.refreshSummaries(event.conversations.map(productionRecord));
     conversationListRequested = true;
+    if (!conversations.activeId) {
+      let remembered = "";
+      try { remembered = localStorage.getItem("aurora.active-conversation") ?? ""; } catch { /* optional hint */ }
+      const candidate = event.conversations.find(c => c.conversation_id === remembered) ?? event.conversations[0];
+      if (candidate) {
+        conversations.select(candidate.conversation_id);
+        loadConversation(candidate.conversation_id, false);
+      } else {
+        workflow.phase = "none";
+        conversationNotice = "还没有对话。点击左侧 + 新建对话后即可发送。";
+        restoreDraft();
+      }
+    }
     renderConversation();
+    updateControls();
     return true;
   }
   if (event.type === "conversation_created") {
+    if (!creatingConversation) return true;
     creatingConversation = false;
     const record = productionRecord(event.conversation);
     conversations.upsert(record);
     loadingConversationId = null;
+    workflow.phase = "ready";
+    conversationNotice = "";
+    restoreDraft(); rememberConversation();
     renderConversation();
-    promptInput.focus();
+    void focusComposer(conversationFocusRequested);
+    conversationFocusRequested = false;
     updateControls();
     return true;
   }
@@ -484,13 +553,18 @@ const applyConversationEvent = (event: GatewayEvent): boolean => {
       event.conversation.message_count ? `${event.conversation.message_count} 条消息` : "尚无消息");
     conversations.setMessages(id, mapLoadedMessages(event.conversation.messages));
     loadingConversationId = null;
+    workflow.phase = "ready";
+    conversationNotice = "";
+    rememberConversation();
     renderConversation();
-    promptInput.focus();
+    updateControls();
+    void focusComposer(conversationFocusRequested);
+    conversationFocusRequested = false;
     return true;
   }
   if (event.type === "conversation_error") {
-    creatingConversation = false;
-    loadingConversationId = null;
+    if (event.requestId.startsWith("conversation-list-")) conversationListRequested = false;
+    if (creatingConversation || loadingConversationId || event.requestId.startsWith("conversation-list-")) conversationFailure();
     getElement("backend-diagnostics").textContent = `会话操作失败：${event.code}`;
     updateControls();
     return true;
@@ -592,7 +666,6 @@ const applyGatewayEvent = (event: GatewayEvent): void => {
     activeGeneration = null;
     renderConversationList();
     updateControls();
-    promptInput.focus();
     if (productionConversationMode && event.terminalState === "completed") {
       conversationListRequested = false;
       requestProductionConversationList();
@@ -615,7 +688,7 @@ const sendPrompt = async (): Promise<void> => {
   const input = promptInput.value.trim();
   if (!input || !modelConnectionAvailable(backendState, backendInfo)) return;
   const conversationId = conversations.activeId;
-  if (!conversationId) return;
+  if (!workflow.canSend(conversationId) || creatingConversation) return;
   const conversation = conversations.active;
   const title = conversation.title === "新对话" ? summarize(input, 14) : null;
   conversations.updateSummary(conversationId, title, summarize(input));
@@ -623,6 +696,7 @@ const sendPrompt = async (): Promise<void> => {
   const messageId = appendMessage(conversationId, "assistant", "…");
   renderConversationList();
   promptInput.value = "";
+  workflow.clearDraft(conversationId);
   promptInput.style.height = "auto";
   startingGeneration = true;
   bufferedStartEvents = [];
@@ -708,13 +782,13 @@ bindTitlebar(getElement("titlebar"), () => desktopWindow.startDragging(),
 const appearance = bindGlass(getElement<HTMLInputElement>("glass-intensity"), reducedEffects, getElement("glass-status"));
 void invoke("set_reduced_effects", { enabled: appearance.store.value.lowGpu }).catch(() => {});
 observeComposer(getElement("composer-wrap"), messageViewport);
-const showSettings = (show: boolean) => {
+const showSettings = (show: boolean, focus = true) => {
   getElement("settings-pane").hidden = !show; getElement("chat-pane").hidden = show;
   getElement("open-settings").setAttribute("aria-expanded", String(show));
   getElement("open-settings").classList.toggle("active", show);
   document.querySelector<HTMLDetailsElement>(".developer-menu")!.open = false;
-  if (show) { settingsPanel.open(); getElement("settings-title").focus(); }
-  else { settingsPanel.close(); getElement("open-settings").focus(); }
+  if (show) { settingsPanel.open(); if (focus) getElement("settings-title").focus(); }
+  else { settingsPanel.close(); if (focus) void focusComposer(true); }
 };
 getElement("open-settings").addEventListener("click", () => showSettings(Boolean(getElement("settings-pane").hidden)));
 getElement("close-settings").addEventListener("click", () => showSettings(false));
@@ -742,26 +816,48 @@ getElement("window-maximize").addEventListener("click", () => {
 getElement("window-close").addEventListener("click", () => {
   void invokeWindowAction("close");
 });
+getElement("window-hide").addEventListener("click", () => {
+  void invokeWindowAction("hide").catch(() => { getElement("workflow-status").textContent = "隐藏失败，请重试。"; });
+});
+interface WorkflowSnapshot { trayReady: boolean; shortcutReady: boolean; error: string }
+const renderWorkflow = (s: WorkflowSnapshot) => {
+  getElement("workflow-alert").textContent = s.error;
+  getElement("workflow-alert").hidden = !s.error;
+  getElement("workflow-status").textContent = s.error ||
+    (s.shortcutReady ? "Ctrl+Alt+Space 显示已有窗口并进入输入。隐藏保留角色和运行时；关闭按钮退出应用。" : "快捷入口正在准备…");
+};
+void listen<WorkflowSnapshot>("desktop-workflow-status", e => renderWorkflow(e.payload))
+  .then(() => invoke<WorkflowSnapshot>("desktop_workflow_snapshot").then(renderWorkflow))
+  .catch(() => { getElement("workflow-status").textContent = "快捷入口状态不可用，请使用窗口和任务栏。"; });
+void listen("desktop-show", () => { showSettings(false, false); void focusComposer(true); });
+void listen<string>("desktop-cancel-generation", e => {
+  if (activeGeneration?.generationId !== e.payload) return;
+  activeGeneration.cancelRequested = true;
+  activeGeneration.cancelAt = performance.now();
+  updateControls();
+});
 
 reducedEffects.addEventListener("change", () => {
   void invoke("set_reduced_effects", { enabled: reducedEffects.checked });
 });
 
 newConversationButton.addEventListener("click", () => {
+  if (newConversationButton.disabled) return;
+  workflow.saveDraft(conversations.activeId, promptInput.value);
+  conversationFocusRequested = true;
   if (!getElement("settings-pane").hidden) showSettings(false);
   if (productionConversationMode) {
     if (creatingConversation || activeGeneration !== null) return;
     creatingConversation = true;
+    conversationNotice = "正在新建对话…";
     updateControls();
-    void invoke("conversation_create").catch(() => {
-      creatingConversation = false;
-      updateControls();
-    });
+    void invoke("conversation_create").catch(conversationFailure);
     return;
   }
   conversations.create(nextLocalId("conversation"));
+  workflow.phase = "ready"; conversationNotice = ""; restoreDraft();
   renderConversation();
-  promptInput.focus();
+  updateControls(); void focusComposer(true);
 });
 
 conversationList.addEventListener("click", (event) => {
@@ -769,19 +865,18 @@ conversationList.addEventListener("click", (event) => {
   if (!(target instanceof Element)) return;
   const button = target.closest<HTMLButtonElement>("[data-conversation-id]");
   const id = button?.dataset.conversationId;
-  if (!id || activeGeneration !== null || !conversations.select(id)) return;
-  if (!getElement("settings-pane").hidden) showSettings(false);
+  if (!id || button?.disabled || startingGeneration || activeGeneration !== null) return;
+  workflow.saveDraft(conversations.activeId, promptInput.value);
+  if (!conversations.select(id)) return;
+  if (!getElement("settings-pane").hidden) showSettings(false, false);
   renderConversation();
-  promptInput.focus();
   if (productionConversationMode) {
-    loadingConversationId = id;
-    void invoke("conversation_get", { conversationId: id }).catch(() => {
-      loadingConversationId = null;
-    });
-  }
+    loadConversation(id, true);
+  } else { restoreDraft(); updateControls(); void focusComposer(true); }
 });
 
 promptInput.addEventListener("input", () => {
+  workflow.saveDraft(conversations.activeId, promptInput.value);
   promptInput.style.height = "auto";
   promptInput.style.height = `${Math.min(promptInput.scrollHeight, 132)}px`;
   updateControls();
@@ -815,13 +910,22 @@ promptInput.addEventListener("keydown", (event) => {
 
 sendButton.addEventListener("click", () => void sendPrompt());
 stopButton.addEventListener("click", () => void cancelActive());
-restartButton.addEventListener("click", async () => {
+const recoverConnection = async () => {
   updateBackendState("RESTARTING");
   try {
     await invoke("restart_backend");
   } catch (error) {
     getElement("metric-crash").textContent = `重启失败 ${String(error)}`;
+    updateBackendState("DISCONNECTED");
+    backendStatusText.textContent = "恢复连接失败。请检查本地运行文件后重试。";
   }
+};
+restartButton.addEventListener("click", () => void recoverConnection());
+getElement("recover-connection").addEventListener("click", () => void recoverConnection());
+getElement("retry-conversation").addEventListener("click", () => {
+  if (loadingConversationId || creatingConversation) return;
+  if (conversations.activeId) loadConversation(conversations.activeId, true);
+  else { conversationListRequested = false; requestProductionConversationList(); }
 });
 crashButton.addEventListener("click", () => {
   void invoke("crash_backend");
@@ -842,6 +946,11 @@ const initialize = async (): Promise<void> => {
   updateBackendState(snapshot.state);
   updateMetrics(snapshot.metrics);
   productionConversationMode = snapshot.info.mode === "production";
+  if (productionConversationMode) {
+    conversations.replace([]);
+    workflow.phase = "none";
+    restoreDraft(); renderConversation(); updateControls();
+  } else { workflow.phase = "ready"; conversationNotice = "界面演示"; updateControls(); }
   if (productionConversationMode && ["READY", "DEGRADED"].includes(snapshot.state)) {
     requestProductionConversationList();
   }

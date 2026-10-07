@@ -13,9 +13,10 @@
           <span data-tauri-drag-region>Aurora</span>
         </div>
         <div class="window-controls" data-tauri-drag-region="false" aria-label="窗口控制">
+          <button id="window-hide" class="window-button" type="button" aria-label="隐藏聊天窗口" title="隐藏聊天窗口 · Ctrl+Alt+Space 唤起"><svg viewBox="0 0 16 16" aria-hidden="true"><path d="M3 4h10v8H3zM6 8h4" /></svg></button>
           <button id="window-minimize" class="window-button" type="button" aria-label="最小化" title="最小化"><svg viewBox="0 0 16 16" aria-hidden="true"><path d="M3 8h10" /></svg></button>
           <button id="window-maximize" class="window-button" type="button" aria-label="最大化" title="最大化"><svg class="maximize-icon" viewBox="0 0 16 16" aria-hidden="true"><rect x="3.5" y="3.5" width="9" height="9" /></svg><svg class="restore-icon" viewBox="0 0 16 16" aria-hidden="true"><path d="M5.5 5.5v-3h8v8h-3" /><rect x="2.5" y="5.5" width="8" height="8" /></svg></button>
-          <button id="window-close" class="window-button close" type="button" aria-label="关闭" title="关闭"><svg viewBox="0 0 16 16" aria-hidden="true"><path d="m3.5 3.5 9 9m0-9-9 9" /></svg></button>
+          <button id="window-close" class="window-button close" type="button" aria-label="退出 Aurora" title="退出 Aurora"><svg viewBox="0 0 16 16" aria-hidden="true"><path d="m3.5 3.5 9 9m0-9-9 9" /></svg></button>
         </div>
       </header>
 
@@ -41,6 +42,7 @@
             <div class="content-column header-content">
               <h1 id="current-conversation-title">桌面架构</h1>
             <div class="backend-controls">
+              <span id="workflow-alert" class="settings-note" role="status" hidden></span>
               <span id="backend-status" class="backend-status" role="status">
                 <span id="backend-status-text">正在连接…</span>
               </span>
@@ -71,9 +73,10 @@
           </section>
 
           <footer id="composer-wrap" class="composer-wrap">
+            <div class="voice-controls content-column"><span id="conversation-status" class="settings-note" role="status">正在连接会话服务…</span><button id="retry-conversation" class="ghost-button" type="button" hidden>重试载入对话</button></div>
             <div class="voice-controls content-column">
               <span id="voice-status" class="settings-note" role="status">语音未连接</span>
-              <button id="voice-stop" class="ghost-button" type="button" disabled>停止语音</button>
+              <button id="voice-stop" class="ghost-button" type="button" disabled>停止朗读</button>
             </div>
             <div id="composer" class="composer content-column" data-glass>
               <label class="sr-only" for="prompt-input">输入消息</label>
@@ -84,7 +87,7 @@
                 placeholder="和 Aurora 说点什么……"
               ></textarea>
               <div class="composer-actions">
-                <button id="stop-button" class="composer-action" type="button" aria-label="停止生成" title="停止生成" disabled hidden><svg viewBox="0 0 20 20" aria-hidden="true"><rect class="stop-symbol" x="5" y="5" width="10" height="10" rx="1" /></svg></button>
+                <button id="stop-button" class="composer-action" type="button" aria-label="停止回复" title="停止回复" disabled hidden><svg viewBox="0 0 20 20" aria-hidden="true"><rect class="stop-symbol" x="5" y="5" width="10" height="10" rx="1" /></svg></button>
                 <button id="send-button" class="composer-action" type="button" aria-label="发送消息" title="发送消息"><svg viewBox="0 0 20 20" aria-hidden="true"><path d="M10 16V4m-5 5 5-5 5 5" /></svg></button>
               </div>
             </div>
@@ -98,6 +101,10 @@
           </header>
           <div id="settings-scroll" class="settings-scroll" tabindex="0" aria-label="设置内容">
             <div class="settings-content">
+              <section class="settings-section" aria-labelledby="workflow-title">
+                <h2 id="workflow-title" class="section-header">桌面入口</h2>
+                <p id="workflow-status" class="settings-note" role="status">快捷入口正在准备…</p>
+              </section>
               <section id="appearance-section" class="settings-section" aria-labelledby="appearance-title">
                 <h2 id="appearance-title" class="section-header">外观</h2>
                 <p class="section-description">安静的黑色基底，让光线与内容留在玻璃之下。</p>
@@ -117,8 +124,10 @@
               </section>
               <section class="settings-section" aria-labelledby="model-title">
                 <h2 id="model-title" class="section-header">模型与连接</h2>
-                <p class="section-description">当前本地模型为 4B，文件由 LM Studio 管理。Aurora 内置模型运行时尚未接入。</p>
+                <p class="section-description">Qwen3.5 4B 由 Aurora 内置 llama.cpp / Vulkan 运行时管理。无需启动 Ollama 或 LM Studio。</p>
                 <div class="setting-row"><div class="setting-copy"><span>当前聊天连接</span><small>保留的旧服务配置不会自动启动或安装模型</small></div><span id="settings-model-status" class="status-text">正在检查连接</span></div>
+                <button id="recover-connection" class="ghost-button" type="button">恢复连接</button>
+                <p class="settings-note">组件暂不可用时，检查本地运行文件后恢复连接。恢复期间仍保留当前对话和草稿。</p>
               </section>
               <form id="ai-settings-form">
                 <div id="descriptor-fields"><p class="settings-note">连接设置服务后显示可管理项。</p></div>
@@ -127,8 +136,9 @@
                 <h2 id="voice-title" class="section-header">语音</h2>
                 <p class="section-description">回复完成后朗读。语音失败不会影响聊天；停止语音不会删除回复。</p>
                 <div class="setting-row"><span>Edge TTS</span><span class="status-text">在线服务 · 需要网络</span></div>
-                <div class="setting-row"><span>Remote CosyVoice</span><span class="status-text">可选 Voice Node · 地址由后端配置</span></div>
-                <div class="setting-row"><span>Local CosyVoice</span><span class="status-text">尚未实现</span></div>
+                <div class="setting-row"><span>Local sherpa/Melo</span><span class="status-text">主线 · 离线 · 固定音色</span></div>
+                <div class="setting-row"><span>Remote CosyVoice</span><span class="status-text">Compatibility / Legacy</span></div>
+                <div class="setting-row"><span>Local CosyVoice</span><span class="status-text">NOT IMPLEMENTED</span></div>
                 <details class="capability-details"><summary>能力范围</summary><p>语音控制已接入正式后端；未开放 PCM streaming。测试 provider 不输出真实语音。</p></details>
               </section>
             </div>

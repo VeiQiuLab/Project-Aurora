@@ -595,6 +595,22 @@ impl BackendManager {
         self.send_value(crate::voice::stop(&format!("voice-stop-{}", Uuid::new_v4().simple()), &generation_id)?).await
     }
 
+    pub async fn stop_current(&self) -> Result<Option<String>, String> {
+        let (owner, voice) = {
+            let data = self.inner.lock().await;
+            if !matches!(data.state, BackendState::Ready | BackendState::Degraded) { return Ok(None); }
+            (data.registry.active_owner(), data.voice.as_ref().filter(|v| matches!(v.state.as_str(), "preparing" | "speaking")).and_then(|v| v.generation_id.clone()))
+        };
+        if let Some(owner) = owner {
+            let id = owner.generation_id.clone();
+            self.chat_cancel(CancelTarget { request_id: owner.request_id, session_id: owner.session_id, generation_id: owner.generation_id }).await?;
+            Ok(Some(id))
+        } else if let Some(id) = voice {
+            self.voice_stop(id).await?;
+            Ok(None)
+        } else { Ok(None) }
+    }
+
     pub async fn settings_get(&self) -> Result<(), String> {
         self.send_value(crate::settings::get(&format!("settings-get-{}", Uuid::new_v4().simple()))).await
     }
@@ -1256,6 +1272,28 @@ impl JobGuard {
 
 #[cfg(test)]
 mod tests {
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn tray_stop_uses_existing_cancel_and_does_not_poison_next_request() {
+        let manager = BackendManager::with_mode("mock".into());
+        assert_eq!(manager.stop_current().await.unwrap(), None);
+        manager.start(false).await.unwrap();
+        let first = manager.chat_start("tray stop fixture".into()).await.unwrap();
+        // This mock emits terminal cleanup from its entered streaming coroutine.
+        wait_for(&manager, |s| s.metrics.command_to_first_delta_ms.is_some()).await;
+        assert_eq!(manager.stop_current().await.unwrap(), Some(first.generation_id));
+        timeout(Duration::from_secs(5), async {
+            while manager.inner.lock().await.registry.active_owner().is_some() {
+                tokio::time::sleep(Duration::from_millis(10)).await;
+            }
+        }).await.unwrap();
+        assert_eq!(manager.stop_current().await.unwrap(), None);
+        let next = manager.chat_start("next request unaffected".into()).await.unwrap();
+        wait_for(&manager, |s| s.metrics.command_to_first_delta_ms.is_some()).await;
+        assert_eq!(manager.inner.lock().await.registry.active_owner().unwrap().generation_id, next.generation_id);
+        assert_eq!(manager.stop_current().await.unwrap(), Some(next.generation_id));
+        manager.shutdown().await.unwrap();
+        assert_eq!(manager.stop_current().await.unwrap(), None);
+    }
     #[tokio::test]
     async fn voice_gateway_rejects_stale_revision_epoch_and_private_fields() {
         let manager = BackendManager::with_mode("production".into());
