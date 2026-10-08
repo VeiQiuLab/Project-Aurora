@@ -4,6 +4,8 @@
   "title": "Project Aurora IPC v1",
   "description": "Bootstrap object and authenticated WebSocket JSON envelopes for Aurora IPC v1.",
   "oneOf": [
+    {"$ref": "#/$defs/memoryWriteRequest"},
+    {"$ref": "#/$defs/memoryWriteResponse"},
     {"$ref": "#/$defs/memoryReadRequest"},
     {"$ref": "#/$defs/memoryReadResponse"},
     {"$ref": "#/$defs/audioPlay"},
@@ -44,6 +46,187 @@
     {"$ref": "#/$defs/error"}
   ],
   "$defs": {
+    "memoryWriteRequest": {
+      "type": "object",
+      "required": [
+        "protocol",
+        "version",
+        "type",
+        "request_id",
+        "payload"
+      ],
+      "properties": {
+        "protocol": {
+          "const": "aurora-ipc"
+        },
+        "version": {
+          "const": 1
+        },
+        "type": {
+          "const": "memory.write.request"
+        },
+        "request_id": {
+          "$ref": "#/$defs/opaqueId"
+        },
+        "payload": {
+          "type": "object",
+          "required": [
+            "operation_id",
+            "action",
+            "id",
+            "expected_version",
+            "content",
+            "confirmed"
+          ],
+          "properties": {
+            "operation_id": {
+              "type": "string",
+              "pattern": "^[a-zA-Z0-9-]{1,128}$"
+            },
+            "action": {
+              "enum": [
+                "approve",
+                "reject",
+                "edit",
+                "delete"
+              ]
+            },
+            "id": {
+              "type": "string",
+              "pattern": "^[a-zA-Z0-9_-]{1,128}$"
+            },
+            "expected_version": {
+              "type": "string",
+              "pattern": "^[a-f0-9]{64}$"
+            },
+            "content": {
+              "type": [
+                "string",
+                "null"
+              ],
+              "maxLength": 32768
+            },
+            "confirmed": {
+              "type": "boolean"
+            }
+          },
+          "additionalProperties": false,
+          "allOf": [
+            {
+              "if": {
+                "properties": {
+                  "action": {
+                    "const": "delete"
+                  }
+                }
+              },
+              "then": {
+                "properties": {
+                  "confirmed": {
+                    "const": true
+                  }
+                }
+              }
+            },
+            {
+              "if": {
+                "properties": {
+                  "action": {
+                    "const": "edit"
+                  }
+                }
+              },
+              "then": {
+                "properties": {
+                  "content": {
+                    "type": "string",
+                    "minLength": 1,
+                    "pattern": "\\S"
+                  }
+                }
+              },
+              "else": {
+                "properties": {
+                  "content": {
+                    "type": "null"
+                  }
+                }
+              }
+            }
+          ]
+        }
+      },
+      "additionalProperties": false
+    },
+    "memoryWriteResponse": {
+      "type": "object",
+      "required": [
+        "protocol",
+        "version",
+        "type",
+        "request_id",
+        "payload"
+      ],
+      "properties": {
+        "protocol": {
+          "const": "aurora-ipc"
+        },
+        "version": {
+          "const": 1
+        },
+        "type": {
+          "const": "memory.write.response"
+        },
+        "request_id": {
+          "$ref": "#/$defs/opaqueId"
+        },
+        "payload": {
+          "type": "object",
+          "required": [
+            "operation_id",
+            "action",
+            "id",
+            "status",
+            "saved_id"
+          ],
+          "properties": {
+            "operation_id": {
+              "type": "string",
+              "pattern": "^[a-zA-Z0-9-]{1,128}$"
+            },
+            "action": {
+              "enum": [
+                "approve",
+                "reject",
+                "edit",
+                "delete"
+              ]
+            },
+            "id": {
+              "type": "string",
+              "pattern": "^[a-zA-Z0-9_-]{1,128}$"
+            },
+            "status": {
+              "const": "completed"
+            },
+            "saved_id": {
+              "anyOf": [
+                {
+                  "type": "null"
+                },
+                {
+                  "type": "string",
+                  "pattern": "^[a-zA-Z0-9_-]{1,128}$"
+                }
+              ]
+            }
+          },
+          "additionalProperties": false
+        }
+      },
+      "additionalProperties": false
+    },
+
   "memoryReadRequest": {
     "type": "object",
     "required": [
@@ -1260,7 +1443,7 @@
         "MODEL_UNAVAILABLE",
         "REQUEST_TIMEOUT",
         "REQUEST_CANCELLED",
-        "MEMORY_READ_FAILED", "MEMORY_INVALID_DATA", "MEMORY_NOT_FOUND", "MEMORY_RECORD_TOO_LARGE",
+        "MEMORY_READ_FAILED", "MEMORY_CONFLICT", "MEMORY_INVALID_EDIT", "MEMORY_INVALID_REQUEST", "MEMORY_RECOVERY_REQUIRED", "MEMORY_WRITE_FAILED", "MEMORY_INVALID_DATA", "MEMORY_NOT_FOUND", "MEMORY_RECORD_TOO_LARGE",
         "INTERNAL_ERROR",
         "NOT_FOUND",
         "INVALID_CONVERSATION",

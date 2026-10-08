@@ -615,6 +615,10 @@ impl BackendManager {
         self.send_value(crate::settings::get(&format!("settings-get-{}", Uuid::new_v4().simple()))).await
     }
 
+    pub async fn memory_write(&self, request_id: String, operation: crate::memory::OperationRequest) -> Result<(), String> {
+        self.send_value(crate::memory::write(&request_id, &operation)?).await
+    }
+
     pub async fn memory_read(&self, request_id: String, collection: String, record_id: Option<String>, offset: u32) -> Result<(), String> {
         self.send_value(crate::memory::read(&request_id, &collection, record_id.as_deref(), offset)?).await
     }
@@ -775,6 +779,11 @@ impl BackendManager {
             return Err("STALE_CONNECTION".into());
         }
         match message_type {
+            "memory.write.response" => {
+                let request_id = require_string(&value, "request_id", None)?.to_owned();
+                let result = crate::memory::OperationResult::from_wire(value["payload"].clone())?;
+                self.emit(FrontendEvent::MemoryOperation { request_id, result });
+            }
             "memory.read.response" => {
                 let request_id = require_string(&value, "request_id", None)?.to_owned();
                 let snapshot = crate::memory::Snapshot::from_wire(value["payload"].clone())?;

@@ -1,14 +1,22 @@
-"""V4-8B bounded, read-only inspection wire contract."""
+"""Bounded memory inspection and explicit V4-8C operation wire contracts."""
 import json
 import re
 
-ERRORS = {"MEMORY_READ_FAILED", "MEMORY_INVALID_DATA", "MEMORY_NOT_FOUND", "MEMORY_RECORD_TOO_LARGE"}
+from modules.memory_governance_validation import ERRORS as WRITE_ERRORS, validate_request, validate_result
+
+ERRORS = {*WRITE_ERRORS,"MEMORY_READ_FAILED", "MEMORY_INVALID_DATA", "MEMORY_NOT_FOUND", "MEMORY_RECORD_TOO_LARGE"}
 REQUEST_KEYS = {"collection", "record_id", "offset"}
 RESPONSE_KEYS = {"collection", "operation", "records", "total", "offset", "source"}
 FIELDS = {"id", "type", "importance", "enabled", "status", "created_time", "updated_time", "source", "score", "category", "confidence", "importance_score", "risk", "explanation", "source_detail", "analysis_version", "metadata"}
 
 
 def validate_memory(kind, payload):
+    if kind == "memory.write.request":
+        validate_request(payload)
+        return
+    if kind == "memory.write.response":
+        validate_result(payload)
+        return
     if payload.get("collection") not in {"saved", "pending"} or type(payload.get("offset")) is not int or not 0 <= payload["offset"] <= 1_000_000:
         raise ValueError("Invalid Memory request.")
     if kind == "memory.read.request":

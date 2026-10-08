@@ -27,7 +27,7 @@ class MemoryPersistenceSafetyTests(unittest.TestCase):
         self.assertEqual(self.store.list_memories()[0]["content"], "Original Memory")
         self.assertEqual(list(self.store.file_path.parent.glob("*.tmp")), [])
 
-    def test_supersede_replace_failure_keeps_old_memory_active_and_candidate_pending(self):
+    def test_supersede_replace_failure_recovers_committed_intent_before_read(self):
         previous = self.store.create("preference", "User prefers concise replies.")
         candidate = self.store.queue_candidates("I prefer detailed replies.")[0]
         original = self.store.file_path.read_bytes()
@@ -44,11 +44,11 @@ class MemoryPersistenceSafetyTests(unittest.TestCase):
 
         self.assertEqual(self.store.file_path.read_bytes(), original)
         memories = self.store.list_memories()
-        self.assertEqual(len(memories), 1)
+        self.assertEqual(len(memories), 2)
         self.assertEqual(memories[0]["id"], previous["id"])
-        self.assertEqual(memories[0]["metadata"]["state"], "active")
-        pending = self.store.list_candidates(status="pending")
-        self.assertEqual([item["id"] for item in pending], [candidate["id"]])
+        self.assertEqual(memories[0]["metadata"]["state"], "superseded")
+        self.assertEqual(self.store.list_candidates(status="pending"), [])
+        self.assertEqual(self.store.list_candidates(status="approved")[0]["id"], candidate["id"])
 
     def test_candidate_replace_failure_keeps_original_candidate_json(self):
         candidate = self.store.queue_candidates("My name is Aurora.")[0]
@@ -77,10 +77,11 @@ class MemoryPersistenceSafetyTests(unittest.TestCase):
                 self.store.approve_candidate(candidate["id"])
 
         committed = self.store.list_memories()
-        self.assertEqual(len(committed), 2)
+        # Staging fails before durable intent: neither Store changes.
+        self.assertEqual(len(committed), 1)
         self.assertEqual(
             next(item for item in committed if item["id"] == previous["id"])["metadata"]["state"],
-            "superseded",
+            "active",
         )
         self.assertEqual(self.store.list_candidates(status="pending")[0]["id"], candidate["id"])
 

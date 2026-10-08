@@ -262,7 +262,8 @@ class CompositionTests(unittest.IsolatedAsyncioTestCase):
             self.assertTrue(caps["voice"]["edge_tts"])
             self.assertTrue(caps["voice"]["cosyvoice_remote"])
             self.assertTrue(caps["chat_streaming"] and caps["chat_cancel"])
-            self.assertFalse(any(caps[k] for k in ("memory", "knowledge", "rag")))
+            self.assertTrue(caps["memory"])
+            self.assertFalse(any(caps[k] for k in ("knowledge", "rag")))
             self.assertTrue(caps["voice"]["ipc"])
             self.assertFalse(any(caps["voice"][k] for k in ("streaming_pcm", "cosyvoice_local")))
 

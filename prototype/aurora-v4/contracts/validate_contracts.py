@@ -14,6 +14,10 @@ from typing import Any, Iterable, Mapping
 from settings_contract import ERRORS as SETTINGS_ERRORS, validate_settings
 from voice_contract import SNAPSHOT_KEYS as VOICE_KEYS, validate_voice
 from audio_contract import IDENTITY as AUDIO_IDENTITY, validate_audio
+import sys
+if str(Path(__file__).resolve().parents[3]) not in sys.path:
+    sys.path.insert(0, str(Path(__file__).resolve().parents[3]))
+from modules.memory_governance_validation import REQUEST_KEYS as MEMORY_WRITE_REQUEST_KEYS, RESPONSE_KEYS as MEMORY_WRITE_RESPONSE_KEYS
 from memory_contract import ERRORS as MEMORY_ERRORS, REQUEST_KEYS as MEMORY_REQUEST_KEYS, RESPONSE_KEYS as MEMORY_RESPONSE_KEYS, validate_memory
 
 
@@ -88,6 +92,10 @@ def _rule(
 _NO_CONTEXT = {"session_id", "generation_id", "seq"}
 _CHAT_IDS = {"request_id", "session_id", "generation_id"}
 MESSAGE_RULES: dict[str, MessageRule] = {
+    "memory.write.request": _rule(required={"request_id"}, forbidden=_NO_CONTEXT,
+        payload_required=MEMORY_WRITE_REQUEST_KEYS, payload_allowed=MEMORY_WRITE_REQUEST_KEYS),
+    "memory.write.response": _rule(required={"request_id"}, forbidden=_NO_CONTEXT,
+        payload_required=MEMORY_WRITE_RESPONSE_KEYS, payload_allowed=MEMORY_WRITE_RESPONSE_KEYS),
     "memory.read.request": _rule(required={"request_id"}, forbidden=_NO_CONTEXT,
         payload_required=MEMORY_REQUEST_KEYS, payload_allowed=MEMORY_REQUEST_KEYS),
     "memory.read.response": _rule(required={"request_id"}, forbidden=_NO_CONTEXT,

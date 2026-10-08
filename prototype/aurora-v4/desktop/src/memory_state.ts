@@ -1,7 +1,10 @@
 export type MemoryCollection = "saved" | "pending";
 export type MemoryRecord = { inspection_id: string; content: string; preview: boolean; fields: Record<string, unknown> };
 export type MemorySnapshot = { collection: MemoryCollection; operation: "list" | "detail"; records: MemoryRecord[]; total: number; offset: number; source: "primary" | "missing" | "backup" };
-export type MemoryEvent = { type: "memory_snapshot"; requestId: string; snapshot: MemorySnapshot } | { type: "memory_error"; requestId: string; code: string };
+export type MemoryAction = "approve" | "reject" | "edit" | "delete";
+export type MemoryOperation = { operation_id: string; action: MemoryAction; id: string; expected_version: string; content: string | null; confirmed: boolean };
+export type OperationResult = { operation_id: string; action: MemoryAction; id: string; status: "completed"; saved_id: string | null };
+export type MemoryEvent = { type: "memory_snapshot"; requestId: string; snapshot: MemorySnapshot } | { type: "memory_error"; requestId: string; code: string } | { type: "memory_operation"; requestId: string; result: OperationResult };
 export type ReadTarget = { recordId: string | null; offset: number };
 
 export class MemoryState {
@@ -18,6 +21,7 @@ export class MemoryState {
   fail(code: string) { this.requestId = null; this.snapshot = null; this.error = code; this.status = "error"; }
   reset() { this.fail("BACKEND_LOST"); this.target = { recordId: null, offset: 0 }; }
   accept(event: MemoryEvent): boolean {
+    if (event.type === "memory_operation") return false;
     if (event.requestId !== this.requestId) return false;
     if (event.type === "memory_error") { this.fail(event.code); return true; }
     const snapshot = event.snapshot;

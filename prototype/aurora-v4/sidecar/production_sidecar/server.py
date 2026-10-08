@@ -88,6 +88,17 @@ class ProductionSidecar(MockSidecar):
 
     async def dispatch(self, connection, message):
         kind = message["type"]
+        if kind == "memory.write.request":
+            try:
+                result = await asyncio.to_thread(self.composition.context.memory.govern, message["payload"])
+                await self.send(connection, {"protocol": "aurora-ipc", "version": 1,
+                    "type": "memory.write.response", "request_id": message["request_id"], "payload": result})
+            except (OSError, ValueError, KeyError, TypeError, UnicodeError) as error:
+                allowed = {"MEMORY_CONFLICT", "MEMORY_INVALID_EDIT", "MEMORY_INVALID_REQUEST", "MEMORY_RECOVERY_REQUIRED"}
+                code = "MEMORY_NOT_FOUND" if isinstance(error, KeyError) else str(error) if str(error) in allowed else "MEMORY_WRITE_FAILED"
+                LOGGER.info("event=memory_operation_failed code=%s", code)
+                await self.send_error(connection, code=code, message="Memory operation could not complete.", retryable=True, envelope=message)
+            return
         if kind == "memory.read.request":
             try:
                 result = await asyncio.to_thread(read_memory, self.composition.context.memory, message["payload"])

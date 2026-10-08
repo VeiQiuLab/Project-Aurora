@@ -111,6 +111,11 @@ async fn settings_get(manager: tauri::State<'_, BackendManager>) -> Result<(), S
 }
 
 #[tauri::command]
+async fn memory_write(manager: tauri::State<'_, BackendManager>, request_id: String, operation: crate::memory::OperationRequest) -> Result<(), String> {
+    manager.memory_write(request_id, operation).await
+}
+
+#[tauri::command]
 async fn memory_read(manager: tauri::State<'_, BackendManager>, request_id: String, collection: String, record_id: Option<String>, offset: u32) -> Result<(), String> {
     manager.memory_read(request_id, collection, record_id, offset).await
 }
@@ -198,6 +203,7 @@ pub fn run() {
             conversation_list,
             settings_get,
             memory_read,
+            memory_write,
             live2d_snapshot,
             local_voice_snapshot,
             voice_get,

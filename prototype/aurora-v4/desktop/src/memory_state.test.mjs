@@ -24,3 +24,9 @@ test("saved lifecycle and candidate distinction use real metadata", () => {
   assert.equal(memoryStatus({...record,fields:{status:"pending"}},"pending"),"待审核");
   assert.match(memoryStatus({...record,fields:{}},"pending"),/旧记录/);
 });
+test("operation completion cannot replace a pending inspection snapshot", () => {
+  const state = new MemoryState("saved"); state.begin("memory-1", {recordId:null,offset:0});
+  assert.equal(state.accept({type:"memory_operation",requestId:"memory-1",result:{operation_id:"op-1",action:"delete",id:"saved-1",status:"completed",saved_id:null}}), false);
+  assert.equal(state.status,"loading"); assert.equal(state.requestId,"memory-1"); assert.equal(state.snapshot,null);
+  assert.equal(state.accept(event("memory-1")),true);
+});

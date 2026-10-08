@@ -577,7 +577,7 @@ const applyConversationEvent = (event: GatewayEvent): boolean => {
 };
 
 const applyGatewayEvent = (event: GatewayEvent | MemoryEvent): void => {
-  if (event.type === "memory_snapshot" || event.type === "memory_error") { memoryPanel.accept(event); return; }
+  if (event.type === "memory_snapshot" || event.type === "memory_error" || event.type === "memory_operation") { memoryPanel.accept(event); return; }
   if (event.type === "voice_state") {
     if (voiceConnected) { voiceState.accept(event.snapshot); renderVoice(); }
     return;

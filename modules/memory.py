@@ -6,7 +6,10 @@ import os
 import re
 import threading
 import uuid
-from datetime import datetime, timezone
+from copy import deepcopy
+
+from modules.memory_coordination import operation, coordinated, fingerprint
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 from modules.app_paths import MEMORY_DIR
@@ -132,7 +135,111 @@ class MemoryStore:
         self.read_only = bool(read_only)
         if not self.read_only:
             self.file_path.parent.mkdir(parents=True, exist_ok=True)
-        self._lock = threading.Lock()
+        self._lock = threading.RLock()
+        self._staged = None
+        self.operations_file = self.file_path.parent / "memory_operations.json"
+        self.journal_file = self.file_path.parent / "memory_operation_intent.json"
+
+    def _recover_operation(self):
+        if not self.journal_file.exists():
+            return
+        try:
+            intent = json.loads(self.journal_file.read_text(encoding="utf-8"))
+            if intent == {"version": 1, "pending": False}:
+                return
+            if set(intent) != {"version", "pending", "files", "digest"} or intent["version"] != 1 or intent["pending"] is not True:
+                raise ValueError("invalid intent")
+            files = intent["files"]
+            allowed = {self.file_path.name, self.candidates_file.name, self.operations_file.name}
+            if not isinstance(files, dict) or not files or set(files) - allowed or fingerprint(files) != intent["digest"]:
+                raise ValueError("invalid intent files")
+            for name, records in files.items():
+                if not isinstance(records, list) or any(not isinstance(item, dict) for item in records):
+                    raise ValueError("invalid intent records")
+                if name == self.file_path.name:
+                    self._validate_memories(records)
+            # No reader can enter before every after-image and the completion
+            # marker are persisted. Replay never re-executes semantic approval.
+            for name, records in files.items():
+                self._atomic_write_json(self.file_path.parent / name, records)
+            # Coordinated backups must describe the completed operation too;
+            # restoring an old candidate backup must not undo only its status.
+            for name, records in files.items():
+                self._replace_text(self._backup_path(self.file_path.parent / name), json.dumps(records, ensure_ascii=False, indent=2))
+            self._replace_text(self.journal_file, json.dumps({"version": 1, "pending": False}))
+        except (ValueError, TypeError, KeyError, UnicodeError) as error:
+            raise OSError("MEMORY_RECOVERY_REQUIRED") from error
+
+    def _commit_operation(self, files):
+        if not files:
+            return
+        intent = {"version": 1, "pending": True, "files": files, "digest": fingerprint(files)}
+        self._replace_text(self.journal_file, json.dumps(intent, ensure_ascii=False, allow_nan=False))
+        self._recover_operation()
+
+    def _editable_records(self):
+        data, source = self._load_json_list(self.file_path)
+        if source == "corrupt":
+            raise OSError("MEMORY_WRITE_FAILED")
+        self._validate_memories(data)
+        return data
+
+    @staticmethod
+    def _check_version(record, expected):
+        if expected is not None and fingerprint(record) != expected:
+            raise ValueError("MEMORY_CONFLICT")
+
+    @coordinated
+    def govern(self, request):
+        """Exact object/version/request binding; caller is authenticated IPC.
+
+        Receipt and mutation share a redo intent. Repeating the identical
+        operation ID replays the response, even after target deletion/restart.
+        """
+        from modules.memory_governance_validation import validate_request
+        validate_request(request)
+        digest = fingerprint(request)
+        receipts, source = self._load_json_list(self.operations_file)
+        if source == "corrupt":
+            raise OSError("MEMORY_RECOVERY_REQUIRED")
+        for receipt in receipts:
+            if receipt.get("operation_id") == request["operation_id"]:
+                if receipt.get("digest") != digest:
+                    raise ValueError("MEMORY_CONFLICT")
+                return deepcopy(receipt["result"])
+        action = request["action"]
+        path = self.candidates_file if action in {"approve", "reject"} else self.file_path
+        records, source = self._load_json_list(path)
+        if source == "corrupt":
+            raise OSError("MEMORY_WRITE_FAILED")
+        targets = [record for record in records if record.get("id") == request["id"]]
+        if len(targets) != 1:
+            raise KeyError("MEMORY_NOT_FOUND")
+        target = targets[0]
+        self._check_version(target, request["expected_version"])
+        saved_id = None
+        if action == "approve":
+            if target.get("type", "fact") not in MEMORY_TYPES or not isinstance(target.get("content"), str) or not target["content"].strip():
+                raise ValueError("MEMORY_INVALID_REQUEST")
+            saved = self.approve_candidate(request["id"])
+            if saved is None:
+                saved = next((item for item in self.list_memories()
+                              if self._is_similar(target["content"], item.get("content", ""))), None)
+            if saved is None:
+                raise ValueError("MEMORY_INVALID_REQUEST")
+            saved_id = saved["id"]
+        elif action == "reject":
+            self.reject_candidate(request["id"])
+        elif action == "edit":
+            self.update(request["id"], target.get("type", "fact"), request["content"],
+                        target.get("importance", "normal"), expected_version=request["expected_version"])
+        else:
+            self.delete(request["id"], expected_version=request["expected_version"])
+        result = {"operation_id": request["operation_id"], "action": action, "id": request["id"],
+                  "status": "completed", "saved_id": saved_id}
+        receipts.append({"operation_id": request["operation_id"], "digest": digest, "result": result})
+        self._atomic_write_json(self.operations_file, receipts)
+        return result
 
     @staticmethod
     def _now():
@@ -232,9 +339,12 @@ class MemoryStore:
             return None, ValueError(f"{path.name} must contain JSON object records.")
         return data, None
 
+    @operation
     def _load_json_list(self, path):
         # Windows readers may prevent os.replace while their file handle is
         # open. Share the existing writer lock, including backup reads.
+        if self._staged is not None and path.name in self._staged:
+            return deepcopy(self._staged[path.name]), "primary"
         with self._lock:
             return self._load_json_list_locked(path)
 
@@ -271,9 +381,13 @@ class MemoryStore:
             except OSError:
                 LOGGER.warning("Could not remove temporary Memory file %s", temporary)
 
+    @operation
     def _atomic_write_json(self, path, records):
         if not isinstance(records, list):
             raise TypeError("Memory JSON payload must be a list.")
+        if self._staged is not None:
+            self._staged[path.name] = deepcopy(records)
+            return
         payload = json.dumps(records, ensure_ascii=False, indent=2)
         with self._lock:
             if path.exists():
@@ -348,15 +462,19 @@ class MemoryStore:
             "metadata": memory_metadata,
         }
 
+    @operation
     def list_memories(self):
         data, source = self._load_json_list(self.file_path)
         if source == "corrupt":
             return []
+        if self._staged is not None:
+            return data
         normalized = [self._normalize(item) for item in data]
         if not self.read_only and (source == "backup" or normalized != data):
             self._write(normalized)
         return normalized
 
+    @operation
     def inspect_records(self, collection):
         """Read raw existing records and source without normalization or repair.
 
@@ -375,6 +493,7 @@ class MemoryStore:
             data = [item for item in data if item.get("status", "pending") == "pending"]
         return deepcopy(data), source
 
+    @operation
     def create(self, memory_type, content, importance="normal", metadata=None):
         item = self._new_memory(memory_type, content, importance, metadata)
         memories = self.list_memories()
@@ -382,15 +501,31 @@ class MemoryStore:
         self._write(memories)
         return item
 
-    def update(self, memory_id, memory_type, content, importance="normal"):
-        memories = self.list_memories()
+    @operation
+    def update(self, memory_id, memory_type, content, importance="normal", *, expected_version=None):
+        memories = self._editable_records()
         for item in memories:
             if item.get("id") == memory_id:
+                self._check_version(item, expected_version)
+                if not isinstance(content, str) or not content.strip() or len(content) > 32768:
+                    raise ValueError("MEMORY_INVALID_EDIT")
+                if memory_type not in MEMORY_TYPES:
+                    raise ValueError("MEMORY_INVALID_EDIT")
                 next_type = memory_type or "fact"
                 next_content = content.strip()
                 content_changed = str(item.get("content", "")) != next_content
                 type_changed = str(item.get("type", "fact")) != next_type
-                now = self._now()
+                # Timestamp remains the existing string field, but advances
+                # strictly even when content returns to its old value (ABA).
+                edit_time = datetime.now(timezone.utc)
+                try:
+                    previous = datetime.fromisoformat(str(item.get("updated_time", "")))
+                    if previous.tzinfo is None:
+                        previous = previous.replace(tzinfo=timezone.utc)
+                    edit_time = max(edit_time, previous + timedelta(microseconds=1))
+                except (ValueError, OverflowError):
+                    pass
+                now = edit_time.isoformat(timespec="microseconds")
                 metadata = item.get("metadata")
                 if isinstance(metadata, dict) and (content_changed or type_changed):
                     metadata["stale"] = True
@@ -406,10 +541,16 @@ class MemoryStore:
                 return item
         raise KeyError(memory_id)
 
-    def delete(self, memory_id):
-        memories = [item for item in self.list_memories() if item.get("id") != memory_id]
-        self._write(memories)
+    @operation
+    def delete(self, memory_id, *, expected_version=None):
+        memories = self._editable_records()
+        targets = [item for item in memories if item.get("id") == memory_id]
+        if len(targets) != 1:
+            raise KeyError(memory_id)
+        self._check_version(targets[0], expected_version)
+        self._write([item for item in memories if item.get("id") != memory_id])
 
+    @operation
     def archive(self, memory_id):
         memories = self.list_memories()
         for item in memories:
@@ -429,6 +570,7 @@ class MemoryStore:
             return item
         raise KeyError(memory_id)
 
+    @operation
     def restore(self, memory_id):
         memories = self.list_memories()
         for item in memories:
@@ -449,6 +591,7 @@ class MemoryStore:
             return item
         raise KeyError(memory_id)
 
+    @operation
     def set_enabled(self, memory_id, enabled):
         memories = self.list_memories()
         for item in memories:
@@ -459,6 +602,7 @@ class MemoryStore:
                 return item
         raise KeyError(memory_id)
 
+    @operation
     def merge(self, items):
         memories = self.list_memories()
         existing_ids = {item.get("id") for item in memories}
@@ -511,6 +655,7 @@ class MemoryStore:
         from modules.memory_retrieval import format_memory_context
         return format_memory_context(memories, limit=limit)
 
+    @operation
     def save_candidates(self, candidates, min_score=0.75):
         existing = {
             str(item.get("content", "")).strip().casefold()
@@ -553,6 +698,7 @@ class MemoryStore:
             existing_content.append(content)
         return saved
 
+    @operation
     def queue_candidate_records(self, candidates):
         """Persist already-evaluated records as pending candidates only."""
 
@@ -629,10 +775,13 @@ class MemoryStore:
             normalized["importance"] = importance
         return normalized
 
+    @operation
     def list_candidates(self, status=None):
         data, source = self._load_json_list(self.candidates_file)
         if source == "corrupt":
             return []
+        if self._staged is not None:
+            return [item for item in data if status is None or item.get("status", "pending") == status]
         candidates = [self._normalize_candidate(item) for item in data]
         if source == "backup":
             self._write_candidates(candidates)
@@ -640,6 +789,7 @@ class MemoryStore:
             candidates = [item for item in candidates if item.get("status") == status]
         return candidates
 
+    @operation
     def queue_candidates(self, messages_or_text, source="chat", min_score=0.75):
         extracted = self.extract_candidates(messages_or_text, min_score=min_score, source=source)
         if not extracted:
@@ -707,11 +857,12 @@ class MemoryStore:
             self._write_candidates(candidates)
         return added
 
+    @coordinated
     def approve_candidate(self, candidate_id):
         candidates = self.list_candidates()
         for item in candidates:
             if item.get("id") == candidate_id:
-                if item.get("status") != "pending":
+                if item.get("status", "pending") != "pending":
                     raise ValueError("Only pending Memory candidates can be approved.")
                 relation = item.get("metadata", {}).get("relation", {}) if isinstance(item.get("metadata"), dict) else {}
                 if relation.get("type") == "possible_update":
@@ -820,11 +971,12 @@ class MemoryStore:
             return {"type": "possible_conflict", "target_memory_id": target.get("id"), "reason": "same_type_and_category"}
         return {"type": "new", "target_memory_id": None, "reason": "no_active_related_memory"}
 
+    @operation
     def reject_candidate(self, candidate_id):
         candidates = self.list_candidates()
         for item in candidates:
             if item.get("id") == candidate_id:
-                if item.get("status") != "pending":
+                if item.get("status", "pending") != "pending":
                     raise ValueError("Only pending Memory candidates can be rejected.")
                 item["status"] = "rejected"
                 item["updated_time"] = self._now()

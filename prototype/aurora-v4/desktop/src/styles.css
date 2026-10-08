@@ -347,3 +347,7 @@ select.setting-input option { color: #eee; background: #171717; }
 .memory-metadata { font-size: 12px; }
 .memory-metadata dt { opacity: .65; margin-top: 12px; }
 .memory-metadata dd { margin: 4px 0 12px; }
+
+/* Memory governance uses the existing Settings layout. */
+.memory-editor { display: block; width: 100%; min-height: 100px; margin: 8px 0; padding: 8px; resize: vertical; font: inherit; }
+.memory-confirmation { margin-top: 12px; padding: 12px; border: 1px solid var(--line, #777); border-radius: 8px; }
