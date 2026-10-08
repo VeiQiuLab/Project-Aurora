@@ -185,22 +185,26 @@ const voiceStatus = getElement<HTMLElement>("voice-status");
 const voiceStop = getElement<HTMLButtonElement>("voice-stop");
 let voiceConnected = false;
 let voiceStopPending = false;
+let voiceStopError = "";
 const renderVoice = () => {
-  voiceStatus.textContent = voiceState.label;
+  voiceStatus.textContent = voiceStopError || voiceState.label;
   voiceStop.disabled = !voiceConnected || voiceStopPending || !voiceState.stopTarget;
 };
 voiceStop.addEventListener("click", () => {
   const generationId = voiceState.stopTarget;
+  const revision = voiceState.snapshot?.revision;
   if (!generationId || voiceStopPending) return;
-  voiceStopPending = true; renderVoice();
+  voiceStopError = ""; voiceStopPending = true; renderVoice();
   void invoke("voice_stop", { generationId }).catch(() => {
-    voiceStatus.textContent = "停止语音未送达，请检查连接";
+    if (voiceConnected && voiceState.stopTarget === generationId && voiceState.snapshot?.revision === revision) {
+      voiceStopError = "停止语音未送达，请检查连接后重试";
+    }
   }).finally(() => { voiceStopPending = false; renderVoice(); });
 });
 const voiceBackend = (available: boolean) => {
   const changed = available !== voiceConnected;
   voiceConnected = available;
-  if (!available) { voiceState.reset(); voiceStopPending = false; }
+  if (!available) { voiceState.reset(); voiceStopPending = false; voiceStopError = ""; }
   if (available && changed) void invoke("voice_get").catch(() => { voiceState.reset(); renderVoice(); });
   renderVoice();
 };
@@ -579,7 +583,7 @@ const applyConversationEvent = (event: GatewayEvent): boolean => {
 const applyGatewayEvent = (event: GatewayEvent | MemoryEvent): void => {
   if (event.type === "memory_snapshot" || event.type === "memory_error" || event.type === "memory_operation") { memoryPanel.accept(event); return; }
   if (event.type === "voice_state") {
-    if (voiceConnected) { voiceState.accept(event.snapshot); renderVoice(); }
+    if (voiceConnected && voiceState.accept(event.snapshot)) { voiceStopError = ""; renderVoice(); }
     return;
   }
   if (event.type === "settings_snapshot" || event.type === "settings_updated" ||

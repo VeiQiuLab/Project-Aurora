@@ -76,6 +76,35 @@ class PersistenceTests(unittest.TestCase):
             with self.assertRaisesRegex(ConversationError, "not found"):
                 manager.history("unknown")
 
+    def test_unsent_conversations_remain_readable_and_listed_without_files(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory) / "history"
+            manager = ConversationPersistence(root)
+            first, second = manager.create(), manager.create()
+            self.assertFalse(root.exists())
+            self.assertEqual(manager.get(first["conversation_id"]), {**first, "messages": []})
+            self.assertEqual({r["conversation_id"] for r in manager.list_metadata()},
+                             {first["conversation_id"], second["conversation_id"]})
+            self.assertEqual(list(root.glob("*.json")), [])
+            manager.save_completed(first["conversation_id"], "m", [
+                {"role": "user", "content": "test"}, {"role": "assistant", "content": "reply"}])
+            listed = manager.list_metadata()
+            self.assertEqual(len(listed), 2)
+            self.assertEqual(next(r for r in listed if r["conversation_id"] == first["conversation_id"])["message_count"], 2)
+            self.assertEqual(manager.get(second["conversation_id"])["messages"], [])
+            restarted = ConversationPersistence(root)
+            with self.assertRaisesRegex(ConversationError, "not found"):
+                restarted.get(second["conversation_id"])
+
+    def test_ephemeral_read_does_not_hide_corrupt_materialized_data(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            manager = ConversationPersistence(root)
+            created = manager.create()
+            (root / f"{created['conversation_id']}.json").write_text("{broken", encoding="utf-8")
+            with self.assertRaisesRegex(ConversationError, "invalid"):
+                manager.get(created["conversation_id"])
+
     def test_save_does_not_import_intelligence_or_memory(self):
         with tempfile.TemporaryDirectory() as directory:
             manager = ConversationPersistence(Path(directory))
@@ -103,6 +132,11 @@ class RpcTests(unittest.IsolatedAsyncioTestCase):
                     self.assertEqual(created["type"], "conversation.create.response")
                     conversation_id = created["payload"]["conversation"]["conversation_id"]
                     await ws.send(json.dumps(envelope("conversation.get.request", "get-rpc", conversation_id=conversation_id)))
+                    detail = json.loads(await ws.recv())
+                    validate_message(detail)
+                    self.assertEqual(detail["type"], "conversation.get.response")
+                    self.assertEqual(detail["payload"]["conversation"], {**created["payload"]["conversation"], "messages": []})
+                    await ws.send(json.dumps(envelope("conversation.get.request", "missing-rpc", conversation_id="unknown")))
                     missing = json.loads(await ws.recv())
                     validate_message(missing)
                     self.assertEqual((missing["type"], missing["payload"]["code"]), ("error", "NOT_FOUND"))
@@ -129,6 +163,11 @@ class RpcTests(unittest.IsolatedAsyncioTestCase):
             self.assertEqual(created["message_count"], 0)
             await sidecar.conversation_list(connection, {"request_id": "list-1", "payload": {}})
             self.assertEqual(events[-1]["type"], "conversation.list.response")
+            self.assertIn(created, events[-1]["payload"]["conversations"])
+            await sidecar.conversation_get(connection, {"request_id": "get-created", "payload": {"conversation_id": created["conversation_id"]}})
+            self.assertEqual(events[-1]["type"], "conversation.get.response")
+            self.assertEqual(events[-1]["payload"]["conversation"], {**created, "messages": []})
+            self.assertFalse(list((root / "conversations").glob("*.json")))
             await sidecar.conversation_get(connection, {"request_id": "get-1", "payload": {"conversation_id": "missing"}})
             self.assertEqual(events[-1]["payload"]["code"], "NOT_FOUND")
             composition.close()

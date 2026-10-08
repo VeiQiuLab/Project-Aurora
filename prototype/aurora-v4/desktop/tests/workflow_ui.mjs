@@ -28,6 +28,8 @@ try {
         if(cmd==="live2d_snapshot")return {status:"disabled"};
         if(cmd==="window_action"){if(args.action==="hide")window.visible=false;return false;}
         if(cmd==="chat_start")return {requestId:"r",sessionId:"s",generationId:"g"};
+        if(cmd==="voice_stop"&&window.delayVoiceStop)return new Promise((_,reject)=>window.rejectVoiceStop=reject);
+        if(cmd==="voice_stop"&&window.failVoiceStop)throw new Error("isolated stop failure");
         return null;
       }};
     window.emitDesktop=(name,payload)=>window.callbacks[window.events[name]]({event:name,id:1,payload});
@@ -67,10 +69,22 @@ try {
   await page.evaluate(()=>{window.focused=false;window.send({type:"chat_terminal",requestId:"r",generationId:"g",terminalState:"cancelled",errorCode:null,diagnostics:null});});
   assert.equal(await page.evaluate(()=>document.activeElement.id),"message-viewport","completion must not focus composer");
   await page.evaluate(()=>window.send({type:"voice_state",snapshot:{revision:1,state:"speaking",enabled:true,provider:"local_sherpa_melo",generation_id:"g",error_code:""}}));
+  await page.evaluate(()=>window.failVoiceStop=true);
   await page.locator("#voice-stop").click();
+  await page.waitForFunction(()=>!document.getElementById("voice-stop").disabled);
+  assert.match(await page.locator("#voice-status").textContent(),/停止语音未送达/,"failed Stop must remain visible after pending state clears");
+  await page.evaluate(()=>window.failVoiceStop=false);
+  await page.locator("#voice-stop").click();
+  await page.waitForFunction(()=>!document.getElementById("voice-stop").disabled);
+  assert.doesNotMatch(await page.locator("#voice-status").textContent(),/未送达/,"explicit retry clears the old failure");
   assert.equal(await page.evaluate(()=>window.calls.find(c=>c.cmd==="voice_stop").args.generationId),"g");
   await page.evaluate(()=>window.send({type:"voice_state",snapshot:{revision:2,state:"idle",enabled:true,provider:"local_sherpa_melo",generation_id:"g",error_code:""}}));
   assert.equal(await page.locator("#voice-stop").isDisabled(),true);
+  await page.evaluate(()=>{window.delayVoiceStop=true;window.send({type:"voice_state",snapshot:{revision:3,state:"speaking",enabled:true,provider:"local_sherpa_melo",generation_id:"old-voice",error_code:""}});});
+  await page.locator("#voice-stop").click();
+  await page.evaluate(()=>{window.send({type:"voice_state",snapshot:{revision:4,state:"idle",enabled:true,provider:"local_sherpa_melo",generation_id:"old-voice",error_code:""}});window.rejectVoiceStop(new Error("late failure"));window.delayVoiceStop=false;});
+  await page.waitForFunction(()=>document.getElementById("voice-stop").disabled);
+  assert.equal(await page.locator("#voice-status").textContent(),"语音已开启","late rejected Stop must not overwrite newer authoritative idle");
   await page.locator('[data-conversation-id="b"]').click();
   await page.evaluate(()=>window.send({type:"conversation_error",requestId:"conversation-get-4",code:"NOT_FOUND"}));
   assert.equal(await page.locator("#send-button").isDisabled(),true);

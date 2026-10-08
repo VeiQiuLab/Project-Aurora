@@ -54,7 +54,7 @@ class ConversationPersistence:
         # written.  Keep that distinction so a genuinely missing ID still
         # returns NOT_FOUND while the newly-created UI conversation can accept
         # its first turn.
-        self._ephemeral_ids: set[str] = set()
+        self._ephemeral_ids: dict[str, dict] = {}
 
     @property
     def manager(self):
@@ -109,8 +109,10 @@ class ConversationPersistence:
         records: list[dict] = []
         # Use filenames as opaque IDs.  A malformed embedded JSON id can never
         # redirect a read outside the configured directory.
-        for path in sorted(self.directory.glob("*.json")):
-            conversation_id = path.stem
+        with self._locks_guard:
+            conversation_ids = set(self._ephemeral_ids)
+        conversation_ids.update(path.stem for path in self.directory.glob("*.json"))
+        for conversation_id in sorted(conversation_ids):
             if not CONVERSATION_ID_RE.fullmatch(conversation_id):
                 continue
             try:
@@ -128,6 +130,10 @@ class ConversationPersistence:
         try:
             data = self.manager.load(conversation_id)
         except FileNotFoundError as error:
+            with self._locks_guard:
+                metadata = self._ephemeral_ids.get(conversation_id)
+                if metadata is not None:
+                    return {**metadata, "messages": []}
             raise ConversationError("NOT_FOUND", "Conversation was not found.") from error
         except (OSError, UnicodeError, ValueError, TypeError) as error:
             raise ConversationError("INVALID_CONVERSATION", "Conversation data is invalid.") from error
@@ -153,8 +159,7 @@ class ConversationPersistence:
 
         now = datetime.now(timezone.utc).isoformat(timespec="seconds")
         conversation_id = uuid.uuid4().hex
-        self._ephemeral_ids.add(conversation_id)
-        return {
+        metadata = {
             "conversation_id": conversation_id,
             "title": "New Conversation",
             "created_at": now,
@@ -162,6 +167,9 @@ class ConversationPersistence:
             "message_count": 0,
             "model": "",
         }
+        with self._locks_guard:
+            self._ephemeral_ids[conversation_id] = dict(metadata)
+        return metadata
 
     @serialized
     def save_completed(
@@ -194,5 +202,6 @@ class ConversationPersistence:
             )
         except (OSError, UnicodeError, ValueError, TypeError) as error:
             raise ConversationError("PERSISTENCE_FAILED", "Conversation could not be saved.") from error
-        self._ephemeral_ids.discard(conversation_id)
+        with self._locks_guard:
+            self._ephemeral_ids.pop(conversation_id, None)
         return self._metadata(saved, conversation_id, len(normalized))
