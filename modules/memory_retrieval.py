@@ -2,6 +2,7 @@
 
 from datetime import datetime, timezone
 import re
+from modules.memory_evidence import scope, statements, FOLLOWUP, UNCERTAIN, normalized, explicit_candidates, mentions
 
 
 _ALIASES = {
@@ -184,12 +185,33 @@ def retrieve_memories(
     min_relevance=0.35,
     confidence_default=0.5,
     ranking_weights=None,
+    history=(),
 ):
     """Return enabled, active Memories that pass the relevance gate."""
 
     if _is_generic_query(prompt):
         return []
-    prompt_tokens = _tokens(prompt)
+    active_memories = [m for m in memories or [] if isinstance(m, dict) and _enabled(m)
+                       and str((m.get("metadata") if isinstance(m.get("metadata"), dict) else {}).get("state", m.get("state", "active"))).casefold() == "active"]
+    query = str(prompt)
+    if FOLLOWUP.search(query):
+        # Carry only the nearest user topic, never assistant claims or full history.
+        previous = [quote for _, quote in statements(history)]
+        for quote in reversed(previous[-3:]):
+            if any(scope(m.get("content", ""))[0] != "user" and
+                   mentions(scope(m.get("content", ""))[0], quote) for m in active_memories):
+                query += " " + quote
+                break
+    prompt_tokens = _tokens(query)
+    current = [item["content"] for item in explicit_candidates([*history, {"role": "user", "content": prompt}])]
+    # Ambiguous active scalar facts are withheld, not silently merged or updated.
+    groups = {}
+    for m in active_memories:
+        key = scope(m.get("content", ""))
+        if key[1] in {"name", "stage", "location", "job", "device", "reply_style"}:
+            groups.setdefault(key, set()).add(normalized(m.get("content", "")).casefold())
+    ambiguous = {key for key, values in groups.items() if len(values) > 1}
+
     if not prompt_tokens:
         return []
     try:
@@ -213,10 +235,29 @@ def retrieve_memories(
         importance = _importance(memory.get("importance", metadata.get("importance")))
         if importance < float(min_importance):
             continue
+        content = str(memory.get("content", ""))
+        entity, prop = scope(content)
+        if (entity, prop) in ambiguous:
+            continue
+        if entity != "user" and not mentions(entity, query):
+            continue
+        if entity == "user" and re.search(r"是什么|为什么|历史|原理|\b(?:explain|what is|why)\b", query, re.I) and not re.search(r"我的|我喜欢|偏好|习惯|记得|\b(?:my|prefer|remember)\b", query, re.I):
+            continue
+        if any(normalized(quote).casefold() == normalized(content).casefold() or
+               (prop in {"name", "stage", "location", "job", "device", "reply_style"} and
+                scope(quote) == (entity, prop) and
+                re.search(r"(?:是|在|喜欢|偏好)|\b(?:is|in|prefer|like)\b", quote, re.I)) for quote in current):
+            continue
         memory_tokens = _tokens(
             f"{memory.get('content', '')} {memory.get('type', '')} {memory.get('category', '')}"
         )
         relevance, terms = _relevance_score(prompt_tokens, memory_tokens)
+        if entity != "user" and FOLLOWUP.search(str(prompt)) and mentions(entity, query):
+            relevance = max(relevance, .8)
+        if prop == "reply_style" and re.search(r"我.*(?:喜欢|偏好).*回复|\bmy.*(?:reply|response).*style\b", query, re.I):
+            relevance = max(relevance, .8)
+        if prop == "reply_style" and re.search(r"请(?:用|给|详细|简洁)|please (?:use|give|be)", str(prompt), re.I):
+            continue
         if relevance < relevance_threshold:
             continue
         confidence = _confidence_score(memory, neutral_confidence)
@@ -259,7 +300,7 @@ def retrieve_memories(
     return results
 
 
-def format_memory_context(memories, limit=1200):
+def format_memory_context(memories, limit=1200, *, total_limit=None):
     """Format matched Memory records for context preview and injection."""
 
     lines = []
@@ -273,11 +314,14 @@ def format_memory_context(memories, limit=1200):
         content = str(memory.get("content", "")).strip()
         if not content:
             continue
-        if len(content) > item_limit:
+        if total_limit is None and len(content) > item_limit:
             content = content[:item_limit] + "..."
         memory_type = str(memory.get("type", "")).strip()
         prefix = f"[{memory_type}] " if memory_type else ""
-        lines.append(f"- {prefix}{content}")
+        line = f"- {prefix}{content}"
+        if total_limit is not None and len("\n".join([*lines, line])) > max(0, int(total_limit)):
+            break  # Preserve complete facts; never truncate into a misleading fact.
+        lines.append(line)
     return "\n".join(lines)
 
 

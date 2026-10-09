@@ -142,7 +142,9 @@ class PostTurnCoordinator:
             try:
                 memory = self.composition.context.memory
                 memory.file_path.parent.mkdir(parents=True, exist_ok=True)
-                candidates = memory.queue_candidates(messages, source="chat")
+                candidates = memory.queue_candidates(messages, source="chat", provenance={
+                    "conversation_id": cid, "generation_id": job["generation_id"],
+                })
                 self.record("memory_completed", job, duration_ms=(self.clock()-started)*1000,
                             candidates_created=len(candidates))
             except Exception as error:

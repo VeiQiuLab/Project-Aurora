@@ -13,6 +13,7 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 from modules.app_paths import MEMORY_DIR
+from modules.memory_evidence import explicit_candidates, compatible, scope, normalized
 
 
 MEMORY_TYPES = {"preference", "fact", "instruction"}
@@ -94,32 +95,10 @@ class MemoryExtractor:
         return any(re.search(pattern, lowered, re.IGNORECASE) for pattern in TEMPORARY_PATTERNS)
 
     def extract(self, messages_or_text):
-        text = self._message_text(messages_or_text)
-        candidates = []
-        seen = set()
-        for raw_line in re.split(r"[\n\r]+", text):
-            line = self._clean(raw_line)
-            if not line or self._blocked(line) or self._temporary(line):
-                continue
-            for memory_type, score, pattern in EXTRACTION_RULES:
-                match = re.search(pattern, line, re.IGNORECASE)
-                if not match:
-                    continue
-                content = self._clean(" ".join(group for group in match.groups() if group) or line)
-                if not content or self._blocked(content) or self._temporary(content):
-                    continue
-                key = (memory_type, content.casefold())
-                if key in seen or score < self.min_score:
-                    continue
-                seen.add(key)
-                candidates.append({
-                    "type": memory_type,
-                    "content": content,
-                    "score": score,
-                    "importance": "normal",
-                    "source": "rule"
-                })
-        return candidates
+        # Existing risk boundary remains ahead of candidate persistence.
+        return [item for item in explicit_candidates(messages_or_text, self.min_score)
+                if not self._blocked(item["content"])]
+
 
 
 class MemoryStore:
@@ -263,7 +242,12 @@ class MemoryStore:
         second_text = str(second or "").strip().casefold()
         if not first_text or not second_text:
             return False
-        return first_text == second_text or cls._similarity(first_text, second_text) >= threshold
+        if normalized(first_text) == normalized(second_text):
+            return True
+        # Shared words must not erase a changed scalar value or named subject.
+        if not compatible(first_text, second_text) or scope(first_text)[1] or scope(second_text)[1]:
+            return False
+        return cls._similarity(first_text, second_text) >= threshold
 
     @staticmethod
     def _importance_value(value):
@@ -705,11 +689,13 @@ class MemoryStore:
         existing_memories = {
             str(item.get("content", "")).strip().casefold()
             for item in self.list_memories()
+            if self._memory_state(item) == "active" and item.get("enabled", True)
         }
-        pending = self.list_candidates(status="pending")
+        all_candidates = self.list_candidates()
+        pending = [item for item in all_candidates if item.get("status", "pending") == "pending"]
         pending_keys = {
             str(item.get("content", "")).strip().casefold()
-            for item in pending
+            for item in all_candidates if item.get("status", "pending") in {"pending", "rejected"}
         }
         pending_content = [item.get("content", "") for item in pending]
         stored = []
@@ -728,7 +714,7 @@ class MemoryStore:
             relation = self._analyze_relation(candidate_data)
             if relation["type"] == "duplicate":
                 continue
-            if relation["type"] == "new" and any(self._is_similar(content, existing) for existing in pending_content):
+            if relation["type"] == "new" and any(compatible(content, existing) and self._is_similar(content, existing) for existing in pending_content):
                 continue
             candidate_metadata = dict(candidate_data.get("metadata", {})) if isinstance(candidate_data.get("metadata"), dict) else {}
             candidate_metadata["relation"] = relation
@@ -743,11 +729,12 @@ class MemoryStore:
             })
             candidate = self._normalize_candidate(candidate_data)
             pending.append(candidate)
+            all_candidates.append(candidate)
             pending_keys.add(key)
             pending_content.append(content)
             stored.append(candidate)
         if stored:
-            self._write_candidates(pending)
+            self._write_candidates(all_candidates)
         return stored
 
     def _normalize_candidate(self, item):
@@ -790,20 +777,22 @@ class MemoryStore:
         return candidates
 
     @operation
-    def queue_candidates(self, messages_or_text, source="chat", min_score=0.75):
+    def queue_candidates(self, messages_or_text, source="chat", min_score=0.75, *, provenance=None):
         extracted = self.extract_candidates(messages_or_text, min_score=min_score, source=source)
         if not extracted:
             return []
         memories = {
             str(item.get("content", "")).strip().casefold()
             for item in self.list_memories()
+            if self._memory_state(item) == "active" and item.get("enabled", True)
         }
-        memory_content = [item.get("content", "") for item in self.list_memories()]
+        memory_content = [item.get("content", "") for item in self.list_memories()
+                          if self._memory_state(item) == "active" and item.get("enabled", True)]
         candidates = self.list_candidates()
         queued = {
             str(item.get("content", "")).strip().casefold()
             for item in candidates
-            if item.get("status") == "pending"
+            if item.get("status") in {"pending", "rejected"}
         }
         queued_content = [
             item.get("content", "")
@@ -820,7 +809,7 @@ class MemoryStore:
             relation = self._analyze_relation(item)
             if relation["type"] == "duplicate":
                 continue
-            if relation["type"] == "new" and any(self._is_similar(content, existing) for existing in memory_content + queued_content):
+            if relation["type"] == "new" and any(compatible(content, existing) and self._is_similar(content, existing) for existing in memory_content + queued_content):
                 continue
             has_intelligence_importance = (
                 "importance_score" in item
@@ -832,6 +821,12 @@ class MemoryStore:
             else:
                 quality, importance = self.score_candidate(item)
             candidate_data = dict(item)
+            if isinstance(provenance, dict):
+                candidate_data['source_detail'] = {
+                    **candidate_data.get('source_detail', {}),
+                    **{key: str(provenance[key])[:128] for key in ('conversation_id', 'generation_id')
+                       if provenance.get(key)},
+                }
             candidate_data.update({
                 "type": item.get("type", "fact"),
                 "content": content,
@@ -949,12 +944,15 @@ class MemoryStore:
             if self._memory_state(memory) != "active" or not memory.get("enabled", True):
                 continue
             existing_content = str(memory.get("content", "")).strip()
+            if not compatible(content, existing_content):
+                continue
             if content.casefold() == existing_content.casefold() or self._is_similar(content, existing_content):
                 return {"type": "duplicate", "target_memory_id": memory.get("id"), "reason": "matching_memory_content"}
             if str(memory.get("type", "fact")).casefold() != candidate_type:
                 continue
             existing_category = self._relation_category(memory)
-            if existing_category == candidate_category:
+            candidate_scope = scope(content)
+            if existing_category == candidate_category or (candidate_scope[1] and candidate_scope == scope(existing_content)):
                 related.append(memory)
 
         if related:
@@ -966,7 +964,7 @@ class MemoryStore:
                     str(memory.get("id", "")),
                 ),
             )
-            if candidate_category in {"communication_style", "project_information", "user_fact", "user_preference"}:
+            if scope(content)[1] in {"name", "stage", "job", "location", "device", "reply_style"} or (scope(content)[0] == "user" and candidate_category in {"communication_style", "project_information", "user_fact", "user_preference"}):
                 return {"type": "possible_update", "target_memory_id": target.get("id"), "reason": "same_type_and_property_category"}
             return {"type": "possible_conflict", "target_memory_id": target.get("id"), "reason": "same_type_and_category"}
         return {"type": "new", "target_memory_id": None, "reason": "no_active_related_memory"}

@@ -166,7 +166,7 @@ class MemorySupersedeTests(unittest.TestCase):
         candidate = self.store.queue_candidates("My name is Aurora.")[0]
         self.assertEqual(candidate["metadata"]["relation"]["type"], "new")
         saved = self.store.approve_candidate(candidate["id"])
-        self.assertEqual(saved["content"], "is Aurora")
+        self.assertEqual(saved["content"], "My name is Aurora")
         self.assertEqual(len(self.store.list_memories()), 2)
         self.assertEqual(self.store.list_memories()[0]["id"], old["id"])
 

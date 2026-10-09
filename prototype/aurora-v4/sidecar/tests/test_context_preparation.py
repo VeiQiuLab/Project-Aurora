@@ -102,7 +102,7 @@ class ContextPreparationTests(unittest.TestCase):
             self.assertGreaterEqual(snapshot.diagnostics["context_total_ms"], 0)
             composition.close()
 
-    def test_actual_legacy_prompt_parity_with_and_without_rag(self):
+    def test_existing_sections_preserved_with_explicit_memory_priority_with_and_without_rag(self):
         for rag in (False, True):
             with self.subTest(rag=rag), tempfile.TemporaryDirectory() as directory:
                 root = Path(directory)
@@ -111,7 +111,10 @@ class ContextPreparationTests(unittest.TestCase):
                 history = [{"role": "user", "content": "之前"}, {"role": "assistant", "content": "之前的回答"}]
                 expected = legacy_context(composition, "黑白界面", history)
                 snapshot = composition.context.prepare("黑白界面", history, generation_id="g", conversation_id="c")
-                self.assertEqual(snapshot.system_context, expected)
+                self.assertIn("Priority: current user instructions", snapshot.system_context)
+                self.assertLessEqual(snapshot.diagnostics["memory_context_bytes"], snapshot.diagnostics["memory_budget"])
+                for section in expected.split("\n\n"):
+                    self.assertIn(section, snapshot.system_context)
                 self.assertEqual(snapshot.generation_id, "g")
                 self.assertEqual(snapshot.conversation_id, "c")
                 with self.assertRaises(TypeError):
@@ -120,8 +123,45 @@ class ContextPreparationTests(unittest.TestCase):
                 adapter = DirectChatAdapter(composition)
                 actual = adapter.prepare_context(history, snapshot).snapshot()
                 legacy_session = adapter.prepare_context(history)
-                legacy_session.set_system_context(expected)
+                legacy_session.set_system_context(snapshot.system_context)
                 self.assertEqual(actual, legacy_session.snapshot())
+                composition.close()
+
+    def test_memory_byte_budget_and_recent_user_facts_with_persona_preserved(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            _write_sources(root, memory=False, knowledge=False)
+            (root / 'memory').mkdir()
+            path = root / 'memory/memories.json'
+            path.write_text(json.dumps([{'id': 'project', 'type': 'fact', 'content': '项目 Atlas 当前阶段是设计',
+                                        'enabled': True, 'metadata': {'state': 'active'}}]), encoding='utf-8')
+            before = path.read_bytes()
+            composition = self._composition(root, knowledge=False)
+            current = composition.context.prepare('项目 Atlas 当前阶段是什么？',
+                [{'role': 'user', 'content': '更正：项目 Atlas 当前阶段是开发。'}])
+            self.assertNotIn('阶段是设计', current.system_context)
+            self.assertIn('Persona:', current.system_context)
+            composition.settings.apply_patch({'rag.context_budget': 100}, composition.settings.revision)
+            bounded = composition.context.prepare('项目 Atlas 当前阶段是什么？')
+            self.assertLessEqual(bounded.diagnostics['memory_context_bytes'], bounded.diagnostics['memory_budget'])
+            self.assertNotIn('阶段是设计', bounded.system_context)
+            self.assertEqual(path.read_bytes(), before)
+            composition.close()
+
+    def test_multiline_memory_is_not_injected_as_partial_fact(self):
+        for rag in (False, True):
+            with self.subTest(rag=rag), tempfile.TemporaryDirectory() as directory:
+                root = Path(directory)
+                _write_sources(root, persona=False, memory=False, knowledge=False)
+                (root / 'memory').mkdir()
+                content = '项目 Atlas 配置说明\n' + 'x' * 1000 + '\n不允许用于生产'
+                (root / 'memory/memories.json').write_text(json.dumps([
+                    {'id': 'fixture', 'type': 'fact', 'content': content, 'enabled': True}]), encoding='utf-8')
+                composition = self._composition(root, persona=False, knowledge=False, rag=rag)
+                composition.settings.apply_patch({'rag.context_budget': 800}, composition.settings.revision)
+                snapshot = composition.context.prepare('项目 Atlas 配置说明')
+                self.assertNotIn('项目 Atlas 配置说明', snapshot.system_context)
+                self.assertLessEqual(snapshot.diagnostics['memory_context_bytes'], snapshot.diagnostics['memory_budget'])
                 composition.close()
 
     def test_missing_and_corrupt_persona_use_production_default_without_write(self):
@@ -206,7 +246,7 @@ c.close()
             self.assertIsNone(snapshot.diagnostics["rag_ms"])
             composition.close()
 
-    def test_rag_enabled_uses_existing_pipeline_and_reports_count(self):
+    def test_rag_enabled_uses_pipeline_but_cannot_inject_unmatched_memory(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
             _write_sources(root, persona=False, knowledge=False, memory=False)
@@ -220,7 +260,7 @@ c.close()
             runner.assert_called_once()
             self.assertEqual(snapshot.diagnostics["rag_result_count"], 1)
             self.assertIsNotNone(snapshot.diagnostics["rag_ms"])
-            self.assertIn("optimized", snapshot.system_context)
+            self.assertNotIn("optimized", snapshot.system_context)
             composition.close()
 
     def test_context_cancelled_at_boundary(self):

@@ -8,7 +8,7 @@ from typing import Any
 
 
 MEMORY_TYPES = {"preference", "fact", "instruction"}
-ANALYSIS_VERSION = "memory_intelligence_v1"
+ANALYSIS_VERSION = "memory_intelligence_v2"
 
 SENSITIVE_PATTERNS = [
     r"\b\d{3}[- ]?\d{2}[- ]?\d{4}\b",
@@ -99,7 +99,8 @@ class MemoryIntelligence:
         text = self._message_text(messages_or_text)
         candidates = base_candidates
         if candidates is None:
-            candidates = self._fallback_candidates(text, min_score=min_score, source=source)
+            from modules.memory import MemoryExtractor
+            candidates = MemoryExtractor(min_score=min_score).extract(messages_or_text)
 
         enhanced = []
         for raw_candidate in candidates or []:
@@ -129,6 +130,9 @@ class MemoryIntelligence:
                 "extractor": ANALYSIS_VERSION,
                 "signals": score["signals"],
             })
+            if candidate["source_detail"].get("certainty") == "explicit":
+                candidate["source_detail"]["kind"] = source
+                candidate["source_detail"]["role"] = "user"
             candidate.setdefault("analysis_version", ANALYSIS_VERSION)
             if risk["level"] == "high":
                 candidate.setdefault("blocked", True)
@@ -143,7 +147,7 @@ class MemoryIntelligence:
         for message in messages_or_text or []:
             if not isinstance(message, dict):
                 continue
-            if message.get("role") not in {"user", "assistant"}:
+            if message.get("role") != "user":
                 continue
             content = str(message.get("content", "")).strip()
             if content:
