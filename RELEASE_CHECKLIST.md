@@ -2,13 +2,20 @@
 
 ## Current v4 Desktop release gate
 
+V4-8F is **HOLD**. This checklist is not evidence of a completed release.
+Preserve outstanding real QQ followups/non-@ archive/safety acceptance,
+Voice Full Manual Matrix, G01 Major, LEGAL REVIEW RECOMMENDED (ORT/MPL-2.0),
+and Packaging / First-run. See [current project status](PROJECT_CONTEXT.md).
+Before an authorized closeout, synchronize README/architecture/stage documents
+according to [CODEX_WORKFLOW](docs/CODEX_WORKFLOW.md).
+
 - [ ] Verify branch/HEAD and scoped clean or reviewed worktree.
 - [ ] Run retirement entrypoint/import/data-isolation tests.
 - [ ] Run shared Python and v4 sidecar/contracts regressions; retain legacy tests.
 - [ ] Run Rust/Desktop and frontend tests, compileall, JSON and diff checks.
 - [ ] Build through default `build_exe.ps1` (Tauri Release, no bundle).
 - [ ] Validate root `main.py --check`, no Tk fallback on missing/failed EXE.
-- [ ] Real Release: local 4B, streaming Chat/persistence, Edge/Rust Audio,
+- [ ] Real Release: local 4B, streaming Chat/persistence, Local sherpa/Melo + Rust Audio,
       cancellation and optional Live2D without Tk/pygame initialization.
 - [ ] Verify shutdown leaves no owned processes; do not count mocks as real QA.
 - [ ] Review Python/runtime/model/SDK distribution separately before claiming a

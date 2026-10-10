@@ -1,109 +1,75 @@
-# Project Aurora Development Guide
+# Project Aurora — V4 开发指引
 
-Current entrypoint/setup: [root README](../README.md). Tauri v4 is the only
-official Desktop. This older guide's Tk/AppShell/PyInstaller instructions apply
-only to explicit legacy development; shared AI and privacy guidance remains
-applicable. See [retirement inventory](TKINTER_RETIREMENT.md).
+当前桌面是 Tauri/Rust + Python Production Sidecar。开始前阅读
+[项目现状](../PROJECT_CONTEXT.md)、[架构](ARCHITECTURE.md) 和 [协作规则](CODEX_WORKFLOW.md)。
+V4-8F 当前 HOLD；不以旧 Tk/v3 指引作为 V4 开发默认。
 
-## Development Scope
+## 目录与职责
 
-Aurora development should be incremental, compatible, and easy to review.
-Before changing a feature, identify its owner, configuration keys, persisted
-data, user-visible behavior, and required tests.
+| 路径 | 内容 |
+| --- | --- |
+| `main.py` / `modules/desktop_launcher.py` | 已构建 Release EXE 的唯一根启动入口 |
+| `prototype/aurora-v4/desktop/src/` | TypeScript 设置、聊天、Memory 与 QQ UI |
+| `prototype/aurora-v4/desktop/src-tauri/src/` | Rust 生命周期、IPC Gateway、Supervisor、Audio、Avatar |
+| `prototype/aurora-v4/sidecar/production_sidecar/` | Python 生产适配、执行、持久化、Context、Post-Turn、QQ |
+| `modules/` | 复用的 AI、Memory、Persona、Knowledge/RAG、Settings 与协议/归档实现 |
+| `prototype/aurora-v4/contracts/` | IPC v1 schema、示例和契约测试 |
+| `tests/`、Sidecar `tests/`、Desktop 测试 | 隔离回归；真实数据不是 fixture |
+| `docs/`、V4 `docs/` | 当前指引与阶段证据边界；历史文档需按日期阅读 |
 
-Current module boundaries are:
+WebView 不直接访问数据库、文件或私有后端 socket。扩展功能复用 Rust typed Gateway 与 Python Owner，
+不建立平行的 Conversation、Memory、Settings、QQ 协议栈或 AI Runtime。
 
-- Chat: ChatPage, ChatPanel, ChatSession, and Ollama streaming
-- Conversation: persistence, restore, search, metadata, and intelligence
-- Context: ContextBuilder and prompt-context integration
-- Persona: user-controlled assistant identity and system context
-- Memory: retrieval, candidates, review, and persistence
-- Knowledge/RAG: local knowledge retrieval and optional ranking pipeline
-- Voice Experience: microphone, VAD, STT, shared Chat input, TTS, and playback
-- Settings: configuration, migration, and current UI entry points
-- Packaging: AppData isolation, PyInstaller, Inno Setup, assets, and FFmpeg
+## 准备与启动
 
-Do not regenerate the application or create parallel versions of these systems.
-Remote, LAN, Mobile, Open WebUI, Docker, and the old Dashboard are historical or
-removed product directions, not current development boundaries.
+需要 Windows、Python 3.12、Node/pnpm、Rust、Visual Studio C++ Build Tools。
+使用当前工作区已有的解释器/依赖；不要为日常运行无故重装或重建。
+新工作区的依赖安装、构建和运行命令见 [根 README](../README.md)。
+Production 使用根 `.venv` 与根依赖；Sidecar 的 mock 环境不是完整 AI 依赖。
 
-## Chat and Voice Boundary
+Release 路径：`prototype/aurora-v4/desktop/src-tauri/target/release/aurora-v4-desktop.exe`。
+`main.py --check` 只检查入口，不启动组件；直接启动 EXE 由 Desktop 管理已配置的 Sidecar/模型/Voice/Avatar。
+模型、Voice、Live2D 资产及 NapCat 登录/接口仍需各自准备。
+`AURORA_V4_BACKEND=mock` 仅用于明确选择的隔离 demo；Production 是正常 EXE 默认。
 
-Voice is an input/output Experience Layer around Chat, not a second Chat Core.
-Recognized Voice text must enter through ChatPage and reuse ChatSession,
-Conversation, ContextBuilder, Persona, Memory, Knowledge/RAG, and the normal text
-message UI.
+开发前端可在 Desktop 目录运行 `pnpm tauri dev`。
+Release 构建使用根 `build_exe.ps1` 或 Desktop `pnpm tauri build --no-bundle`，不声明安装包/First-run 已完成。
+不要修改正在运行的真实用户数据作为验收捷径。
 
-Voice, STT, TTS, playback, or device failures must fail safely and leave text
-chat usable. Keep provider interfaces replaceable and preserve cancellation,
-session/generation ownership, and stale-output checks when modifying asynchronous
-Voice code.
+## 与改动相关的验证
 
-## UI Text and Theme
-
-Use `modules/ui_theme.py` for shared visual tokens. Prefer existing font, color,
-spacing, and button helpers over page-specific hard-coded styles.
-
-Where a surface uses localization, add new user-visible keys to both
-`locales/zh_CN.json` and `locales/en_US.json`. Locale files must remain valid
-UTF-8 JSON. Missing translation keys must not crash the application.
-
-Run the i18n alignment check when locale keys change:
+从根目录选择受影响的隔离 Python 测试，例如：
 
 ```powershell
-python scripts/check_i18n.py
+.\.venv\Scripts\python.exe -m pytest prototype/aurora-v4/sidecar/tests/test_controlled_qq.py prototype/aurora-v4/contracts/test_ipc_v1_contract.py -q
+.\.venv\Scripts\python.exe -m pytest tests/test_companion_memory_quality.py tests/test_memory_governance.py -q
 ```
 
-## Settings and Configuration
-
-- Reuse `modules/settings.py` and `SettingsController`.
-- Prefer `settings.update_many()` for related updates.
-- Preserve unknown keys and existing user values during default merging.
-- Do not change the settings schema without a compatibility migration.
-- Keep configuration access at integration boundaries where practical.
-- UI save actions must report success or failure clearly.
-- Do not create a second configuration model.
-
-## Error Isolation
-
-- Optional Voice failure must not break Chat.
-- RAG optimization failure must preserve a usable retrieval fallback.
-- Conversation Intelligence and title failures must not break persistence.
-- Missing audio devices or dependencies must produce actionable diagnostics.
-- Background failures must return shared state to a usable condition.
-- Network, process, indexing, model, audio, and heavy file work must not block
-  the Tkinter UI thread.
-
-## Runtime Data and Privacy
-
-Release runtime data belongs under `%APPDATA%/Aurora/`. Do not commit or package
-user settings containing private information, Conversations, Memory records,
-Knowledge data, private Persona data, logs, device identifiers, installers,
-FFmpeg, model files, or other large local binaries.
-
-Approved defaults, examples, source code, and documentation may be tracked.
-Data-directory or schema changes require a dedicated migration plan.
-
-## Windows Compatibility
-
-- Use a complete Windows CPython 3.12 installation with Tcl/Tk for GUI builds.
-- Do not assume the Windows Python Launcher is functional.
-- Keep subprocess windows hidden for background production processes.
-- Preserve source and packaged executable path handling.
-- Treat FFmpeg as an explicit local build resource and verify its source and
-  checksum where available.
-- Verify behavior from source and from the packaged application when required.
-
-## Validation
-
-Choose checks proportional to the change. Typical static validation is:
+在 `prototype/aurora-v4/desktop` 目录：
 
 ```powershell
-git diff --check
-python -m compileall main.py modules widgets
-python scripts/check_i18n.py
+pnpm test
+pnpm build
+cargo test --manifest-path src-tauri/Cargo.toml --lib
 ```
 
-Use focused tests for changed contracts and failure paths. Mock tests do not
-replace real GUI, Ollama, microphone, Edge-TTS, playback, or installer smoke
-tests. Report skipped checks and environmental limitations explicitly.
+`pnpm build` 包括 TypeScript 检查。涉及界面时按需执行现有 browser UI harness；
+它们依赖本机可用的 Playwright/浏览器，不等于 Native Desktop 人工验收。
+涉及 lifecycle、持久化或真实外部发送时，使用隔离 profile 和必要的 Release/真实环境门禁。
+不得为文档修改重复 Voice soak、完整人工矩阵或已完成的旧阶段。
+
+只报告当前执行的检查；引用历史结果时注明日期、revision 和覆盖边界。
+最新公开 checkpoint 结果见 [V4-8F](v48f-controlled-qq.md)，详细本地运行证据在忽略的 `tests/output/`，不提交私密日志。
+
+## 数据与 Git 门禁
+
+测试设置、Memory、群聊记录、导出和数据库使用隔离目录，真实私人数据不能作为 fixture。
+凭据通过本机环境传递，不写入测试正文或普通日志；QQ 外部内容不能授予文件/命令/系统操作权限。
+
+开始前记录 HEAD、branch、远端和 tracked/untracked；保护 12 项历史 untracked、WIP Glass、私人 Memory 和独立 QQSuggestionBot。
+提交前逐项审查 diff 和暂存列表、执行 `git diff --cached --check`，只暂存范围内文件。
+不要使用不加筛选的 `git add .` / `git add -A`，不提交数据库、个人配置、聊天、二维码、模型或运行产物。
+删除文件/数据需明确同意；commit/push、main 快进和阶段推进各自需要当前任务授权。
+
+阶段收尾先更新现有项目/架构/阶段说明，再执行获授权的 Git 门禁；
+完整固定规则见 [CODEX_WORKFLOW](CODEX_WORKFLOW.md)。

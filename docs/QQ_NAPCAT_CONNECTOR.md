@@ -1,3 +1,8 @@
+> **历史文档：QQ Connector v0.1。** 下文 PASS 仅属于旧 Connector 的当时验收，不能代表 V4-8F。
+> 当前 V4 的端点、凭据、授权、Automatic、上下文和 Group Archive 以
+> [V4-8F 阶段说明](v48f-controlled-qq.md) 为准；**V4-8F STATUS: HOLD**。
+> 不按下文旧默认端口、昵称触发或旧设置路径配置当前 V4。
+
 # QQ Connector v0.1 — 真人 E2E PASS
 
 Aurora 的 QQ Connector 只处理 OneBot 11 的私聊和群聊文字事件，已完成真人 E2E 验收。它不实现 QQ 协议，默认只连接本机回环地址：WebSocket 事件端点 `ws://127.0.0.1:3001` 和 HTTP Action 端点 `http://127.0.0.1:3000`。

@@ -4,6 +4,11 @@ Starting revision: `6c9cf64d7b29f9069fd2b41b5154dad0af101462` on `refactor/auror
 
 **V4-8F STATUS: HOLD**
 
+Published source checkpoint: `ba6c3f3d7f3443bd3a7e8016395941c6d7704acd`.
+Later documentation synchronization does not change this acceptance state.
+For current product entrypoints and architecture, see [README](../README.md)
+and [Architecture](ARCHITECTURE.md); use Git for the latest documentation HEAD.
+
 This is an authorized WIP development checkpoint, not a Final PASS. It preserves
 the existing QQ integration, Authorized Automatic, short-term context repair,
 Group Archive Step 1, connection/input fixes, and opt-in balanced participation.

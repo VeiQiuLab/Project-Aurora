@@ -1,41 +1,19 @@
-# Python sidecar lifecycle contract
+# Python Production Sidecar — 当前入口与生命周期契约
 
-V4-6A adds a V4-only BuiltInLlamaProvider selected by Rust's private environment
-handoff. Runtime/process/auth remain Rust-owned; production Settings, context,
-conversation and post-turn owners are preserved. Stable's Ollama default is
-unchanged. See [Local runtime architecture](../docs/V4_6A_LOCAL_RUNTIME.md).
-The descriptions below record earlier stages rather than today's desktop default.
+正常 V4 EXE 默认使用 Production Sidecar，由 Rust 监督；mock 仅为显式隔离测试。
+Python 复用根 `modules/` 的 AI/Settings/Memory，使用根 `.venv` 完整依赖，不导入 Tk 桌面。
+已有对话持久化、Context/Persona/Knowledge/RAG/Post-Turn、Memory 查看/治理、Voice 和 QQ 适配。
+设置界面已经实现；历史 V4-3A/3B 的「默认 mock、无持久化/Context/UI」不再代表当前状态。
 
-V4-5A replaces the checked-source Settings/Chat bridge with direct headless-safe
-production imports and request-local immutable settings snapshots. AI settings
-remain Python-owned in the existing app_paths.CONFIG_FILE; no second V4 file.
-Read/patch/change notifications use authenticated IPC v1. See
-[Settings ownership/runtime audit](../docs/V4_5A_SETTINGS_AUDIT.md).
-The real-config smoke is read-only:
-`python -B prototype/aurora-v4/sidecar/smoke_settings_readonly.py`.
-It prints safe scalar results only; all update tests use isolated settings roots.
-No Settings page is included. Manual GUI remains **NOT YET VERIFIED**.
+模型由 Rust LocalModelSupervisor 管理 Qwen3.5-4B / llama.cpp Vulkan，Python 调用私有 provider。
+本地 Voice 由 Rust LocalVoiceSupervisor 管理 sherpa/Melo Host，Python 保留 TTS semantics；
+完整 WAV 经 Rust Audio 播放，voice.streaming_pcm=false。远端 Voice 仅 Compatibility / Legacy。
+QQ 复用同一个 Sidecar/模型，独立 archive 与外部上下文不读写主人私人 Memory。
 
-V4-3C adds Python-owned conversation list/get/create and completed-turn
-persistence on top of the V4-3B direct-chat RPC. History is loaded lazily from
-the existing `modules.app_paths` conversation directory; cancelled, failed,
-and disconnected generations never write partial assistant content. The
-legacy title, intelligence, and memory schedulers are not called.
-
-V4-3B adds an opt-in direct-chat RPC on top of the V4-3A production
-composition. It reuses the headless-safe Stable `modules.chat.stream_chat()`
-boundary and runs its blocking Ollama stream in a worker thread. It does not
-enable persistence, context systems, voice, or PCM IPC. See
-[V4_3B_REAL_CHAT.md](../V4_3B_REAL_CHAT.md) and
-[V4_3B_VALIDATION.md](../V4_3B_VALIDATION.md) for the boundary and evidence;
-the additive conversation message contract is documented in
-`../contracts/IPC_V1.md`.
-Default is mock; `AURORA_V4_BACKEND=production` selects production.
-
-V4-1 defined this lifecycle without an implementation. V4-2 adds an isolated
-mock under `mock_sidecar/`, pinned to `websockets==17.1` in a prototype-local
-virtual environment. It emits only fixed synthetic tokens and imports none of
-Stable Aurora's AI, persistence, settings, or voice modules.
+V4-8F **HOLD**。当前架构、准备与证据见
+[根 README](../../../README.md)、[架构](../../../docs/ARCHITECTURE.md)、
+[V4-8F](../../../docs/v48f-controlled-qq.md)。
+下面保留 bootstrap/lifecycle 契约说明；历史 Windows/mock 环境描述按各阶段证据阅读。
 
 ## Bootstrap
 
@@ -83,7 +61,8 @@ policy. stdout is a bootstrap-only machine channel.
 Rust first sends `shutdown.request`. Python stops accepting new work, cancels
 active work, responds with `shutdown.ack`, closes the WebSocket/listener, and
 exits. After a bounded grace period Rust terminates the owned child. Exact
-timeouts are implementation values to benchmark in V4-2, not invented here.
+timeouts are defined by the current Rust implementation; changing them requires
+lifecycle and cleanup validation rather than relying on the historical V4-2 plan.
 
 If bootstrap is malformed, too large, times out, reports no common version, or
 the child exits, Rust enters `DISCONNECTED` and surfaces a safe diagnostic.
@@ -98,7 +77,11 @@ event. A fresh restart rotates both token and `sidecar_instance_id`.
 This protects against accidental or unrelated localhost clients. It is not a
 defence against a process already running as the same compromised OS user.
 
-## Prototype setup and tests
+## Historical mock environment setup and tests
+
+The following is the earlier isolated mock setup from this directory, not the
+normal production AI dependency installation. For production, use the root
+virtual environment and instructions in the repository README.
 
 ```powershell
 py -3.12 -m venv .venv
@@ -125,3 +108,12 @@ B-3 replaces only v4 production's pygame execution with private Rust playback.
 No bridge/root means Voice-only failure, never automatic pygame fallback.
 Legacy pygame remains supported outside v4 production. See
 [B-3 details](../docs/B3_RUST_AUDIO.md).
+
+## Current local Voice route
+
+V4-7B.3B integrated LocalSherpaMeloProvider with the Rust-supervised native host.
+The earlier Edge/B-3 notes above describe the route at those stages, not the
+complete current provider list. See [Offline Local Voice integration](../docs/OFFLINE_LOCAL_VOICE_INTEGRATION.md).
+Existing provider selection is preserved; Local has no implicit network fallback.
+Voice Full Manual Matrix remains incomplete, G01 percentage pronunciation is Major,
+and LEGAL REVIEW RECOMMENDED includes ORT/MPL-2.0 obligations.

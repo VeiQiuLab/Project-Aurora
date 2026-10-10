@@ -1,122 +1,55 @@
-# Aurora v4 process architecture
+# Aurora V4 — 当前进程与所有权
 
-## Process boundary
+本文件同步当前实现（2026-10-10），取代此前作为现状展示的 V4-1 迁移规划。
+完整说明见 [仓库当前架构](../../docs/ARCHITECTURE.md)，wire contract 见 [IPC v1](contracts/IPC_V1.md)。
+V4-8F 仍 **HOLD**，不以本说明宣告真实 QQ 验收完成。
 
-```text
-Web UI
-  | Tauri commands and typed Channels
-  v
-Rust Desktop Core
-  | authenticated loopback WebSocket
-  v
-Python AI Sidecar
-```
-
-The Rust Desktop Core is the only gateway. The WebView never receives the
-Python port, token, PID, or filesystem paths and never opens a sidecar socket.
-The sidecar never addresses the WebView. Rust validates, normalizes, checks
-request/generation ownership, and only then emits typed frontend events. It is
-not a transparent proxy.
-
-Tauri v4 is now the official Desktop. The former Tk entrypoint is retained only
-as isolated `legacy.tk_desktop` compatibility; it is never a sidecar dependency
-or fallback. See the root retirement inventory for the current entrypoint gate.
-
-## Responsibilities
-
-Rust owns desktop lifecycle, window and native integration, AppData roots,
-sidecar process supervision, the IPC connection, backend state, request
-registry, cancellation routing, and frontend event routing.
-
-Python owns AI execution: Ollama/LLM providers, context construction, Memory,
-Persona, Knowledge/RAG, Conversation Intelligence, the TTS provider/router,
-speech segmentation/generation semantics, and AI diagnostics. Conversation
-persistence remains exclusively Python-owned during migration.
-
-An AI request deliberately has split responsibilities: Rust owns the external
-request registry and frontend routing; Python owns execution and its terminal
-result. The protocol is the synchronization boundary. This is not dual
-ownership of storage.
-
-## Ownership matrix
-
-| Resource | Owner / source of truth | Readers | Writers |
-| --- | --- | --- | --- |
-| Window lifecycle and native integration | Rust | frontend | Rust |
-| Python process and IPC credentials | Rust | Rust only | Rust |
-| Sidecar listener | Python child, supervised by Rust | Rust | Python |
-| IPC request registry | Rust | Rust/frontend projection | Rust |
-| AI request execution | Python | Rust through validated events | Python |
-| Generation terminal state | Python while connected; Rust may terminalize as `backend_lost` after disconnect | Rust/frontend | Python or disconnect handler, exactly once |
-| Conversation persistence | Python | Python through gateway APIs | Python only |
-| Memory/Knowledge stores | Python | Python through gateway APIs | Python only |
-| Desktop settings | Rust (future migration) | frontend/Rust | Rust |
-| AI settings | Python initially | frontend through Rust | Python only |
-| Audio device | Python in the first v4 migration | Rust candidate later | Python initially |
-| Ollama process | existing Python/legacy manager initially | Python | Python |
-| Aurora Voice Node | independent service | Python TTS provider | Voice Node |
-
-Rust and Python must never both write the current conversation JSON or treat
-the same persisted setting as authoritative.
-
-## Settings boundary
-
-Desktop settings (window position/size, theme, glass effects, low-GPU mode,
-tray, startup) are Rust-owned after migration. AI settings (model, Ollama host,
-thinking mode, keep-alive, Memory/RAG, TTS provider, Voice Node endpoint) remain
-Python-owned initially. The frontend accesses both only through Rust commands;
-it does not read `settings.json` directly. V4-1 performs no settings migration.
-
-## Sidecar lifecycle
-
-The Rust state machine is:
+## Gateway
 
 ```text
-STOPPED -> STARTING -> HANDSHAKING -> READY
-              |             |          |
-              +-----------> DISCONNECTED <---+
-                                             |
-DISCONNECTED -> RESTARTING -> HANDSHAKING ----+
-READY/DEGRADED/DISCONNECTED -> STOPPING -> STOPPED
-READY <-> DEGRADED
+WebView → typed Tauri commands → Rust registry / Gateway
+                                   ↓ authenticated dynamic loopback IPC
+                            Python Production Sidecar
 ```
 
-- `STOPPED`: no child and no connection.
-- `STARTING`: child created; bootstrap line not yet accepted.
-- `HANDSHAKING`: valid bootstrap received; authenticated WebSocket and version
-  negotiation are not complete.
-- `READY`: handshake succeeded and required v1 capabilities are available.
-- `DEGRADED`: connection is alive but one or more non-core capabilities are
-  unavailable.
-- `DISCONNECTED`: startup failed, child exited, socket closed unexpectedly, or
-  protocol integrity was lost.
-- `RESTARTING`: an explicit user-requested restart is creating a fresh child.
-- `STOPPING`: graceful shutdown or forced process termination is in progress.
+WebView 不获取 Sidecar port/token、不打开后端 socket、不直接读写数据库。
+Rust 验证消息、请求/generation 归属和连接 epoch 后返回 typed frontend events；不是透明代理。
+Python bootstrap/hello/能力握手决定 readiness；普通日志不能污染 bootstrap stdout。
+详细 Sidecar 生命周期见 [Sidecar README](sidecar/README.md)。
 
-V4 prototypes do not restart forever. A user may request `Restart Backend`.
-Later releases may add a small bounded backoff policy, but it must never revive
-old request or generation ownership.
+## 当前所有者
 
-## Crash and reconnect semantics
+| 资源 | Owner |
+| --- | --- |
+| Window、tray、shortcut、IPC、request registry、owned child cleanup | Rust Desktop Core |
+| Python Sidecar 生命周期、动态连接与认证 | Rust；Python 子进程提供 listener |
+| Qwen 4B / llama.cpp Vulkan 生命周期、健康和私有连接 | Rust LocalModelSupervisor |
+| sherpa/Melo Native Voice Host 生命周期、Ready/Health、有界重启与 Job Object | Rust LocalVoiceSupervisor |
+| Chat/TTS/QQ 执行语义、完成/取消终态 | Python，经 Rust 的当前请求归属路由 |
+| Conversation / Memory / Knowledge / AI Settings 持久化 | Python 既有 Store / SettingsService |
+| 桌面外观偏好 | 当前桌面本地偏好；不是第二份 AI Settings |
+| Audio 播放、stop、cleanup、幅度 | Rust Audio |
+| Native Live2D 生命周期、chat/voice 状态投影 | Rust / Cubism Native Host |
+| QQ 消息、授权、有限历史、独立 archive 与 send receipts | Python；Rust 仅 typed commands / validated responses |
 
-If the Python process exits or the WebSocket is lost, Rust stays alive,
-transitions to `DISCONNECTED`, and atomically completes every active registry
-entry as `backend_lost`. The UI remains usable and shows a safe `Backend
-disconnected` state.
+Python 不另起模型或本地 Voice Runtime。Rust 不成为第二个 Memory/Conversation Writer。
+Ollama 仅显式兼容，远端 Voice Node 仅 Legacy，不是当前默认生命周期依赖。
 
-A restarted sidecar has a new process, token, connection, and
-`sidecar_instance_id`. All pre-crash generations are permanently stale. A
-persisted conversation may be reopened, but no old stream is resumed and no
-late event from an old connection is accepted.
+## 断线、取消与恢复
 
-## Diagnostics and privacy
+Rust 监督 Sidecar 与 owned processes，Windows Job Object 管理异常退出清理。
+Sidecar 丢失时旧请求以 backend_lost 结束，UI 显示真实断线状态；Restart Backend 创建新的连接/实例，旧流不能续写。
+Local Model/Voice/Avatar 各有独立 readiness/错误状态，按已有有界策略恢复，不无限重启或复活陈旧工作。
+完整 WAV 合成和播放维持 request/generation 归属；voice.streaming_pcm=false，停止与清理走既有 Rust Audio。
 
-Python retains AI, Ollama latency, Memory/RAG, and voice-provider diagnostics.
-Rust adds sidecar lifecycle, IPC latency, disconnect, frontend-command latency,
-and later audio/device diagnostics.
+Memory 写入协调需要跨进程锁、版本校验与持久操作 intent，不能只靠 UI 或进程内锁保证崩溃一致性。
+QQ 已完成发送的回执/attempt 持久化，重连丢弃旧排队工作，不自动重放；禁用 Automatic 撤销未发送工作的权限。
 
-IPC diagnostics may record message type, shortened request/generation IDs,
-duration, status, byte size, sequence number, and safe error code. They must
-not record the session token, full user or assistant text, prompts, memories,
-knowledge content, reasoning text, or Python tracebacks. Detailed tracebacks go
-only to the backend log on stderr.
+## 数据与诊断
+
+生产数据默认 `%APPDATA%/Aurora`；隔离测试用显式 `AURORA_USER_DATA_DIR`。
+QQ Archive 独立 SQLite 分区，不与私人 Memory 混用权限；查询检查账号/群/发言者，第三方信息不生成主人候选。
+
+普通诊断仅使用状态、代码、时长等必要元信息，不记录 Token、完整提示、Memory、群正文或推理内容。
+本机报告/运行数据库/个人配置不发布；公开阶段文档仅保留脱敏摘要。
+历史 Tk 入口、旧默认 mock/Ollama、Python 音频设备所有权描述不再作为当前事实。

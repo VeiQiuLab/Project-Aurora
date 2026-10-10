@@ -1,168 +1,88 @@
-# Project Aurora Context
+# Project Aurora — 当前项目说明与协作指令
 
-## Current product authority — Tkinter Retirement
+更新日期：2026-10-10。本文是精简的项目现状，可复制到 ChatGPT 项目说明；不是开发日志。
+实际状态以当前源码、Git、正式报告与维护中的阶段文档为准。
 
-The official Desktop is Tauri v4 under `prototype/aurora-v4/desktop`.
-Root `main.py` launches only its EXE; Python sidecar owns AI/settings/persistence,
-Rust owns lifecycle/audio, and optional native Live2D is already integrated.
-Ollama/Tk/pygame are not startup requirements. Legacy Tk is explicit and uses
-`%APPDATA%/Aurora-Legacy`, never production data. See README.md and
-docs/TKINTER_RETIREMENT.md for current entrypoints and the dependency inventory.
+## 定位与原则
 
-Everything below is retained **historical v3 context**, not current product
-entrypoint or release instructions. Shared AI semantics remain valuable.
+Aurora 是长期开发的 Windows 本地 AI Companion，目标是持续交流、保留历史、理解上下文，
+并由用户自主控制对话、记忆、人格、语音、角色与外部社交交互。
+本地优先，不模拟睡眠、疲劳或复杂情绪；电脑、Runtime、QQ 桥接可用时持续服务，
+不承诺断电、休眠、网络中断时仍能回答。优先可用功能，复用组件，避免重复系统。
 
-## Product Goal
+## 当前技术架构
 
-Project Aurora is a Chat-first, Local-first personal AI companion for Windows.
-It provides private local conversation, continuity, user-controlled memory,
-knowledge retrieval, persona context, and an optional voice experience.
+- 正式桌面：Rust Desktop Core + Tauri 2 / TypeScript / CSS / Vite。
+- Python Production Sidecar：Chat、Conversation Persistence、Context、Memory、Persona、Knowledge/RAG、Post-Turn、Settings 与 TTS/QQ 语义。
+- 内置模型：Qwen3.5-4B-Q4_K_M.gguf，llama.cpp Vulkan，由 Rust LocalModelSupervisor 管理。
+- 本地 Voice：license-clean sherpa-onnx + Melo；Rust LocalVoiceSupervisor / Native Voice Host，Python LocalSherpaMeloProvider / TTSRouter。
+- 完整 WAV artifact → Rust Audio 播放/停止/清理 → 音频幅度 → Cubism Native Live2D 口型；`voice.streaming_pcm=false`。
+- QQ：NapCat / OneBot 外部桥接，复用同一个 Sidecar 与本地模型。
+- Tkinter/CustomTkinter、Ollama/Open WebUI、旧远端机器不是 V4 主架构。Ollama 仅显式兼容；Remote Voice 仅 Compatibility / Legacy。
+- 现有 EXE 可启动已配置的 Aurora 组件；源码工作区仍依赖已准备的 Python、运行库、模型和可选角色资产，不是完成安装器。
 
-Aurora is not a general-purpose autonomous Agent, desktop automation platform,
-Open WebUI control center, or Remote/LAN/Mobile service.
+## 开发基线
 
-## Version State
+正式分支：`refactor/aurora-v4`。
+本文核对的功能检查点：`ba6c3f3d7f3443bd3a7e8016395941c6d7704acd`。
+后续文档提交不改变阶段状态；开始工作时重新检查完整 HEAD、Local/Remote、tracked/untracked，不固定使用此 SHA。
+GitHub 默认 `main` 仍为历史基线，不是当前 V4 源码。V4-8F 完整验收、用户认可主线门禁并再次授权后，才考虑 fast-forward only 更新 main。
 
-- Release tag: `v3.8.0-alpha`
-- Release version: `3.8.0-alpha`
-- Release state: alpha pre-release
+## 已实现
 
-Version 3.8.0-alpha is an alpha pre-release and must not be described as stable.
+V4 基础 IPC/Sidecar、桌面、本地模型、流式聊天与会话持久化；
+Context/Persona/Knowledge/RAG/Post-Turn；本地语音、Rust Audio、Live2D 行为/口型；
+日常快捷键/托盘/Hide-Show/草稿/焦点/Stop/退出；Memory 查看、候选审批/拒绝、编辑、确认删除及写一致性恢复；
+日常稳定性改进；Memory Intelligence 与受预算约束的相关召回。
 
-## Current Architecture
+QQ 已有 Manual、Authorized Automatic、账号/群/发言者隔离、短期上下文修复、受控重连、去重、防循环、队列与限流。
+独立 QQ Group Archive Step 1 已有本地持久记录、中文查询、有限历史接入、导出、确认删除、撤回处理及重启恢复。
+另有默认关闭的「偶尔接话」，真实群聊质量尚未验收。
 
-The shared text conversation path is:
+## 当前阶段与证据边界
 
-```text
-AppShell
-  -> ChatPage
-  -> ChatSession
-  -> Context preparation
-     -> Persona
-     -> Memory retrieval
-     -> Knowledge retrieval
-     -> optional RAG pipeline
-     -> ContextBuilder
-  -> Ollama stream_chat()
-  -> Conversation persistence
-  -> Conversation Intelligence
-  -> Memory candidates
-```
+**V4-8F STATUS: HOLD**。已提交并推送 WIP 开发检查点，不是 Final PASS。
 
-The optional voice path is:
+已验证：Manual 真实发送、Authorized Automatic 真实发送、原生 @mooncell 正确识别；
+QQ 短期上下文隔离回归、Group Archive Step 1 隔离测试、中文历史查询、隔离 Release 重启检索、私人 Memory 隔离通过。
 
-```text
-Microphone / VAD / FrameRecorder
-  -> Faster-Whisper STT
-  -> ChatPage.handle_external_prompt()
-  -> shared ChatPage and ChatSession pipeline
-  -> text UI and Conversation persistence
-  -> SentenceSplitter / TTSQueue
-  -> Edge-TTS
-  -> Playback
-```
+尚未完整验证：修复后的真实 QQ 多轮追问、真实非 @ 群消息入站归档、完整真实 QQ 自动回复安全验收，
+以及长期历史理解和自然接话质量。模拟/隔离测试不能冒充真实环境或人工验收。
 
-Voice does not own a separate ChatSession, Conversation store, Memory system, or
-RAG pipeline.
+保留未闭环事项：Voice Full Manual Matrix NOT COMPLETED；G01 百分号朗读 Major；
+LEGAL REVIEW RECOMMENDED（含 ORT/MPL-2.0 obligations）；Packaging / First-run NOT COMPLETED。
+单一声音、无克隆、词典/特殊符号有限及单次 ONNX inference 内部取消限制仍存在。
 
-## Current Top-level UI
+## QQ 设计与数据隔离
 
-The production AppShell registers two top-level pages:
+mooncell 是 QQ 显示名称，Aurora 是内部角色；身份使用稳定 QQ ID，不依赖昵称。
+原生 @ 比较 OneBot at.qq 与已认证 self_id，普通文本 @ 仅辅助触发，不扩大来源授权。
+Manual 需预览确认，Automatic 必须显式开启并限制群来源；群聊记录与自然参与另行授权。
+非触发消息可归档，不因记录而自动回复。陌生私聊、其他群不自动获权。
 
-- Chat
-- Settings
+只在明确授权且群成员知悉记录范围的群中记录原始文本；记录与主人私人 Memory 分离，
+不同群/发言者隔离，不将第三方资料写成主人 Memory Candidate，不泄露主人记忆。
+不设置自动到期或因相关性删除；摘要、索引和压缩不能替代原文。
+检索必须核对当前来源，限制进入 LLM 的历史数量；找不到信息应说明未知。
+导出/删除有权限和确认，撤回/隐私请求需显式处理；关闭记录保留旧记录。
+不承诺补录未送达事件或彻底抹除备份/导出/SSD 物理痕迹。
+自然参与应克制、有明确开关、冷却、限流、去重、防循环，不做随机刷屏或群管理。
 
-Home, Library, Learning Center, standalone Persona/Memory pages, Remote pages,
-and several window-based workflows may still have legacy files or compatibility
-callbacks. They are not registered as current top-level AppShell pages.
+## Git 与工作区保护
 
-## Stable / Active Components
+保护 12 项历史 untracked、真实用户 Memory、QQ 聊天记录/数据库/凭据、独立 QQSuggestionBot 和 WIP Glass。
+禁止未经授权删除文件、清除记忆、破坏数据、reset/clean/force push 或重写历史。
+禁止未经授权 merge/cherry-pick/修改独立 `wip/v4-5b1-edge-optics-experiment`。
+旧 First-run / QQ Connector 分支已由 annotated archive tags 归档；main 未快进。
+只暂存审查过的源码、测试和脱敏文档，不提交日志、数据库、个人配置或大模型。
 
-- Ollama chat and model selection
-- ChatSession and streaming text chat
-- Conversation persistence, restore, search, rename, and delete
-- Persona context
-- Memory retrieval and candidate workflow
-- Knowledge retrieval and optional RAG pipeline
-- ContextBuilder and context diagnostics
-- Chat-first AppShell with Chat and Settings
-- AppData-based user data isolation
-- PyInstaller and Inno Setup packaging baseline
+## 工作与收尾规则
 
-## Experimental Components
+目标明确时先对涉及源码做必要检查，再直接推进；不重复已 PASS 的阶段、不做机会性重构。
+区分 PASS / HOLD / NOT VERIFIED / NOT PASS，不把旧阶段结论当作当前完整验收。
+当前优先 V4-8F 真实 QQ 收尾，再按明确授权验证长期历史理解和克制参与；不自动进入下一阶段。
 
-The v3.8.0-alpha candidate includes these experimental capabilities:
-
-- LLM-assisted semantic Conversation titles
-- Chat Bubble UI and streaming message presentation
-- Voice Runtime stabilization on real devices
-- VAD automatic recording stop
-- SentenceSplitter and FIFO TTSQueue
-- Voice interrupt and cancellation hardening
-- Voice session/generation isolation
-- Unified non-blocking Chat Turn Gate for text and voice
-
-## Removed Components
-
-The following are not part of the current product architecture and must not be
-restored without explicit product approval:
-
-- Open WebUI integration
-- Docker and Docker Desktop integration
-- Remote and LAN access
-- Mobile Chat and Mobile UI
-- old Dashboard/Home production routing
-- independent Voice ChatSession or separate Voice conversation pipeline
-
-Historical documentation, locale keys, compatibility migration code, or legacy
-UI files may still mention some of these features. Their presence does not make
-the features active.
-
-## Persistence
-
-User data is stored under `%APPDATA%/Aurora/`, including settings,
-conversations, memory, knowledge, persona, and logs. Development or release
-work must not commit private user data, local settings, device identifiers, or
-generated logs.
-
-## Known Issues
-
-- Voice interrupt can stop TTS and playback, but an in-flight Ollama request may
-  continue generating text until the current request exits its streaming loop.
-- Voice and GUI behavior on real audio devices still need longer-running
-  stability validation.
-- `tools/ffmpeg.exe` is required by the Windows packaging flow but is ignored by
-  Git; the build environment must provide it separately.
-- The unsigned Windows installer may trigger a Windows SmartScreen warning.
-- Uninstall preserves user data under `%APPDATA%\Aurora`.
-- The release installer is `Aurora-v3.8.0-alpha-Setup.exe` with SHA256
-  `7DEEB26723B7182B2475734438D61A3E26C101CCAFB2E3438F3F4F907FCF81A2`.
-- PyInstaller, packaged application, Inno Setup, installation, launch,
-  shortcut, and uninstall smoke tests passed for this alpha.
-
-## Development Rules
-
-- Audit the current architecture and working tree before changing code.
-- Prefer small, scoped, reversible changes.
-- Preserve unrelated user changes in the dirty working tree.
-- Do not create parallel Conversation, Memory, Knowledge, Settings, state, or
-  Voice systems.
-- Voice input must enter through ChatPage and reuse ChatSession, context,
-  Conversation, Memory, Knowledge, Persona, and RAG behavior.
-- Do not restore removed features without explicit authorization.
-- Do not expand Aurora into a general Agent or desktop automation platform
-  without an explicit product-direction change.
-- Do not commit conversations, memory, knowledge, persona, logs, local settings,
-  device identifiers, installers, FFmpeg, or other large local binaries.
-- Do not commit, tag, push, reset, or stash unless explicitly requested.
-- Use a working Windows CPython 3.12 interpreter for project tests. Local Codex
-  rules or local configuration may specify the exact interpreter path.
-- Do not create a virtual environment, use `py.exe`, modify PATH, or install
-  dependencies unless the user explicitly requests it.
-
-## Next Direction
-
-The current direction is v3.8.0-alpha pre-release publication and continued
-real-device Voice validation before any later Experience Layer expansion.
-
-P0/P1/P2 labels are task-local engineering phases, not product version numbers.
+每次授权阶段完成后，先据实更新现有 README、架构及阶段文档，避免重复文件；
+再生成精简完整的项目说明。只有具备实际能力及授权时才更新 ChatGPT 项目设置，并验证保存；
+否则提供可复制版本，说明需手动粘贴。文档文件存在不等于已更新 ChatGPT 项目设置。
+提交、推送、发布或进入新阶段仍以当前授权为准。收尾报告实际修改、验证、Git 状态和未解决问题。
