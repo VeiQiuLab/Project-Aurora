@@ -17,6 +17,7 @@ sys.path[:0] = [str(SIDECAR_ROOT), str(REPO_ROOT)]
 from mock_sidecar.server import MockSidecar, _required_environment, serve_sidecar
 from production_sidecar.composition import ProductionComposition
 from production_sidecar.chat_execution import ChatExecution
+from production_sidecar.qq import ControlledQQ, QQError
 from production_sidecar.conversations import ConversationError
 from production_sidecar.post_turn import PostTurnCoordinator
 from production_sidecar.voice import VoiceExecution
@@ -34,6 +35,7 @@ class ProductionSidecar(MockSidecar):
         super().__init__(token, 0)
         self.composition = composition
         self.chat = ChatExecution(self)
+        self.qq = ControlledQQ(self)
         self._metadata_connections = set()
         self._event_loop = None
         self.composition.post_turn = PostTurnCoordinator(composition, self.chat.adapter.api, self.metadata_changed)
@@ -87,6 +89,15 @@ class ProductionSidecar(MockSidecar):
         return self.composition.capabilities()
 
     async def dispatch(self, connection, message):
+        if message['type'] == 'qq.request':
+            try:
+                result = await self.qq.command(message['payload'])
+            except QQError as error:
+                self.qq.error = error.code
+                result = self.qq.snapshot()
+            await self.send(connection, {'protocol': 'aurora-ipc', 'version': 1, 'type': 'qq.response',
+                'request_id': message['request_id'], 'payload': result})
+            return
         kind = message["type"]
         if kind == "memory.write.request":
             try:
@@ -230,6 +241,7 @@ class ProductionSidecar(MockSidecar):
                                   envelope=message)
 
     async def cancel_all(self):
+        await self.qq.disconnect()
         self.composition.voice.stop()
         self.composition.post_turn.close()
         await self.chat.close()
@@ -239,6 +251,7 @@ class ProductionSidecar(MockSidecar):
         try:
             await super().handle_connection(connection)
         finally:
+            await self.qq.disconnect()
             self._metadata_connections.discard(connection)
             if connection is self._audio_connection:
                 self.audio.disconnected()

@@ -115,7 +115,7 @@ def test_schema_covers_every_executable_message_rule():
     }
     schema_types.update(definition["properties"]["type"]["const"]
         for name, definition in schema["$defs"].items()
-        if name in definition_names and name.startswith(("settings_", "memoryRead")))
+        if name in definition_names and name.startswith(("settings_", "memoryRead", "memoryWrite")))
     assert schema_types == set(contract.MESSAGE_RULES)
     assert "bootstrapReady" in definition_names
 

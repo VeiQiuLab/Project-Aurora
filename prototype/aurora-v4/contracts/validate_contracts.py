@@ -19,6 +19,7 @@ if str(Path(__file__).resolve().parents[3]) not in sys.path:
     sys.path.insert(0, str(Path(__file__).resolve().parents[3]))
 from modules.memory_governance_validation import REQUEST_KEYS as MEMORY_WRITE_REQUEST_KEYS, RESPONSE_KEYS as MEMORY_WRITE_RESPONSE_KEYS
 from memory_contract import ERRORS as MEMORY_ERRORS, REQUEST_KEYS as MEMORY_REQUEST_KEYS, RESPONSE_KEYS as MEMORY_RESPONSE_KEYS, validate_memory
+from connectors.qq.controlled_contract import REQUEST_KEYS as QQ_REQUEST_KEYS, SNAPSHOT_KEYS as QQ_SNAPSHOT_KEYS, validate_request as validate_qq_request, validate_snapshot as validate_qq_snapshot
 
 
 PROTOCOL = "aurora-ipc"
@@ -92,6 +93,10 @@ def _rule(
 _NO_CONTEXT = {"session_id", "generation_id", "seq"}
 _CHAT_IDS = {"request_id", "session_id", "generation_id"}
 MESSAGE_RULES: dict[str, MessageRule] = {
+    'qq.request': _rule(required={'request_id'}, forbidden=_NO_CONTEXT,
+        payload_required={'action'}, payload_allowed=QQ_REQUEST_KEYS),
+    'qq.response': _rule(required={'request_id'}, forbidden=_NO_CONTEXT,
+        payload_required=QQ_SNAPSHOT_KEYS, payload_allowed=QQ_SNAPSHOT_KEYS|{'archive','natural'}),
     "memory.write.request": _rule(required={"request_id"}, forbidden=_NO_CONTEXT,
         payload_required=MEMORY_WRITE_REQUEST_KEYS, payload_allowed=MEMORY_WRITE_REQUEST_KEYS),
     "memory.write.response": _rule(required={"request_id"}, forbidden=_NO_CONTEXT,
@@ -519,6 +524,12 @@ def validate_chat_diagnostics(value):
 
 
 def _validate_payload(message_type: str, payload: Mapping[str, Any]) -> None:
+    if message_type.startswith('qq.'):
+        try:
+            (validate_qq_request if message_type == 'qq.request' else validate_qq_snapshot)(payload)
+        except (ValueError, TypeError, KeyError):
+            raise ContractError('Invalid QQ payload') from None
+        return
     if message_type.startswith("memory."):
         try:
             validate_memory(message_type, payload)

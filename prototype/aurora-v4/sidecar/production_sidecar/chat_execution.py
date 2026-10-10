@@ -79,7 +79,7 @@ class ChatExecution:
                              previous.request.generation_id == request.generation_id):
                 # A replay must never create a second terminal for an owned ID.
                 return
-        if self.active is not None:
+        if self.active is not None or getattr(self, 'external_active', None) is not None:
             await self.send(run, "chat.accepted", {"status": "accepted", "ipc_received_unix_ms": run.received_unix_ms})
             await self.send(run, "chat.completed", {"terminal_state": "rejected",
                 "error": {"code": "BACKEND_NOT_READY", "message": "Another generation is active.", "retryable": True}})

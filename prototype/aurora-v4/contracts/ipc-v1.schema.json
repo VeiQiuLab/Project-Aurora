@@ -4,6 +4,8 @@
   "title": "Project Aurora IPC v1",
   "description": "Bootstrap object and authenticated WebSocket JSON envelopes for Aurora IPC v1.",
   "oneOf": [
+    {"$ref": "#/$defs/qqRequest"},
+    {"$ref": "#/$defs/qqResponse"},
     {"$ref": "#/$defs/memoryWriteRequest"},
     {"$ref": "#/$defs/memoryWriteResponse"},
     {"$ref": "#/$defs/memoryReadRequest"},
@@ -46,6 +48,878 @@
     {"$ref": "#/$defs/error"}
   ],
   "$defs": {
+    "qqRequest": {
+      "allOf": [
+        {
+          "$ref": "#/$defs/baseEnvelope"
+        },
+        {
+          "$ref": "#/$defs/noRequestContext"
+        },
+        {
+          "required": [
+            "request_id"
+          ],
+          "properties": {
+            "type": {
+              "const": "qq.request"
+            },
+            "payload": {
+              "oneOf": [
+                {
+                  "type": "object",
+                  "additionalProperties": false,
+                  "required": [
+                    "action"
+                  ],
+                  "properties": {
+                    "action": {
+                      "const": "snapshot"
+                    }
+                  }
+                },
+                {
+                  "type": "object",
+                  "additionalProperties": false,
+                  "required": [
+                    "action"
+                  ],
+                  "properties": {
+                    "action": {
+                      "const": "disconnect"
+                    }
+                  }
+                },
+                {
+                  "type": "object",
+                  "additionalProperties": false,
+                  "required": [
+                    "action",
+                    "private_ids",
+                    "group_ids",
+                    "trigger"
+                  ],
+                  "properties": {
+                    "action": {
+                      "const": "connect"
+                    },
+                    "private_ids": {
+                      "type": "array",
+                      "maxItems": 20,
+                      "uniqueItems": true,
+                      "items": {
+                        "type": "string",
+                        "pattern": "^[1-9][0-9]{0,18}$",
+                        "maxLength": 19
+                      }
+                    },
+                    "group_ids": {
+                      "type": "array",
+                      "maxItems": 20,
+                      "uniqueItems": true,
+                      "items": {
+                        "type": "string",
+                        "pattern": "^[1-9][0-9]{0,18}$",
+                        "maxLength": 19
+                      }
+                    },
+                    "trigger": {
+                      "type": "string",
+                      "maxLength": 40
+                    }
+                  }
+                },
+                {
+                  "type": "object",
+                  "additionalProperties": false,
+                  "required": [
+                    "action",
+                    "message_key"
+                  ],
+                  "properties": {
+                    "action": {
+                      "const": "generate"
+                    },
+                    "message_key": {
+                      "type": "string",
+                      "pattern": "^[a-f0-9]{64}$"
+                    }
+                  }
+                },
+                {
+                  "type": "object",
+                  "additionalProperties": false,
+                  "required": [
+                    "action",
+                    "message_key"
+                  ],
+                  "properties": {
+                    "action": {
+                      "const": "cancel"
+                    },
+                    "message_key": {
+                      "type": "string",
+                      "pattern": "^[a-f0-9]{64}$"
+                    }
+                  }
+                },
+                {
+                  "type": "object",
+                  "additionalProperties": false,
+                  "required": [
+                    "action",
+                    "message_key",
+                    "revision",
+                    "text"
+                  ],
+                  "properties": {
+                    "action": {
+                      "const": "edit"
+                    },
+                    "message_key": {
+                      "type": "string",
+                      "pattern": "^[a-f0-9]{64}$"
+                    },
+                    "revision": {
+                      "type": "integer",
+                      "minimum": 1,
+                      "maximum": 2147483647
+                    },
+                    "text": {
+                      "type": "string",
+                      "minLength": 1,
+                      "maxLength": 4096
+                    }
+                  }
+                },
+                {
+                  "type": "object",
+                  "additionalProperties": false,
+                  "required": [
+                    "action",
+                    "message_key",
+                    "revision"
+                  ],
+                  "properties": {
+                    "action": {
+                      "const": "prepare"
+                    },
+                    "message_key": {
+                      "type": "string",
+                      "pattern": "^[a-f0-9]{64}$"
+                    },
+                    "revision": {
+                      "type": "integer",
+                      "minimum": 1,
+                      "maximum": 2147483647
+                    }
+                  }
+                },
+                {
+                  "type": "object",
+                  "additionalProperties": false,
+                  "required": [
+                    "action",
+                    "message_key",
+                    "revision",
+                    "confirmation"
+                  ],
+                  "properties": {
+                    "action": {
+                      "const": "send"
+                    },
+                    "message_key": {
+                      "type": "string",
+                      "pattern": "^[a-f0-9]{64}$"
+                    },
+                    "revision": {
+                      "type": "integer",
+                      "minimum": 1,
+                      "maximum": 2147483647
+                    },
+                    "confirmation": {
+                      "type": "string",
+                      "pattern": "^[a-f0-9]{64}$"
+                    }
+                  }
+                },
+                {
+                  "type": "object",
+                  "additionalProperties": false,
+                  "required": [
+                    "action"
+                  ],
+                  "properties": {
+                    "action": {
+                      "const": "disable_auto"
+                    }
+                  }
+                },
+                {
+                  "type": "object",
+                  "additionalProperties": false,
+                  "required": [
+                    "action",
+                    "self_id",
+                    "group_ids"
+                  ],
+                  "properties": {
+                    "action": {
+                      "const": "enable_auto"
+                    },
+                    "self_id": {
+                      "type": "string",
+                      "pattern": "^[1-9][0-9]{0,18}$",
+                      "maxLength": 19
+                    },
+                    "group_ids": {
+                      "type": "array",
+                      "maxItems": 20,
+                      "uniqueItems": true,
+                      "items": {
+                        "type": "string",
+                        "pattern": "^[1-9][0-9]{0,18}$",
+                        "maxLength": 19
+                      },
+                      "minItems": 1
+                    }
+                  }
+                },
+                {
+                  "type": "object",
+                  "additionalProperties": false,
+                  "required": [
+                    "action",
+                    "self_id",
+                    "group_id",
+                    "consent"
+                  ],
+                  "properties": {
+                    "action": {
+                      "const": "archive_enable"
+                    },
+                    "self_id": {
+                      "type": "string",
+                      "pattern": "^[1-9][0-9]{0,18}$"
+                    },
+                    "group_id": {
+                      "type": "string",
+                      "pattern": "^[1-9][0-9]{0,18}$"
+                    },
+                    "consent": {
+                      "const": true
+                    }
+                  }
+                },
+                {
+                  "type": "object",
+                  "additionalProperties": false,
+                  "required": [
+                    "action",
+                    "self_id",
+                    "group_id"
+                  ],
+                  "properties": {
+                    "action": {
+                      "const": "archive_disable"
+                    },
+                    "self_id": {
+                      "type": "string",
+                      "pattern": "^[1-9][0-9]{0,18}$"
+                    },
+                    "group_id": {
+                      "type": "string",
+                      "pattern": "^[1-9][0-9]{0,18}$"
+                    }
+                  }
+                },
+                {
+                  "type": "object",
+                  "additionalProperties": false,
+                  "required": [
+                    "action",
+                    "self_id",
+                    "group_id"
+                  ],
+                  "properties": {
+                    "action": {
+                      "const": "archive_export"
+                    },
+                    "self_id": {
+                      "type": "string",
+                      "pattern": "^[1-9][0-9]{0,18}$"
+                    },
+                    "group_id": {
+                      "type": "string",
+                      "pattern": "^[1-9][0-9]{0,18}$"
+                    }
+                  }
+                },
+                {
+                  "type": "object",
+                  "additionalProperties": false,
+                  "required": [
+                    "action",
+                    "self_id",
+                    "group_id",
+                    "sender_id",
+                    "after",
+                    "before",
+                    "query",
+                    "offset"
+                  ],
+                  "properties": {
+                    "action": {
+                      "const": "archive_query"
+                    },
+                    "self_id": {
+                      "type": "string",
+                      "pattern": "^[1-9][0-9]{0,18}$"
+                    },
+                    "group_id": {
+                      "type": "string",
+                      "pattern": "^[1-9][0-9]{0,18}$"
+                    },
+                    "sender_id": {
+                      "type": "string",
+                      "pattern": "^([1-9][0-9]{0,18})?$"
+                    },
+                    "after": {
+                      "type": "integer",
+                      "minimum": 0,
+                      "maximum": 9007199254740991
+                    },
+                    "before": {
+                      "type": "integer",
+                      "minimum": 0,
+                      "maximum": 9007199254740991
+                    },
+                    "query": {
+                      "type": "string",
+                      "maxLength": 128
+                    },
+                    "offset": {
+                      "type": "integer",
+                      "minimum": 0,
+                      "maximum": 1000000
+                    }
+                  }
+                },
+                {
+                  "type": "object",
+                  "additionalProperties": false,
+                  "required": [
+                    "action",
+                    "self_id",
+                    "group_id",
+                    "key"
+                  ],
+                  "properties": {
+                    "action": {
+                      "const": "archive_around"
+                    },
+                    "self_id": {
+                      "type": "string",
+                      "pattern": "^[1-9][0-9]{0,18}$"
+                    },
+                    "group_id": {
+                      "type": "string",
+                      "pattern": "^[1-9][0-9]{0,18}$"
+                    },
+                    "key": {
+                      "type": "string",
+                      "pattern": "^[a-f0-9]{64}$"
+                    }
+                  }
+                },
+                {
+                  "type": "object",
+                  "additionalProperties": false,
+                  "required": [
+                    "action",
+                    "self_id",
+                    "group_id",
+                    "scope",
+                    "target"
+                  ],
+                  "properties": {
+                    "action": {
+                      "const": "archive_prepare_delete"
+                    },
+                    "self_id": {
+                      "type": "string",
+                      "pattern": "^[1-9][0-9]{0,18}$"
+                    },
+                    "group_id": {
+                      "type": "string",
+                      "pattern": "^[1-9][0-9]{0,18}$"
+                    },
+                    "scope": {
+                      "enum": [
+                        "group",
+                        "sender",
+                        "message"
+                      ]
+                    },
+                    "target": {
+                      "type": "string",
+                      "maxLength": 64
+                    }
+                  }
+                },
+                {
+                  "type": "object",
+                  "additionalProperties": false,
+                  "required": [
+                    "action",
+                    "self_id",
+                    "group_id",
+                    "scope",
+                    "target",
+                    "confirmation"
+                  ],
+                  "properties": {
+                    "action": {
+                      "const": "archive_delete"
+                    },
+                    "self_id": {
+                      "type": "string",
+                      "pattern": "^[1-9][0-9]{0,18}$"
+                    },
+                    "group_id": {
+                      "type": "string",
+                      "pattern": "^[1-9][0-9]{0,18}$"
+                    },
+                    "scope": {
+                      "enum": [
+                        "group",
+                        "sender",
+                        "message"
+                      ]
+                    },
+                    "target": {
+                      "type": "string",
+                      "maxLength": 64
+                    },
+                    "confirmation": {
+                      "type": "string",
+                      "pattern": "^[a-f0-9]{64}$"
+                    }
+                  }
+                },
+                {
+                  "type": "object",
+                  "additionalProperties": false,
+                  "required": [
+                    "action",
+                    "self_id",
+                    "group_ids"
+                  ],
+                  "properties": {
+                    "action": {
+                      "const": "enable_natural"
+                    },
+                    "self_id": {
+                      "type": "string",
+                      "pattern": "^[1-9][0-9]{0,18}$",
+                      "maxLength": 19
+                    },
+                    "group_ids": {
+                      "type": "array",
+                      "maxItems": 20,
+                      "uniqueItems": true,
+                      "items": {
+                        "type": "string",
+                        "pattern": "^[1-9][0-9]{0,18}$",
+                        "maxLength": 19
+                      },
+                      "minItems": 1
+                    }
+                  }
+                },
+                {
+                  "type": "object",
+                  "additionalProperties": false,
+                  "required": [
+                    "action"
+                  ],
+                  "properties": {
+                    "action": {
+                      "const": "disable_natural"
+                    }
+                  }
+                }
+              ]
+            }
+          }
+        }
+      ]
+    },
+    "qqResponse": {
+      "allOf": [
+        {
+          "$ref": "#/$defs/baseEnvelope"
+        },
+        {
+          "$ref": "#/$defs/noRequestContext"
+        },
+        {
+          "required": [
+            "request_id"
+          ],
+          "properties": {
+            "type": {
+              "const": "qq.response"
+            },
+            "payload": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": [
+                "status",
+                "error",
+                "configured",
+                "self_id",
+                "private_ids",
+                "group_ids",
+                "trigger",
+                "messages",
+                "automatic",
+                "auto_group_ids",
+                "auto_status",
+                "queued"
+              ],
+              "properties": {
+                "status": {
+                  "enum": [
+                    "disabled",
+                    "connecting",
+                    "connected",
+                    "reconnecting",
+                    "error"
+                  ]
+                },
+                "error": {
+                  "enum": [
+                    "",
+                    "QQ_ALREADY_SENT",
+                    "QQ_AUTH_FAILED",
+                    "QQ_BUSY",
+                    "QQ_CONFLICT",
+                    "QQ_GENERATION_FAILED",
+                    "QQ_IDENTITY_INVALID",
+                    "QQ_INVALID_REQUEST",
+                    "QQ_NOT_AUTHORIZED",
+                    "QQ_NOT_CONFIGURED",
+                    "QQ_NOT_CONNECTED",
+                    "QQ_NOT_FOUND",
+                    "QQ_PERSISTENCE_FAILED",
+                    "QQ_REJECTED",
+                    "QQ_SEND_UNKNOWN",
+                    "QQ_UNAVAILABLE"
+                  ]
+                },
+                "configured": {
+                  "type": "boolean"
+                },
+                "self_id": {
+                  "type": "string",
+                  "pattern": "^([1-9][0-9]{0,18})?$"
+                },
+                "private_ids": {
+                  "type": "array",
+                  "maxItems": 20,
+                  "uniqueItems": true,
+                  "items": {
+                    "type": "string",
+                    "pattern": "^[1-9][0-9]{0,18}$",
+                    "maxLength": 19
+                  }
+                },
+                "group_ids": {
+                  "type": "array",
+                  "maxItems": 20,
+                  "uniqueItems": true,
+                  "items": {
+                    "type": "string",
+                    "pattern": "^[1-9][0-9]{0,18}$",
+                    "maxLength": 19
+                  }
+                },
+                "trigger": {
+                  "type": "string",
+                  "maxLength": 40
+                },
+                "messages": {
+                  "type": "array",
+                  "maxItems": 8,
+                  "items": {
+                    "type": "object",
+                    "additionalProperties": false,
+                    "required": [
+                      "key",
+                      "source",
+                      "conversation_id",
+                      "sender_id",
+                      "message_id",
+                      "timestamp",
+                      "text",
+                      "supported",
+                      "state",
+                      "reply",
+                      "revision",
+                      "confirmation",
+                      "sent_message_id"
+                    ],
+                    "properties": {
+                      "key": {
+                        "type": "string",
+                        "pattern": "^[a-f0-9]{64}$"
+                      },
+                      "source": {
+                        "enum": [
+                          "private",
+                          "group"
+                        ]
+                      },
+                      "conversation_id": {
+                        "type": "string",
+                        "pattern": "^qq:[1-9][0-9]*:(private|group):[1-9][0-9]*:[1-9][0-9]*$"
+                      },
+                      "sender_id": {
+                        "type": "string",
+                        "pattern": "^[1-9][0-9]{0,18}$",
+                        "maxLength": 19
+                      },
+                      "message_id": {
+                        "type": "string",
+                        "pattern": "^-?[0-9]{1,20}$"
+                      },
+                      "timestamp": {
+                        "type": "integer",
+                        "minimum": 1
+                      },
+                      "text": {
+                        "type": "string",
+                        "maxLength": 2048
+                      },
+                      "supported": {
+                        "type": "boolean"
+                      },
+                      "state": {
+                        "enum": [
+                          "received",
+                          "generating",
+                          "preview",
+                          "cancelled",
+                          "sending",
+                          "sent",
+                          "failed",
+                          "unknown",
+                          "queued"
+                        ]
+                      },
+                      "reply": {
+                        "type": "string",
+                        "maxLength": 4096
+                      },
+                      "revision": {
+                        "type": "integer",
+                        "minimum": 0,
+                        "maximum": 2147483647
+                      },
+                      "confirmation": {
+                        "type": "string",
+                        "pattern": "^([a-f0-9]{64})?$"
+                      },
+                      "sent_message_id": {
+                        "type": "string",
+                        "maxLength": 20,
+                        "pattern": "^(-?[0-9]+)?$"
+                      }
+                    }
+                  }
+                },
+                "automatic": {
+                  "type": "boolean"
+                },
+                "auto_group_ids": {
+                  "type": "array",
+                  "maxItems": 20,
+                  "uniqueItems": true,
+                  "items": {
+                    "type": "string",
+                    "pattern": "^[1-9][0-9]{0,18}$",
+                    "maxLength": 19
+                  }
+                },
+                "auto_status": {
+                  "enum": [
+                    "off",
+                    "ready",
+                    "busy",
+                    "paused",
+                    "reconnecting"
+                  ]
+                },
+                "queued": {
+                  "type": "integer",
+                  "minimum": 0,
+                  "maximum": 6
+                },
+                "archive": {
+                  "type": "object",
+                  "additionalProperties": false,
+                  "required": [
+                    "policies",
+                    "error",
+                    "rows",
+                    "account_id",
+                    "group_id",
+                    "export_file",
+                    "confirmation"
+                  ],
+                  "properties": {
+                    "policies": {
+                      "type": "array",
+                      "maxItems": 400,
+                      "items": {
+                        "type": "object",
+                        "additionalProperties": false,
+                        "required": [
+                          "account_id",
+                          "group_id",
+                          "enabled"
+                        ],
+                        "properties": {
+                          "account_id": {
+                            "type": "string",
+                            "pattern": "^[1-9][0-9]{0,18}$"
+                          },
+                          "group_id": {
+                            "type": "string",
+                            "pattern": "^[1-9][0-9]{0,18}$"
+                          },
+                          "enabled": {
+                            "type": "integer",
+                            "enum": [
+                              0,
+                              1
+                            ]
+                          }
+                        }
+                      }
+                    },
+                    "error": {
+                      "enum": [
+                        "",
+                        "QQ_ARCHIVE_FAILED",
+                        "QQ_NOT_AUTHORIZED",
+                        "QQ_NOT_FOUND",
+                        "QQ_CONFLICT"
+                      ]
+                    },
+                    "rows": {
+                      "type": "array",
+                      "maxItems": 20,
+                      "items": {
+                        "type": "object",
+                        "additionalProperties": false,
+                        "required": [
+                          "key",
+                          "platform",
+                          "account_id",
+                          "group_id",
+                          "sender_id",
+                          "display_name",
+                          "message_id",
+                          "timestamp",
+                          "message_type",
+                          "text",
+                          "ingested_at",
+                          "truncated"
+                        ],
+                        "properties": {
+                          "key": {
+                            "type": "string",
+                            "pattern": "^[a-f0-9]{64}$"
+                          },
+                          "platform": {
+                            "const": "qq"
+                          },
+                          "account_id": {
+                            "type": "string",
+                            "pattern": "^[1-9][0-9]{0,18}$"
+                          },
+                          "group_id": {
+                            "type": "string",
+                            "pattern": "^[1-9][0-9]{0,18}$"
+                          },
+                          "sender_id": {
+                            "type": "string",
+                            "pattern": "^[1-9][0-9]{0,18}$"
+                          },
+                          "display_name": {
+                            "type": "string",
+                            "maxLength": 256
+                          },
+                          "message_id": {
+                            "type": "string",
+                            "pattern": "^-?[0-9]{1,20}$"
+                          },
+                          "timestamp": {
+                            "type": "integer",
+                            "minimum": 1,
+                            "maximum": 9007199254740991
+                          },
+                          "message_type": {
+                            "enum": [
+                              "text",
+                              "mixed",
+                              "raw_text"
+                            ]
+                          },
+                          "text": {
+                            "type": "string",
+                            "maxLength": 2048
+                          },
+                          "ingested_at": {
+                            "type": "integer",
+                            "minimum": 1,
+                            "maximum": 9007199254740991
+                          },
+                          "truncated": {
+                            "type": "boolean"
+                          }
+                        }
+                      }
+                    },
+                    "account_id": {
+                      "type": "string",
+                      "pattern": "^([1-9][0-9]{0,18})?$"
+                    },
+                    "group_id": {
+                      "type": "string",
+                      "pattern": "^([1-9][0-9]{0,18})?$"
+                    },
+                    "export_file": {
+                      "type": "string",
+                      "maxLength": 1024
+                    },
+                    "confirmation": {
+                      "type": "string",
+                      "pattern": "^([a-f0-9]{64})?$"
+                    }
+                  }
+                },
+                "natural": {
+                  "type": "boolean"
+                }
+              }
+            }
+          }
+        }
+      ]
+    },
     "memoryWriteRequest": {
       "type": "object",
       "required": [

@@ -313,6 +313,7 @@ pub enum FrontendEvent {
     SettingsChanged { change: crate::settings::Change },
     SettingsError { request_id: String, code: String },
     MemorySnapshot { request_id: String, snapshot: crate::memory::Snapshot },
+    QqSnapshot { request_id: String, snapshot: crate::qq::Snapshot },
     MemoryError { request_id: String, code: String },
     MemoryOperation { request_id: String, result: crate::memory::OperationResult },
     VoiceState { snapshot: crate::voice::Snapshot },
@@ -583,6 +584,7 @@ pub fn validate_sidecar_event(value: &Value) -> Result<&str, String> {
         .and_then(Value::as_str)
         .ok_or_else(|| "missing event type".to_string())?;
     let allowed = [
+        "qq.response",
         "memory.read.response", "memory.write.response",
         "audio.play.request", "audio.stop.request",
         "settings.get.response", "settings.update.response", "settings.changed",
@@ -626,6 +628,14 @@ pub fn validate_sidecar_event(value: &Value) -> Result<&str, String> {
             .ok_or_else(|| "chat.delta has empty content".to_string())?;
     }
     let payload = object(value, "payload")?;
+    if message_type == "qq.response" {
+        let keys = ["protocol", "version", "type", "request_id", "payload"];
+        if value.as_object().is_none_or(|root| root.len() != keys.len() || root.keys().any(|key| !keys.contains(&key.as_str()))) {
+            return Err("QQ_INVALID_RESPONSE".into());
+        }
+        require_string(value, "request_id", None)?;
+        crate::qq::Snapshot::from_wire(value["payload"].clone())?;
+    }
     if matches!(message_type, "memory.read.response" | "memory.write.response") {
         let keys = ["protocol", "version", "type", "request_id", "payload"];
         if value.as_object().is_none_or(|root| root.len() != keys.len() || root.keys().any(|key| !keys.contains(&key.as_str()))) {

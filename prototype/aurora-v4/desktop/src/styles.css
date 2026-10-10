@@ -351,3 +351,11 @@ select.setting-input option { color: #eee; background: #171717; }
 /* Memory governance uses the existing Settings layout. */
 .memory-editor { display: block; width: 100%; min-height: 100px; margin: 8px 0; padding: 8px; resize: vertical; font: inherit; }
 .memory-confirmation { margin-top: 12px; padding: 12px; border: 1px solid var(--line, #777); border-radius: 8px; }
+/* QQ uses the existing restrained settings layout. */
+.qq-text { white-space: pre-wrap; overflow-wrap: anywhere; }
+#qq-reply { width: 100%; resize: vertical; min-height: 100px; }
+.qq-confirmation { margin-top: 16px; padding: 12px; border: 1px solid var(--border-subtle, #444); border-radius: 8px; }
+#qq-section .memory-actions { display: flex; flex-wrap: wrap; gap: 8px; margin-block: 12px; }
+#qq-section .memory-actions .ghost-button, .qq-confirmation .ghost-button { width: auto; }
+#qq-section .qq-connection-actions .ghost-button { border: 1px solid var(--line); padding: 8px 12px; border-radius: 6px; }
+#qq-reply.setting-input { max-width: 100%; }

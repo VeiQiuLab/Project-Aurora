@@ -111,6 +111,51 @@
                 <section id="memory-saved" aria-label="已保存记忆"></section>
                 <section id="memory-pending" aria-label="待审核记忆候选"></section>
               </details>
+              <details id="qq-section" class="settings-section memory-section">
+                <summary class="section-header">集成 / QQ</summary>
+                <p class="section-description">默认关闭。只接收你授权的来源；生成不等于发送。QQ 内容不写入主人记忆，也不使用私人记忆。</p>
+                <p id="qq-status" class="settings-note" role="status"></p>
+                <div class="memory-actions qq-connection-actions"><button id="qq-connect" type="button">连接 QQ</button><button id="qq-disconnect" type="button">断开 QQ / 修改群号</button><button id="qq-refresh" type="button">刷新 / 重试</button></div>
+                <p id="qq-authorization-note" class="settings-note" role="status"></p>
+                <label class="setting-row">授权私聊 QQ 号<input id="qq-private-ids" type="text" placeholder="用逗号分隔" autocomplete="off" /></label>
+                <label class="setting-row">授权群号<input id="qq-group-ids" type="text" placeholder="多个群号用逗号分隔" autocomplete="off" /></label>
+                <label class="setting-row">群聊触发词（可留空，仅 @）<input id="qq-trigger" type="text" maxlength="40" /></label>
+                <p class="settings-note">默认 Manual：预览并确认后发送。Automatic 仅用于你授权的测试群，私聊始终保持 Manual。隐藏窗口不会暂停；退出会停止。重启后默认关闭。</p>
+                <label class="setting-row">自动回复测试群<input id="qq-auto-groups" type="text" placeholder="仅填写上面已授权的测试群号" autocomplete="off" /></label>
+                <label><input id="qq-auto-consent" type="checkbox" />我确认这些是可控测试群，允许对 @当前账号 / 触发词消息自动生成并发送。</label>
+                <p id="qq-auto-status" class="settings-note" role="status"></p>
+                <div class="memory-actions"><button id="qq-enable-auto" type="button">启用 Authorized Automatic</button><button id="qq-disable-auto" type="button">立即关闭自动回复</button></div>
+                <label><input id="qq-natural-consent" type="checkbox" />允许 Aurora 在上面的自动回复群中偶尔自然接话，即使没人 @它。</label>
+                <p id="qq-natural-status" class="settings-note" role="status"></p>
+                <p class="settings-note">均衡模式：只看本群最近两分钟的少量聊天，至少两人连续聊五条才考虑接话；有合适补充才说一两句。每群至少间隔十分钟，所有群合计每小时最多两次。模型忙时不插队；重启默认关闭。</p>
+                <div class="memory-actions"><button id="qq-enable-natural" type="button">开启偶尔接话</button><button id="qq-disable-natural" type="button">关闭偶尔接话</button></div>
+                <div id="qq-messages" class="memory-list" aria-label="最近授权消息"></div>
+                <section aria-labelledby="qq-archive-title">
+                  <h3 id="qq-archive-title">本地群聊档案</h3>
+                  <p class="settings-note">仅为明确授权的群记录收到的全部文本（含未 @ 的聊天及自己的回复）。记录与自动回复独立；记录不会让 Aurora 开口。档案保存在本机，保留到你主动删除，不进入主人私人记忆。请先向群成员说明并确认记录授权。媒体仅保存类型信息，不下载。</p>
+                  <label>要开启记录的已授权群号 <input id="qq-archive-group" inputmode="numeric" /></label>
+                  <label><input id="qq-archive-consent" type="checkbox" /> 我已明确确认此群的记录范围，并已向成员提供记录提示</label>
+                  <div class="memory-actions"><button id="qq-archive-enable" type="button">开启此群记录</button><button id="qq-archive-disable" type="button">关闭此群新消息记录</button></div>
+                  <label>已授权档案 <select id="qq-archive-source"></select></label>
+                  <label>发言者 QQ（留空为本群全部）<input id="qq-archive-sender" inputmode="numeric" /></label>
+                  <label>文本包含（支持中文）<input id="qq-archive-query" maxlength="128" /></label>
+                  <div class="memory-actions"><label>开始时间 <input id="qq-archive-after" type="datetime-local" /></label><label>结束时间 <input id="qq-archive-before" type="datetime-local" /></label></div>
+                  <div class="memory-actions"><button id="qq-archive-search" type="button">查询 / 重试</button><button id="qq-archive-next" type="button">下一页</button><button id="qq-archive-export" type="button">导出此群完整 JSONL</button></div>
+                  <p id="qq-archive-status" role="status"></p><div id="qq-archive-rows" class="memory-list" aria-label="群聊档案查询结果"></div>
+                  <p class="settings-note">撤回消息及其已知关联回复将不再检索。成员隐私删除请求由你显式按 QQ 号处理；AI 不批准或执行删除。删除包括已知关联回复；已有 QQ 发送、备份或导出文件需另行处理。</p>
+                  <div class="memory-actions"><button id="qq-archive-delete-sender" type="button">删除查询发言者的档案…</button><button id="qq-archive-delete-group" type="button">删除此群全部档案并关闭记录…</button></div>
+                  <section id="qq-archive-confirmation" class="qq-confirmation" hidden><p id="qq-archive-delete-description"></p><button id="qq-archive-confirm-delete" type="button">确认删除指定档案</button><button id="qq-archive-cancel-delete" type="button">取消</button></section>
+                </section>
+                <section id="qq-preview" hidden>
+                  <p id="qq-source" class="settings-note"></p><p id="qq-original" class="qq-text"></p><p id="qq-message-state" role="status"></p>
+                  <label for="qq-reply">回复预览（尚未发送）</label><textarea id="qq-reply" maxlength="4096" rows="5"></textarea>
+                  <div class="memory-actions"><button id="qq-generate" type="button">生成回复</button><button id="qq-cancel" type="button">取消回复</button><button id="qq-edit" type="button">保存预览</button><button id="qq-prepare" type="button">检查并发送…</button></div>
+                </section>
+                <section id="qq-confirmation" class="qq-confirmation" role="group" aria-label="发送确认" hidden>
+                  <p>将下面这一版回复发送到以下来源：</p><p id="qq-confirm-target"></p><p id="qq-confirm-text" class="qq-text"></p>
+                  <button id="qq-confirm-send" type="button">确认发送这一条</button><button id="qq-confirm-cancel" type="button">返回预览</button>
+                </section>
+              </details>
               <section id="appearance-section" class="settings-section" aria-labelledby="appearance-title">
                 <h2 id="appearance-title" class="section-header">外观</h2>
                 <p class="section-description">安静的黑色基底，让光线与内容留在玻璃之下。</p>

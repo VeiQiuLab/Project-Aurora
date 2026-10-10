@@ -623,6 +623,10 @@ impl BackendManager {
         self.send_value(crate::memory::read(&request_id, &collection, record_id.as_deref(), offset)?).await
     }
 
+    pub async fn qq_command(&self, request_id: String, command: crate::qq::Command) -> Result<(), String> {
+        self.send_value(crate::qq::request(&request_id, &command)?).await
+    }
+
     pub async fn settings_update(&self, expected_revision: u64, patch: Value) -> Result<(), String> {
         self.send_value(crate::settings::update(&format!("settings-update-{}", Uuid::new_v4().simple()), expected_revision, patch)?).await
     }
@@ -779,6 +783,11 @@ impl BackendManager {
             return Err("STALE_CONNECTION".into());
         }
         match message_type {
+            "qq.response" => {
+                let request_id = require_string(&value, "request_id", None)?.to_owned();
+                let snapshot = crate::qq::Snapshot::from_wire(value["payload"].clone())?;
+                self.emit(FrontendEvent::QqSnapshot {request_id, snapshot});
+            }
             "memory.write.response" => {
                 let request_id = require_string(&value, "request_id", None)?.to_owned();
                 let result = crate::memory::OperationResult::from_wire(value["payload"].clone())?;
