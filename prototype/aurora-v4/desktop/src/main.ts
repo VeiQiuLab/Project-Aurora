@@ -330,7 +330,9 @@ const updateBackendInfo = (info: BackendInfo): void => {
   backendInfo = info;
   const diagnostics = info.diagnostics;
   const lines = [`后端 ${info.mode === "production" ? "Production" : "Mock"}`];
-  if (info.error_code) lines.push(`启动失败 ${info.error_code} · 详见后端日志`);
+  if (info.error_code) lines.push(info.error_code === "BACKEND_RECOVERY_EXHAUSTED"
+    ? "自动恢复未成功。请检查本地运行文件，再点击恢复连接。"
+    : `连接诊断 ${info.error_code} · 详见后端日志`);
   if (diagnostics) {
     lines.push(`Python 已连接 · 设置 ${diagnostics.settings_status}`);
     if (diagnostics.local_model) {

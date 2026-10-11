@@ -22,6 +22,22 @@ use uuid::Uuid;
 
 pub const RUNTIME_DIRECTORY: &str = "Aurora/runtime/llama-b10964-vulkan";
 
+// Explorer launches have no retained stderr. Persist only fixed status fields;
+// never write the private handoff, paths, prompts or upstream output.
+fn record_startup_status(state: &str, code: &str) {
+    #[cfg(not(test))]
+    {
+        if !code.bytes().all(|b| b.is_ascii_uppercase() || b == b'_') { return; }
+        let Some(base) = std::env::var_os("LOCALAPPDATA") else { return; };
+        let directory = PathBuf::from(base).join("Aurora/logs");
+        if std::fs::create_dir_all(&directory).is_err() { return; }
+        let status = serde_json::json!({"pid": std::process::id(), "state": state, "error_code": code});
+        let _ = std::fs::write(directory.join("desktop-model-startup.json"), status.to_string());
+    }
+    #[cfg(test)]
+    let _ = (state, code);
+}
+
 #[derive(Clone, Copy, Debug, Serialize, PartialEq, Eq)]
 #[serde(rename_all = "SCREAMING_SNAKE_CASE")]
 pub enum RuntimeState {
@@ -318,6 +334,7 @@ impl LocalModelSupervisor {
                     return Err("LOCAL_STARTUP_SUPERSEDED".into());
                 }
                 data.state = RuntimeState::Ready;
+                record_startup_status("READY", "");
                 eprintln!(
                     "[aurora-local] state=READY backend=vulkan context=4096 load_ms={:.1}",
                     started.elapsed().as_secs_f64() * 1000.0
@@ -413,6 +430,7 @@ impl LocalModelSupervisor {
         data.child = Some(child);
         data.job = Some(job);
         data.state = RuntimeState::LoadingModel;
+        record_startup_status("LOADING_MODEL", "");
         eprintln!("[aurora-local] state=LOADING_MODEL backend=vulkan");
         Ok(())
     }
@@ -428,6 +446,7 @@ impl LocalModelSupervisor {
         data.job = None;
         data.state = RuntimeState::Failed;
         data.error = code.to_owned();
+        record_startup_status("FAILED", code);
         eprintln!("[aurora-local] state=FAILED code={code}");
     }
     pub async fn exited(&self) -> bool {

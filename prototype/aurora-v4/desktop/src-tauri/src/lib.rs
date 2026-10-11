@@ -196,6 +196,7 @@ pub fn run() {
                     owner.observe(move |snapshot| { let _ = handle.emit("local-voice-status", snapshot); }).await;
                 }
                 let _ = startup_manager.start(false).await;
+                startup_manager.recover_transport().await;
             });
             Ok(())
         })

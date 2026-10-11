@@ -40,6 +40,7 @@ const STARTUP_TIMEOUT: Duration = Duration::from_secs(10);
 const HANDSHAKE_TIMEOUT: Duration = Duration::from_secs(5);
 const SHUTDOWN_GRACE: Duration = Duration::from_secs(6);
 const WRITER_CAPACITY: usize = 32;
+const AUTO_RECOVERY_LIMIT: u32 = 2;
 
 #[derive(Debug)]
 struct SidecarLaunch {
@@ -69,6 +70,7 @@ struct BackendData {
     cancel_started: std::collections::HashMap<(String, String), Instant>,
     crash_requested_at: Option<Instant>,
     restart_started_at: Option<Instant>,
+    automatic_recovery_attempts: u32,
     #[cfg(test)]
     launch_identity: Option<(u32, u16, String)>,
 }
@@ -94,6 +96,7 @@ impl BackendData {
             cancel_started: Default::default(),
             crash_requested_at: None,
             restart_started_at: None,
+            automatic_recovery_attempts: 0,
             #[cfg(test)]
             launch_identity: None,
         }
@@ -103,6 +106,8 @@ impl BackendData {
 #[derive(Clone)]
 pub struct BackendManager {
     inner: Arc<Mutex<BackendData>>,
+    lifecycle: Arc<Mutex<()>>,
+    recovery_enabled: Arc<AtomicBool>,
     frontend: Arc<StdMutex<Option<Channel<FrontendEvent>>>>,
     desktop_started: Instant,
     mode: String,
@@ -129,6 +134,8 @@ impl BackendManager {
     fn with_mode(mode: String) -> Self {
         Self {
             inner: Arc::new(Mutex::new(BackendData::new())),
+            lifecycle: Arc::new(Mutex::new(())),
+            recovery_enabled: Arc::new(AtomicBool::new(true)),
             frontend: Arc::new(StdMutex::new(None)),
             desktop_started: Instant::now(),
             mode,
@@ -172,10 +179,22 @@ impl BackendManager {
     }
 
     pub async fn start(&self, restarting: bool) -> Result<(), String> {
+        let expected_epoch = self.inner.lock().await.epoch;
+        let _lifecycle = self.lifecycle.lock().await;
+        if self.inner.lock().await.epoch != expected_epoch {
+            return Err("Backend startup was superseded.".into());
+        }
+        self.start_managed(restarting, false).await
+    }
+
+    async fn start_managed(&self, restarting: bool, automatic: bool) -> Result<(), String> {
         let epoch;
         let startup_cancel;
         {
             let mut data = self.inner.lock().await;
+            if automatic && !self.recovery_enabled.load(Ordering::SeqCst) {
+                return Err("RECOVERY_CANCELLED".into());
+            }
             if matches!(
                 data.state,
                 BackendState::Starting
@@ -229,7 +248,7 @@ impl BackendManager {
             // behind. Keep the owner epoch locked until cleanup finishes so an
             // old startup cannot tear down a newer instance.
             if let Some(supervisor) = &self.local_model { supervisor.shutdown().await; }
-        if let Some(supervisor) = &self.local_voice { supervisor.shutdown().await; }
+            if let Some(supervisor) = &self.local_voice { supervisor.shutdown().await; }
             drop(data);
             self.emit_state().await;
         }
@@ -241,8 +260,8 @@ impl BackendManager {
         let spawn_started = Instant::now();
         let launch = find_sidecar_launch(&self.mode)?;
         let voice_handoff = if let Some(supervisor) = &self.local_voice { supervisor.start().await.ok() } else { None };
-        let handoff = if let Some(supervisor) = &self.local_model { Some(supervisor.start(startup_cancel).await?) } else { None };
-        if self.inner.lock().await.epoch != epoch { return Err("STALE_STARTUP".into()); }
+        let handoff = if let Some(supervisor) = &self.local_model { Some(supervisor.start(startup_cancel.clone()).await?) } else { None };
+        if self.inner.lock().await.epoch != epoch || startup_cancel.load(Ordering::SeqCst) { return Err("STALE_STARTUP".into()); }
         let token = format!("{}{}", Uuid::new_v4().simple(), Uuid::new_v4().simple());
         let mut command = Command::new(&launch.python);
         let audio_root = if self.mode == "production" {
@@ -318,6 +337,7 @@ impl BackendManager {
         .await
         .map_err(|_| "sidecar bootstrap timed out".to_string())?
         .map_err(|error| error.to_string())?;
+        if startup_cancel.load(Ordering::SeqCst) { return Err("STALE_STARTUP".into()); }
         if bytes_read == 0
             || bytes_read as u64 > BOOTSTRAP_MAX_BYTES
             || !bootstrap_bytes.ends_with(b"\n")
@@ -337,7 +357,7 @@ impl BackendManager {
         let bootstrap_received = Instant::now();
         {
             let mut data = self.inner.lock().await;
-            if data.epoch != epoch {
+            if data.epoch != epoch || startup_cancel.load(Ordering::SeqCst) {
                 return Err("STALE_STARTUP".into());
             }
             data.metrics.spawn_to_bootstrap_ms = Some(elapsed_ms(spawn_started));
@@ -356,6 +376,7 @@ impl BackendManager {
             .await
             .map_err(|_| "sidecar WebSocket connect timed out".to_string())?
             .map_err(|error| error.to_string())?;
+        if startup_cancel.load(Ordering::SeqCst) { return Err("STALE_STARTUP".into()); }
         let hello_id = format!("hello-{}", Uuid::new_v4().simple());
         socket
             .send(Message::Text(hello(&hello_id).to_string().into()))
@@ -390,7 +411,7 @@ impl BackendManager {
         let child = Arc::new(Mutex::new(child));
         {
             let mut data = self.inner.lock().await;
-            if data.epoch != epoch {
+            if data.epoch != epoch || startup_cancel.load(Ordering::SeqCst) {
                 return Err("STALE_STARTUP".into());
             }
             data.metrics.bootstrap_to_ready_ms = Some(elapsed_ms(bootstrap_received));
@@ -699,11 +720,69 @@ impl BackendManager {
 
     pub async fn restart(&self) -> Result<(), String> {
         eprintln!("[aurora-v4] event=sidecar_restart_requested");
-        self.shutdown().await?;
-        self.start(true).await
+        let expected_epoch = self.inner.lock().await.epoch;
+        let _lifecycle = self.lifecycle.lock().await;
+        if self.inner.lock().await.epoch != expected_epoch {
+            return Err("Backend restart was superseded.".into());
+        }
+        self.inner.lock().await.automatic_recovery_attempts = 0;
+        self.shutdown_managed().await?;
+        self.start_managed(true, false).await
     }
 
     pub async fn shutdown(&self) -> Result<(), String> {
+        // Revoke recovery before waiting for an in-flight lifecycle operation.
+        // Cancellation reaches that startup's model owner as well.
+        self.recovery_enabled.store(false, Ordering::SeqCst);
+        self.inner.lock().await.startup_cancel.store(true, Ordering::SeqCst);
+        let _lifecycle = self.lifecycle.lock().await;
+        self.shutdown_managed().await
+    }
+
+    /// One desktop-owned loop; no request replay or permission restoration.
+    pub async fn recover_transport(&self) {
+        while self.recovery_enabled.load(Ordering::SeqCst) {
+            let (epoch, attempts, disconnected) = {
+                let data = self.inner.lock().await;
+                (data.epoch, data.automatic_recovery_attempts, data.state == BackendState::Disconnected)
+            };
+            if !disconnected {
+                tokio::time::sleep(Duration::from_millis(100)).await;
+                continue;
+            }
+            if attempts >= AUTO_RECOVERY_LIMIT {
+                let changed = {
+                    let mut data = self.inner.lock().await;
+                    if data.epoch == epoch && data.state == BackendState::Disconnected
+                        && data.info.error_code.as_deref() != Some("BACKEND_RECOVERY_EXHAUSTED") {
+                        data.info.error_code = Some("BACKEND_RECOVERY_EXHAUSTED".into());
+                        true
+                    } else { false }
+                };
+                if changed {
+                    eprintln!("[aurora-v4] event=sidecar_recovery_exhausted");
+                    self.emit_state().await;
+                }
+                tokio::time::sleep(Duration::from_millis(100)).await;
+                continue;
+            }
+            tokio::time::sleep(Duration::from_secs(if attempts == 0 { 1 } else { 3 })).await;
+            let _lifecycle = self.lifecycle.lock().await;
+            if !self.recovery_enabled.load(Ordering::SeqCst) { break; }
+            {
+                let mut data = self.inner.lock().await;
+                // A manual restart, shutdown or another launch supersedes this ticket.
+                if data.epoch != epoch || data.state != BackendState::Disconnected { continue; }
+                data.automatic_recovery_attempts += 1;
+                eprintln!("[aurora-v4] event=sidecar_recovery_attempt attempt={}", data.automatic_recovery_attempts);
+            }
+            if self.shutdown_managed().await.is_err() { continue; }
+            // start_managed checks revocation again while holding the state lock.
+            let _ = self.start_managed(true, true).await;
+        }
+    }
+
+    async fn shutdown_managed(&self) -> Result<(), String> {
         let (writer, child, job, audio, should_emit) = {
             let mut data = self.inner.lock().await;
             if matches!(data.state, BackendState::Stopped | BackendState::Stopping) {
@@ -1055,6 +1134,8 @@ impl BackendManager {
             }
             data.state = BackendState::Disconnected;
             data.info.chat_enabled = false;
+            data.info.diagnostics = None;
+            data.info.error_code = Some("BACKEND_LOST".into());
             data.voice = None;
             data.writer = None;
             if let Some(audio) = &data.audio { audio.halt(); }
@@ -1374,6 +1455,103 @@ mod tests {
         );
         assert!(std::env::split_paths(&launch.python_path).count() >= 2);
         assert!(find_sidecar_launch("unknown").is_err());
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn automatic_recovery_rotates_identity_and_does_not_replay_generation() {
+        let manager = BackendManager::with_mode("mock".into());
+        manager.start(false).await.unwrap();
+        let old = {
+            let data = manager.inner.lock().await;
+            (data.epoch, data.sidecar_instance_id.clone(), data.launch_identity.clone().unwrap())
+        };
+        manager.chat_start("isolated recovery fixture".into()).await.unwrap();
+        let recovery_manager = manager.clone();
+        let recovery = tokio::spawn(async move { recovery_manager.recover_transport().await; });
+        manager.crash().await.unwrap();
+        let lost = wait_for(&manager, |s| s.state == BackendState::Disconnected).await;
+        assert!(!lost.info.chat_enabled);
+        assert!(lost.info.diagnostics.is_none());
+        assert_eq!(lost.info.error_code.as_deref(), Some("BACKEND_LOST"));
+        wait_for(&manager, |s| s.state == BackendState::Ready).await;
+        let data = manager.inner.lock().await;
+        let next = data.launch_identity.clone().unwrap();
+        assert_ne!(old.2.0, next.0);
+        assert_ne!(old.2.2, next.2);
+        assert_ne!(old.1, data.sidecar_instance_id);
+        assert!(data.registry.active_owner().is_none());
+        assert_eq!(data.automatic_recovery_attempts, 1);
+        let next_epoch = data.epoch;
+        drop(data);
+        manager.connection_lost(old.0).await;
+        assert_eq!(manager.inner.lock().await.epoch, next_epoch);
+        assert_eq!(manager.snapshot().await.state, BackendState::Ready);
+        manager.shutdown().await.unwrap();
+        timeout(Duration::from_secs(4), recovery).await.unwrap().unwrap();
+        assert_eq!(manager.snapshot().await.state, BackendState::Stopped);
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn manual_restart_supersedes_pending_automatic_recovery() {
+        let manager = BackendManager::with_mode("mock".into());
+        manager.start(false).await.unwrap();
+        let recovery_manager = manager.clone();
+        let recovery = tokio::spawn(async move { recovery_manager.recover_transport().await; });
+        manager.crash().await.unwrap();
+        wait_for(&manager, |s| s.state == BackendState::Disconnected).await;
+        manager.restart().await.unwrap();
+        let epoch = manager.inner.lock().await.epoch;
+        tokio::time::sleep(Duration::from_millis(1300)).await;
+        let data = manager.inner.lock().await;
+        assert_eq!(data.epoch, epoch);
+        assert_eq!(data.automatic_recovery_attempts, 0);
+        assert_eq!(data.state, BackendState::Ready);
+        drop(data);
+        manager.shutdown().await.unwrap();
+        timeout(Duration::from_secs(4), recovery).await.unwrap().unwrap();
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn shutdown_revokes_pending_automatic_recovery() {
+        let manager = BackendManager::with_mode("mock".into());
+        manager.start(false).await.unwrap();
+        let recovery_manager = manager.clone();
+        let recovery = tokio::spawn(async move { recovery_manager.recover_transport().await; });
+        manager.crash().await.unwrap();
+        wait_for(&manager, |s| s.state == BackendState::Disconnected).await;
+        manager.shutdown().await.unwrap();
+        let epoch = manager.inner.lock().await.epoch;
+        timeout(Duration::from_secs(4), recovery).await.unwrap().unwrap();
+        assert_eq!(manager.inner.lock().await.epoch, epoch);
+        assert_eq!(manager.snapshot().await.state, BackendState::Stopped);
+        assert!(manager.inner.lock().await.child.is_none());
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn automatic_recovery_is_bounded_and_manual_retry_resets_budget() {
+        // Deterministic startup rejection, not a live model/configuration change.
+        let manager = BackendManager::with_mode("invalid-fixture-mode".into());
+        assert!(manager.start(false).await.is_err());
+        let recovery_manager = manager.clone();
+        let recovery = tokio::spawn(async move { recovery_manager.recover_transport().await; });
+        let failed = timeout(Duration::from_secs(7), async {
+            loop {
+                let snapshot = manager.snapshot().await;
+                if snapshot.info.error_code.as_deref() == Some("BACKEND_RECOVERY_EXHAUSTED") { break snapshot; }
+                tokio::time::sleep(Duration::from_millis(20)).await;
+            }
+        }).await.unwrap();
+        assert_eq!(failed.state, BackendState::Disconnected);
+        assert!(!failed.info.chat_enabled);
+        assert!(failed.info.diagnostics.is_none());
+        assert_eq!(manager.inner.lock().await.automatic_recovery_attempts, AUTO_RECOVERY_LIMIT);
+        let epoch = manager.inner.lock().await.epoch;
+        tokio::time::sleep(Duration::from_millis(300)).await;
+        assert_eq!(manager.inner.lock().await.epoch, epoch);
+        assert!(manager.restart().await.is_err());
+        assert_eq!(manager.inner.lock().await.automatic_recovery_attempts, 0);
+        manager.shutdown().await.unwrap();
+        timeout(Duration::from_secs(4), recovery).await.unwrap().unwrap();
     }
 
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
