@@ -199,8 +199,23 @@ struct Config {
 }
 impl Config {
     fn load() -> Result<Self, &'static str> {
-        // Explicit private developer/runtime configuration. No machine paths in source.
-        let path = std::env::var_os("AURORA_LIVE2D_CONFIG").ok_or("LIVE2D_UNCONFIGURED")?;
+        let roots: Vec<PathBuf> = std::env::current_exe().ok()
+            .and_then(|exe| exe.parent().map(PathBuf::from))
+            .into_iter().chain(std::env::current_dir().ok()).collect();
+        Self::load_from(std::env::var_os("AURORA_LIVE2D_CONFIG").map(PathBuf::from), &roots)
+    }
+    fn load_from(explicit: Option<PathBuf>, roots: &[PathBuf]) -> Result<Self, &'static str> {
+        // An explicit override remains authoritative, including its errors. Otherwise
+        // discover the existing private runtime descriptor beside this workspace's
+        // assets, independent of the shortcut's working directory or MSIX context.
+        let path = explicit.or_else(|| roots.iter()
+            .flat_map(|root| root.ancestors())
+            .flat_map(|ancestor| [
+                ancestor.join("runtime-local/live2d/config.json"),
+                ancestor.join("prototype/aurora-v4/runtime-local/live2d/config.json"),
+            ])
+            .find(|candidate| candidate.is_file()))
+            .ok_or("LIVE2D_UNCONFIGURED")?;
         use std::io::Read;
         let mut bytes = Vec::new();
         std::fs::File::open(path)
@@ -500,6 +515,59 @@ async fn close_child(child: &mut Child) {
 #[cfg(test)]
 mod tests {
     use super::*;
+    fn config_fixture(root: &std::path::Path, name: &str) -> PathBuf {
+        let assets = root.join(name);
+        std::fs::create_dir_all(assets.join("shaders")).unwrap();
+        std::fs::write(assets.join("host.exe"), b"fixture").unwrap();
+        std::fs::write(assets.join("model.model3.json"), b"{}").unwrap();
+        let path = assets.join("config.json");
+        std::fs::write(&path, serde_json::to_vec(&serde_json::json!({
+            "executable": assets.join("host.exe"),
+            "model": assets.join("model.model3.json"),
+            "shaders": assets.join("shaders"),
+        })).unwrap()).unwrap();
+        path
+    }
+    #[test]
+    fn config_discovery_uses_executable_workspace_before_working_directory() {
+        let root = tempfile::tempdir().unwrap();
+        let config = config_fixture(root.path(), "runtime-local/live2d");
+        let other = tempfile::tempdir().unwrap();
+        config_fixture(other.path(), "runtime-local/live2d");
+        let roots = [root.path().join("desktop/src-tauri/target/release"), other.path().to_owned()];
+        let original = std::fs::read(&config).unwrap();
+        let loaded = Config::load_from(None, &roots).unwrap();
+        assert_eq!(loaded.executable, config.parent().unwrap().join("host.exe"));
+        assert_eq!(std::fs::read(&config).unwrap(), original);
+    }
+    #[test]
+    fn config_discovery_supports_repo_root_and_preserves_override() {
+        let root = tempfile::tempdir().unwrap();
+        config_fixture(root.path(), "prototype/aurora-v4/runtime-local/live2d");
+        assert!(Config::load_from(None, &[root.path().to_owned()]).is_ok());
+        let override_path = config_fixture(root.path(), "custom");
+        let loaded = Config::load_from(Some(override_path.clone()), &[root.path().to_owned()]).unwrap();
+        assert_eq!(loaded.executable, override_path.parent().unwrap().join("host.exe"));
+        // Never silently substitute the default character for a broken override.
+        assert!(matches!(Config::load_from(Some(root.path().join("missing.json")),
+            &[root.path().to_owned()]), Err("LIVE2D_UNCONFIGURED")));
+        std::fs::write(&override_path, b"invalid").unwrap();
+        assert!(matches!(Config::load_from(Some(override_path), &[root.path().to_owned()]),
+            Err("LIVE2D_CONFIG_INVALID")));
+    }
+    #[test]
+    fn discovered_config_keeps_asset_validation_and_size_limit() {
+        let root = tempfile::tempdir().unwrap();
+        assert!(matches!(Config::load_from(None, &[root.path().to_owned()]), Err("LIVE2D_UNCONFIGURED")));
+        let path = config_fixture(root.path(), "runtime-local/live2d");
+        let original = std::fs::read(&path).unwrap();
+        let mut value: Value = serde_json::from_slice(&original).unwrap();
+        value["model"] = Value::String(root.path().join("missing.model3.json").to_string_lossy().into_owned());
+        std::fs::write(&path, serde_json::to_vec(&value).unwrap()).unwrap();
+        assert!(matches!(Config::load_from(None, &[root.path().to_owned()]), Err("LIVE2D_FILES_UNAVAILABLE")));
+        std::fs::write(&path, vec![b' '; 16385]).unwrap();
+        assert!(matches!(Config::load_from(None, &[root.path().to_owned()]), Err("LIVE2D_CONFIG_INVALID")));
+    }
     fn accepted(g: &str) -> FrontendEvent {
         FrontendEvent::ChatAccepted {
             request_id: "r".into(),
