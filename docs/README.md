@@ -61,7 +61,7 @@ NapCat 登录、进程环境中配置存在、桥接握手完成、Automatic、�
 新的数据库 fixture 如确需纳入测试，必须用合成数据、明确路径和审查后的例外，不用真实用户数据库。
 凭据、群聊正文、私人 Memory、个人配置、模型、SDK、原始日志和扫码信息不能进入公开文档或提交。
 
-### 2026-10-11 精准整理续项
+### 2026-10-11 精准整理续项（清理前快照）
 
 根目录可读取文件约 26.14 GiB 逻辑大小、24.21 GiB 去重文件分配空间；按 NTFS AllocationSize 与硬链接计算，
 不包含不可读取的 `.pytest_cache` 或目录/MFT 元数据，不修改其权限。原审计报告保持历史快照。
@@ -71,15 +71,17 @@ NapCat 登录、进程环境中配置存在、桥接握手完成、Automatic、�
 Release、模型、Voice/Live2D、历史发行与测试证据、私人数据及历史 untracked 保留；不整体删除 target 或 tests/output。
 旧实现目前仍有独立入口/测试或共享依赖，没有确认可移除的生产源码；源码、依赖、配置键本轮不合并或移除。
 
-## Workspace closeout — 历史文件与待批准事项
+## Workspace closeout — 历史工具归档与清理结果
 
 连接恢复的四份生产源码及 `desktop/tests/connection_recovery.mjs` 单独提交；当前文档、索引、
 历史审计快照与数据库/缓存忽略补充随后提交。本机 `tests/output`、运行 DB、配置及凭据不暂存。
 所有正式 Markdown 的链接均检查；旧 Tk README 只修复三个迁移后的相对路径，不改历史内容。
 没有确认完全无价值的重复草稿。旧连接修复 `final-report.md` 保留为被后续原生证据修正的历史快照，不再作为最终环境结论。
 
-以下 12 项仍在原位、未暂存、未修改。它们是有价值的历史验证源码，不是可再生缓存或已发现的私人数据。
-建议后续整体以历史工具提交单独审阅；不混入本次两个提交，也不因保留而重跑已 PASS/已排除路线。
+以下 12 项在最终清理授权下按原路径完整纳入 Git，源码字节保持原审计 SHA-256。
+它们是有价值的历史验证源码，不是可再生缓存或已发现的私人数据；旧 CosyVoice 等排除路线只归档、不重新启用。
+历史工具不被生产启动引用。8 份 Python 语法及 4 份 MJS 语法检查、26 项无模型/GPU 单元测试通过；
+测试使用独立系统临时目录，保留现有路径拒绝断言，不重跑模型可行性或人工矩阵。
 
 | 仓库相对路径 | 用途 / 归属 |
 | --- | --- |
@@ -98,17 +100,17 @@ Release、模型、Voice/Live2D、历史发行与测试证据、私人数据及�
 
 各文件 SHA-256 已列于 [原审计保护清单](REPOSITORY_AUDIT_20261011.md)，收尾再次校验一致。
 这些源码之间及与已跟踪的 clean 构建 recipe/历史报告存在引用，不能只移走某一探针并声称测试仍完整。
-若选择仓库外档案，建议目标为 `C:\Users\X\Documents\ChatGPT\Aurora-History\voice-feasibility-20261011\` 下保留完整仓库相对目录树。
-先逐文件复制与 SHA-256 校验、记录原 Git 基线和依赖；独立回放能力另验，不承诺只复制 12 项即可运行。
-原位移除须另获批准并先处理引用；回退按清单恢复同名相对路径、复核哈希，不覆盖已有不同内容。
-本轮不创建外部档案、不复制/移动/删除历史文件，不用忽略规则隐藏它们。
+本轮选择 Git 归档，先前仓库外迁移提案不执行。不创建外部档案、不复制/移动/删除历史源码，不用忽略规则隐藏它们。
 
-两项缓存集中待批准，实测预计总回收 `5,172,389,080` 字节（4.817 GiB），尚未删除：
+最终清理只批准并删除第一项：5,195 个文件与此前清单一致，无重解析点或构建进程。
+指定目录已不存在；C 盘可用空间实测增加 `4,707,069,952` 字节（约 4.384 GiB）。
+文件分配预计回收 `4,706,869,736` 字节；卷空间差值还包括目录元数据及系统并发变化，不能混作文件逻辑大小。
 
 | 精确完整路径 | 判定、回收与风险 |
 | --- | --- |
-| `C:\Users\X\Documents\ChatGPT\本地AI再创\Project-Aurora-baseline-20260902-010344\prototype\aurora-v4\desktop\src-tauri\target\debug\incremental` | VERIFIED SAFE TO REMOVE / REQUIRES USER APPROVAL；4.384 GiB，硬链接共享部分不计入回收；无 EXE/DLL/模型资产，后续 Debug 编译重建 |
-| `C:\Users\X\Documents\ChatGPT\本地AI再创\Project-Aurora-baseline-20260902-010344\build\voice-codec-mamba\pkgs\cache` | REQUIRES USER APPROVAL；0.434 GiB，4 个旧 channel JSON；重建需网络，旧索引字节无法保证重现 |
+| `C:\Users\X\Documents\ChatGPT\本地AI再创\Project-Aurora-baseline-20260902-010344\prototype\aurora-v4\desktop\src-tauri\target\debug\incremental` | 用户批准后已删除；无强制选项，无 EXE/DLL/模型资产；后续 Debug 编译按需重建 |
+| `C:\Users\X\Documents\ChatGPT\本地AI再创\Project-Aurora-baseline-20260902-010344\build\voice-codec-mamba\pkgs\cache` | 明确保留，未处理；约 0.434 GiB，4 个旧 channel JSON，具有离线复现价值 |
 
-执行前需复查构建活动、路径和目录内容；不扩大成整个 target/build/dist/tests/output 清理。
-Release、唯一运行资产、私人数据、历史保护项和无法读取的 `.pytest_cache` 均为 PROTECTED / UNKNOWN，继续保留。
+未扩大成整个 target/build/dist/tests/output 清理。测试日志和合成临时数据仅留在本机，未纳入提交。
+Release、唯一运行资产、私人数据、历史证据和无法读取的 `.pytest_cache` 均保持原状；未改权限。
+V4-8F 继续 HOLD；main、WIP Glass 与归档 tags 不变，不进入新阶段。
