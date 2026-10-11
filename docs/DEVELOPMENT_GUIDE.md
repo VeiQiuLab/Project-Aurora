@@ -43,11 +43,48 @@ Production 使用根 `.venv` 与根依赖；Sidecar 的 mock 环境不是完整 
 Release 路径：`prototype/aurora-v4/desktop/src-tauri/target/release/aurora-v4-desktop.exe`。
 `main.py --check` 只检查入口，不启动组件；直接启动 EXE 由 Desktop 管理已配置的 Sidecar/模型/Voice/Avatar。
 模型、Voice、Live2D 资产及 NapCat 登录/接口仍需各自准备。
+启用桌面角色后，Live2D 优先使用显式 `AURORA_LIVE2D_CONFIG`；未设置时，
+从 EXE 所在目录向上查找现有 `runtime-local/live2d/config.json`（也支持仓库根下的
+`prototype/aurora-v4/runtime-local/live2d/config.json`），最后才查找工作目录。
+该本机描述文件使用 `executable`、`model`、`shaders` 三个绝对路径，必须指向已有文件/目录；
+它不进入 Git。发现错误的显式配置时不会静默换成默认角色，也不会自动下载或覆盖配置。
 `AURORA_V4_BACKEND=mock` 仅用于明确选择的隔离 demo；Production 是正常 EXE 默认。
 
 开发前端可在 Desktop 目录运行 `pnpm tauri dev`。
 Release 构建使用根 `build_exe.ps1` 或 Desktop `pnpm tauri build --no-bundle`，不声明安装包/First-run 已完成。
 不要修改正在运行的真实用户数据作为验收捷径。
+
+## Release 运行体积（2026-10-11）
+
+以下按当前 Release 引用的文件、NTFS 分配大小及文件身份去重；GiB 为 1024³ 字节。
+这些是依赖盘点和最小集合估算，**不是已经验证的独立发行目录或安装包**。
+
+| 集合 | 逻辑大小 GiB | 去重后分配 GiB | 证据边界 |
+| --- | ---: | ---: | --- |
+| 完整本地组件，保守保留现有项目 Python 包与 llama 目录 | 2.948 | 2.960 | 文件大小 MEASURED；完整独立启动 NOT VERIFIED |
+| 基础文本聊天，去掉本地 TTS 与 Live2D 资产 | 2.759 | 2.771 | 文件大小 MEASURED；精简独立启动 NOT VERIFIED |
+| 完整功能最小依赖候选 | 2.849 | 2.852 | ESTIMATED；按依赖闭包筛选，未复制、裁剪或发行验收 |
+| 文本聊天最小依赖候选 | 2.654 | 2.656 | ESTIMATED；未执行精简目录启动验收 |
+
+上述集合不含共享 Windows/WebView2/显卡驱动、外部 NapCat/QQ、用户数据或构建产物。
+Qwen 文本 GGUF 单独约 2582 MiB / 2.522 GiB；
+同目录的 mmproj 是另一种视觉资产，不是重复文本模型，也未计入文本聊天。
+本地 TTS（Host、ORT/sherpa、Melo、词典）约 187 MiB；Live2D Host、适配 DLL、角色及 shader 约 6.65 MiB。
+Rust Audio 和前端资源已经编入 Desktop；不需要把整个 Cargo target 或 node_modules 计入运行软件。
+
+当前 EXE 仍依赖源码目录、contracts/QQ Connector、根 `.venv` 的包及 `pyvenv.cfg` 指向的外部 Python 3.12，
+单独复制 EXE 不会形成完整软件。Cubism 编入适配 DLL，完整 SDK 是构建依赖。
+基础文本候选需使用已有 `AURORA_LOCAL_VOICE_DISABLE=1` 且不启用 Avatar；本轮未更改正式启动设置。
+普通 Windows 与 MSIX 视图各有内容相同、文件身份不同的约 303 MiB 原生模型/语音运行资产；
+工具中的普通 AppData 别名与 LocalCache 映射只计一次，普通 Windows 的独立副本则另计。
+体积盘点只做版本查询、模块导入和资产校验，不代表完整独立发行验收。
+随后本工作区 Release 在普通 Windows（非 MSIX）完成两次启动、真实 4B 推理、
+当前 Edge TTS 播放、Stop、Hide/Show 和正常退出，退出后 owned process 为 0。
+未设置 `AURORA_LIVE2D_CONFIG` 时也能发现已有配置；Native Host 启动、禁用退出、
+再次启用及 Idle/Thinking/Speaking 已检查。实际 GPU 回读显示当前角色及变化的口型；
+GPU 回读不是 Windows 桌面截图；用户另行确认屏幕上角色可见，确认范围仅为可见性。
+本地 Melo 仅检查 Ready，未冒充本次播放 Provider。
+配置与资产未被覆盖；未重做全套 Voice/QQ 验收，V4-8F 仍 HOLD。
 
 ## 与改动相关的验证
 
