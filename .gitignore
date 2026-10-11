@@ -60,6 +60,7 @@ __pycache__/
 **/__pycache__/
 *.pyc
 .pytest_cache/
+.pytest-tmp/
 tests/output/
 .venv/
 models/
@@ -71,6 +72,20 @@ prototype/aurora-v4/runtime-local/
 *.key
 .env.*
 AGENTS.md
+
+# Local persistent databases and SQLite sidecars; never publish user archives.
+*.sqlite
+*.sqlite3
+*.sqlite-wal
+*.sqlite-shm
+*.sqlite-journal
+*.sqlite3-wal
+*.sqlite3-shm
+*.sqlite3-journal
+*.db
+*.db-wal
+*.db-shm
+*.db-journal
 
 # Local release and packaging artifacts
 installer/Aurora-v*-Setup.exe

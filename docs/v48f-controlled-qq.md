@@ -4,6 +4,30 @@ Starting revision: `6c9cf64d7b29f9069fd2b41b5154dad0af101462` on `refactor/auror
 
 **V4-8F STATUS: HOLD**
 
+This maintained document is the authoritative current stage / acceptance status
+entrypoint. Architecture is maintained separately in [ARCHITECTURE](ARCHITECTURE.md).
+
+Workspace consolidation (2026-10-11) starts from
+`013d1e0b6fb1b3314114957711e417750efc98fc` on `refactor/aurora-v4`.
+Connection recovery source/tests are committed separately as
+`2e69d8c677a25270f879358bea3276cf7ed333e6`; documentation/index consolidation
+is recorded in the following documentation commit. Read Git for that commit's
+full SHA and live local/origin equality, rather than treating the starting SHA as current.
+The 12 historical untracked entries and two cleanup candidates remain untouched,
+pending disposition approval; no stage promotion, main update or WIP integration occurs.
+
+Closeout regression: Rust 80 passed / 2 existing ignored; Frontend 47 passed;
+TypeScript and recovery harness syntax passed; Python/IPC 67 passed.
+The unchanged Release retains the earlier 11-check UNPACKAGED real-model evidence;
+this closeout does not repeat or claim new real QQ, Voice or manual shortcut acceptance.
+The historical repository audit preserves its original uncommitted-workspace snapshot.
+
+Other outstanding gates remain: Voice Full Manual Matrix **NOT COMPLETED**,
+G01 percentage pronunciation **Major**, **LEGAL REVIEW RECOMMENDED** including
+ORT/MPL-2.0 obligations, and Packaging / First-run **NOT COMPLETED**.
+Single speaker/no cloning, limited lexicon/symbol coverage and limited cancellation
+inside one ONNX inference remain. These are not fixed by QQ or repository cleanup.
+
 Published source checkpoint: `ba6c3f3d7f3443bd3a7e8016395941c6d7704acd`.
 Later documentation synchronization does not change this acceptance state.
 For current product entrypoints and architecture, see [README](../README.md)

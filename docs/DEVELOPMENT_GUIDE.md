@@ -2,6 +2,7 @@
 
 当前桌面是 Tauri/Rust + Python Production Sidecar。开始前阅读
 [项目现状](../PROJECT_CONTEXT.md)、[架构](ARCHITECTURE.md) 和 [协作规则](CODEX_WORKFLOW.md)。
+[文档索引](README.md) 区分当前说明、历史设计、阶段证据和本机输出；不要依靠散落报告猜测当前状态。
 V4-8F 当前 HOLD；不以旧 Tk/v3 指引作为 V4 开发默认。
 
 ## 目录与职责
@@ -24,7 +25,19 @@ WebView 不直接访问数据库、文件或私有后端 socket。扩展功能�
 
 需要 Windows、Python 3.12、Node/pnpm、Rust、Visual Studio C++ Build Tools。
 使用当前工作区已有的解释器/依赖；不要为日常运行无故重装或重建。
-新工作区的依赖安装、构建和运行命令见 [根 README](../README.md)。
+新工作区在仓库根目录准备 Python 与 Frontend 依赖：
+
+```powershell
+py -3.12 -m venv .venv
+.\.venv\Scripts\python.exe -m pip install -r requirements.txt
+pnpm --dir prototype/aurora-v4/desktop install --frozen-lockfile
+.\build_exe.ps1
+.\.venv\Scripts\python.exe main.py --check
+```
+
+已有可用环境不执行上述安装/重建。当前架构见 [ARCHITECTURE](ARCHITECTURE.md)，
+新工作区先用 `py -0p` 确认 Python 3.12；未注册时使用已安装的 3.12 解释器完整路径，不使用版本不明的 `python`。
+当前阶段与完整验收状态只在 [V4-8F](v48f-controlled-qq.md) 维护。
 Production 使用根 `.venv` 与根依赖；Sidecar 的 mock 环境不是完整 AI 依赖。
 
 Release 路径：`prototype/aurora-v4/desktop/src-tauri/target/release/aurora-v4-desktop.exe`。
@@ -52,6 +65,17 @@ pnpm test
 pnpm build
 cargo test --manifest-path src-tauri/Cargo.toml --lib
 ```
+
+连接恢复回归还包括 Desktop `tests/connection_recovery.mjs`：使用已构建的实际 Release 和已安装的本地 4B，
+自动创建隔离 profile，验证认证、真实推理、断线恢复、重试上限、重启和退出。
+运行前仅正常退出 Aurora，不终止其他应用；需要本机已有 Playwright/Edge。
+测试日志和 profile 留在忽略的 `tests/output/connection-repair/`，不删除真实数据。
+
+Windows 开发工具若以 MSIX 安装，子进程可能继承其 AppData 虚拟视图，令运行资产安装和测试出现假阳性。
+不要把工具中看到的 `%LOCALAPPDATA%/Aurora` 文件存在当作普通桌面进程可见的证据。
+应从 Explorer 双击正常 Release/快捷方式验证，并检查模型/Voice 状态；必要时用文件句柄核实实际物理路径。
+隔离实际 Release harness 支持 `AURORA_NATIVE_ACCEPTANCE=1`：额外要求执行环境不具有 MSIX package identity。
+该门禁须从普通 Windows 进程运行，不要在开发工具中设置变量后冒称已经完成。
 
 `pnpm build` 包括 TypeScript 检查。涉及界面时按需执行现有 browser UI harness；
 它们依赖本机可用的 Playwright/浏览器，不等于 Native Desktop 人工验收。

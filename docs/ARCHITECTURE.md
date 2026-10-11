@@ -1,8 +1,8 @@
 # Project Aurora — 当前 V4 架构
 
-更新日期：2026-10-10。正式实现位于 `prototype/aurora-v4`；目录名保留，不代表仍是实验桌面。
-本说明核对功能检查点 `ba6c3f3d7f3443bd3a7e8016395941c6d7704acd`。
-V4-8F **HOLD**，实现和局部工程 PASS 不等于完整真实验收。
+更新日期：2026-10-11。本文件是当前架构的唯一权威说明。
+正式实现位于 `prototype/aurora-v4`；目录名保留，不代表仍是实验桌面。
+当前 HEAD、工作区、阶段 HOLD 和完整未验收项统一维护于 [V4-8F](v48f-controlled-qq.md)。
 
 ## 进程与控制边界
 
@@ -24,6 +24,20 @@ WebView 不打开 Sidecar socket，不读取数据库，不接触私有连接凭
 Rust 为启动生成认证信息；Sidecar 使用动态回环端口、握手和能力协商，不能仅因进程存在就视为 Ready。
 Windows Job Object 与有界退出清理负责 owned children。异常断线使旧请求失效，不能复活旧 generation。
 模型、Voice 与 Live2D 的准备/降级状态独立投影到 UI，不将可选故障伪装为成功。
+
+## 连接恢复（2026-10-10 修复，2026-10-11 纳入 Git）
+
+Desktop 启动后有单一恢复 loop。启动失败或 transport 断线进入真实 DISCONNECTED 状态，
+清空旧诊断、结束旧请求，按 1 秒/3 秒退避最多两次恢复已有所有者；不重放消息或恢复 QQ 发送授权。
+生命周期操作串行化，待恢复 ticket 检查 epoch；退出先撤销恢复并取消当前启动，再清理 owned children。
+重试耗尽保留错误并允许显式手动恢复；手动恢复重置预算。认证/握手/schema 校验保持不变。
+此前连接修复隔离实际 Release 使用真实 Vulkan 4B 推理，验证恢复、上限、重启与退出；工程回归不替代 QQ 阶段验收。
+普通 Explorer 双击复现了 RUNTIME_NOT_INSTALLED，而工具子进程可加载同一模型：
+GetFinalPathNameByHandle 证明运行资产落在 MSIX LocalCache 虚拟目录，普通进程对应路径不存在。
+本机修复仅复制现有运行/语音资产到原架构规定的正常用户目录，逐字节校验，保留原件与配置；
+产品不依赖开发工具包名或缓存路径。Rust 另保留仅含 PID/state/error_code 的启动诊断，避免无终端启动丢失错误。
+普通 Windows、无 MSIX package identity 的隔离 Release 已通过 11 项工程验收；不能据此宣称完成用户快捷方式人工验收或真实 QQ 门禁。
+此前首次 transport 断线触发日志仍缺失；HTTP 401 是正常保护，不能当作认证根因。
 
 ## 所有权
 
@@ -96,6 +110,12 @@ QQ 对话 key 包含账号、来源类型、会话与发言者 ID。外部生成
 它不是持续随机主动发言，真实质量仍未验收。详细字段、安全边界与证据见
 [V4-8F / Group Archive Step 1](v48f-controlled-qq.md)。
 
+桌面 QQPanel 的 `connected` 指 Rust/Python 服务可用；QQ snapshot 的 `status` 才是 Aurora→OneBot 连接状态。
+`configured` 仅验证当前进程的桥接配置能否构造 Transport，不能证明 NapCat 已登录或在线；
+`automatic`、`natural` 和 Archive policy 分别控制发送、偶尔参与及记录权限。
+「外部交互已关闭」对应 `status=disabled`，不能据此判断 NapCat 登录状态。
+当前没有直接读取 NapCat WebUI 登录状态的独立 UI 指标；改进建议见 [工程审计](REPOSITORY_AUDIT_20261011.md)。
+
 ## 启动、数据与发布边界
 
 根 `main.py` 是 Release EXE launcher；`build_exe.ps1` 默认构建 Tauri `--no-bundle`。
@@ -107,8 +127,7 @@ Desktop 管理已配置 Aurora 子组件，NapCat 登录/桥接保持独立。�
 [IPC v1](../prototype/aurora-v4/contracts/IPC_V1.md) 及机器 schema 是 wire contract；阶段报告必须按其发生时间阅读。
 [当前 V4 进程说明](../prototype/aurora-v4/ARCHITECTURE.md) 和 [开发指引](DEVELOPMENT_GUIDE.md) 提供入口。
 
-## 尚未关闭的门禁
+## 验收与发布
 
-V4-8F 修复后真实连续追问、非 @ 入站归档、完整真实 QQ 安全验收以及长期召回/自然参与质量尚未完整验证。
-Voice Full Manual Matrix NOT COMPLETED；G01 百分号读法 Major；LEGAL REVIEW RECOMMENDED，含 ORT/MPL-2.0 obligations；
-Packaging / First-run NOT COMPLETED。依赖审计不是法律许可，工程 smoke 不是人工听感或真实群聊验收。
+完整阶段状态、Voice/License/Packaging 未闭环项见 [唯一状态维护入口](v48f-controlled-qq.md)。
+依赖审计不是法律许可，工程 smoke 不是人工听感或真实群聊验收；历史报告不得改写为当前完整 PASS。

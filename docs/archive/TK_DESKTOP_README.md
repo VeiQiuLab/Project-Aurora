@@ -144,9 +144,9 @@ are not part of the current product direction.
 
 Start with:
 
-- [Project context](PROJECT_CONTEXT.md)
-- [Current architecture](docs/ARCHITECTURE.md)
-- [Changelog](CHANGELOG.md)
+- [Project context](../../PROJECT_CONTEXT.md)
+- [Current architecture](../ARCHITECTURE.md)
+- [Changelog](../../CHANGELOG.md)
 
 Aurora development favors small incremental changes, one shared Chat Pipeline
 for text and voice, local-first data ownership, and privacy-conscious release
