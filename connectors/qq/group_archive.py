@@ -6,11 +6,14 @@ admission. No TTL, pruning, summary substitution or startup deletion exists.
 import hashlib
 import json
 import os
+import re
 import secrets
 import sqlite3
 from contextlib import contextmanager
 from pathlib import Path
 from time import time
+
+from modules.memory_retrieval import _tokens
 
 
 class ArchiveError(RuntimeError):
@@ -218,6 +221,76 @@ class GroupArchive:
             following=list(db.execute('SELECT * FROM messages WHERE account_id=? AND group_id=? AND (timestamp,key)>(?,?) '
                 'ORDER BY timestamp,key LIMIT ?',(account,group,center['timestamp'],key,radius)))
             return [self.record(r,preview=True) for r in [*reversed(prior),center,*following]]
+
+    def history_context(self, account, group, sender, question, *, history=(), exclude=''):
+        """Bounded, read-only evidence from this authorized group, not owner Memory.
+
+        Reuse the existing pure Chinese tokenizer; do not use its Memory store or
+        ranking pipeline. Search full originals before excerpting, rank relevance
+        before recency, and retain nearby/explicit replies with speaker identity.
+        """
+        personal = bool(re.search(r'我(?:的|刚才|之前|上次|周[一二三四五六日天]|\s)*.*(?:名字|姓名|叫什么|计划|准备|去哪)', question))
+        generic = r'请问|帮我|我想问|告诉我|历史|当时|之前|上次|我们|群里|讨论|关于|到底|现在|为什么|为何|怎么|是否|有没有|已经|最终|最后|如何|原因|结论|决定|实现|功能|来着|说过|觉得|能不能|记得|一下|的|了|呢|吗'
+        cleaned = re.sub(generic, ' ', question)
+        terms = sorted(_tokens(cleaned))[:24]
+        if personal:
+            if any(t in question for t in ('叫什么', '名字', '姓名')):
+                terms = list(dict.fromkeys(['我叫', '名字', '姓名', *terms]))[:24]
+            elif any(t in question for t in ('计划', '准备', '去哪')):
+                terms = list(dict.fromkeys(['计划', '准备', *terms]))[:24]
+        if not terms:
+            # A bare "why?" may refer to the last completed user topic. Never
+            # expand from another source or a generated assistant assertion.
+            previous = next((h['content'] for h in reversed(history) if h.get('role') == 'user'), '')
+            terms = sorted(_tokens(re.sub(generic, ' ', previous)))[:24]
+
+        with self.database() as db:
+            self.authorize(db, account, group)
+            deadline = time() + 2
+            db.set_progress_handler(lambda: int(time() > deadline), 10000)
+            clauses = ['account_id=?', 'group_id=?', 'message_id<>?', "text<>''"]
+            values = [account, group, exclude]
+            if personal:
+                clauses.append('sender_id=?'); values.append(sender)
+            where = ' AND '.join(clauses)
+            if terms:
+                score = '+'.join('CASE WHEN instr(lower(text),?)>0 THEN 1 ELSE 0 END' for _ in terms)
+                anchors = list(db.execute('SELECT *, (' + score + ') AS relevance FROM messages WHERE ' + where +
+                    ' ORDER BY relevance DESC,timestamp DESC,key DESC LIMIT 8', [*terms, *values]))
+                anchors = [r for r in anchors if r['relevance'] > 0][:3]
+            else:
+                # No named topic: keep a small current-speaker fallback. A named
+                # topic with no matches stays empty instead of unrelated history.
+                anchors = list(db.execute('SELECT * FROM messages WHERE ' + where + ' AND sender_id=?'
+                    ' ORDER BY timestamp DESC,key DESC LIMIT 3', [*values, sender]))
+
+            selected = {r['key']: r for r in anchors}
+            if not personal:
+                for center in anchors:
+                    related = list(db.execute('SELECT m.* FROM messages m JOIN relations r ON '
+                        '(r.parent_key=? AND r.child_key=m.key) OR (r.child_key=? AND r.parent_key=m.key) '
+                        'WHERE m.account_id=? AND m.group_id=? AND m.message_id<>? ORDER BY m.timestamp,m.key LIMIT 2',
+                        (center['key'], center['key'], account, group, exclude)))
+                    prior = list(db.execute('SELECT * FROM messages WHERE ' + where + ' AND (timestamp,key)<(?,?)'
+                        ' ORDER BY timestamp DESC,key DESC LIMIT 2', [*values, center['timestamp'], center['key']]))
+                    following = list(db.execute('SELECT * FROM messages WHERE ' + where + ' AND (timestamp,key)>(?,?)'
+                        ' ORDER BY timestamp,key LIMIT 2', [*values, center['timestamp'], center['key']]))
+                    for r in [*related, *prior, *following]:
+                        if len(selected) < 8: selected.setdefault(r['key'], r)
+            # The old 4 x 500 text-character ceiling remains; distribute it
+            # over coherent records rather than truncating a serialized JSON.
+            rows = sorted(selected.values(), key=lambda r: (r['timestamp'], r['key']))
+            per_record = min(500, 2000 // max(1, len(rows)))
+            evidence = []
+            for r in rows:
+                text = r['text']
+                positions = [text.casefold().find(t) for t in terms if t in text.casefold()]
+                start = max(0, min(positions) - per_record // 3) if positions else 0
+                excerpt = text[start:start + per_record]
+                evidence.append({'message_id': r['message_id'], 'sender_id': r['sender_id'],
+                    'timestamp': r['timestamp'], 'text': excerpt,
+                    'excerpted': len(excerpt) != len(text)})
+            return evidence
 
     def revision(self, account, group):
         with self.database() as db:return self.authorize(db,account,group)['revision']

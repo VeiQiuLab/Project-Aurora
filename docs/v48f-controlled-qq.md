@@ -4,6 +4,38 @@ Starting revision: `6c9cf64d7b29f9069fd2b41b5154dad0af101462` on `refactor/auror
 
 **V4-8F STATUS: HOLD**
 
+### Long-term group-history repair (2026-10-11)
+
+Repair starting revision: `51f23f75c63d693976ef4e6e63e1ee65f2bdc2e9`.
+The user reports six basic real-QQ checks PASS, but long-history fact recovery A
+and reason recovery B FAIL; nonexistent-history C PASS. These remain manual
+results, separate from the engineering regression below. Final PASS is not granted.
+
+Read-only diagnosis in the user-confirmed group found the requested old topic in
+three original records. The old sender-only latest-four fallback missed it; it
+had no topic search except hardcoded name/plan cues and no discussion neighbors.
+The original failed request's complete model input was not retained, so its
+precise prompt and budget state cannot be reconstructed or blamed on the model.
+
+The repair ranks literal Chinese/English topic overlap across full originals,
+then gathers bounded same-group neighbors and explicit reply relations. Speaker
+and chronological attribution separate proposals, conclusions and reasons.
+Personal name/plan queries remain current-sender-only. Empty named-topic searches
+do not fall back to unrelated recent messages; the prompt explicitly marks no
+evidence and prohibits invented historical dates, decisions or speakers.
+One real-4B empty-evidence run initially invented a date; strengthening that
+no-evidence instruction is part of this repair, not a hidden PASS result.
+
+Synthetic archive/HTTP-wire tests cover old conclusions/reasons, missing topics,
+source isolation, long-record excerpts, restart integrity and privacy failure.
+Opt-in real-model quality checks reuse the existing supervised 4B with synthetic
+archives only, no second runtime or live QQ sends. New real QQ A/B/C results are
+still required after restarting Aurora to load the repaired Python source.
+Final related Python/QQ/Context/provider regression: **146 passed**, including
+eight real Qwen3.5-4B Vulkan fixture inferences and a separate-process archive
+restart test. Rust/Frontend/Voice/Live2D sources are unchanged; no rebuild or
+new native/live-QQ acceptance is claimed by this repair.
+
 This maintained document is the authoritative current stage / acceptance status
 entrypoint. Architecture is maintained separately in [ARCHITECTURE](ARCHITECTURE.md).
 
@@ -347,13 +379,22 @@ disk/export. Neighbor lookup returns at most two records before and after the
 selected record within the same group. There is no vector database or semantic
 search in this step.
 
-Public QQ Context Assembly may use at most four 500-character excerpts from the
-currently authorized account/group/current sender, plus its existing bounded QQ
-conversation history. Name/plan cues prefer matching recent records, then a few
-recent records. Excerpts are explicitly untrusted data, never tool/authorization
-instructions. No private owner Memory or other speaker/group is read. This is a
-minimal factual-history aid, not complete long-history reasoning or a guarantee
-that the 4B model will phrase every answer accurately.
+Public QQ Context Assembly uses at most eight attributed chronological excerpts,
+at most 500 text characters per record and 2,000 total text characters (the
+previous text ceiling), plus its existing bounded sender-specific QQ history.
+Search reads full originals before forming match-centered, explicitly marked
+excerpts, rather than searching only UI previews. Relevance precedes recency;
+at most three topic anchors, two neighbors each side and bounded explicit replies
+are considered, with the final record/text caps enforced. SQLite work has a
+two-second progress deadline. Personal name/plan recall only reads the current
+sender; group-discussion questions may use other authorized members of the same
+group with their numeric speaker IDs, without treating them as the current user.
+No other account/group or owner Memory is read. Only the existing pure Chinese
+tokenizer is reused from Memory retrieval, never its store or owner Context/RAG.
+Excerpts remain untrusted data, not permissions; bot assertions do not prove
+software functionality. Named topics with no hits are marked explicitly missing.
+This is bounded lexical retrieval, not semantic search, exhaustive historical
+coverage or a guarantee that the 4B will never phrase an answer incorrectly.
 
 The trusted local settings UI alone can export and request deletion. Delete is
 prepare -> explicit confirmation -> one-use source/scope/revision-bound token;
