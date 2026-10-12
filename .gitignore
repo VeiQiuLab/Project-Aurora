@@ -72,6 +72,7 @@ prototype/aurora-v4/runtime-local/
 *.key
 .env.*
 AGENTS.md
+!/AGENTS.md
 
 # Local persistent databases and SQLite sidecars; never publish user archives.
 *.sqlite

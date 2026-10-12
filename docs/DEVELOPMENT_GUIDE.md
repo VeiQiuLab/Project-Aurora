@@ -13,7 +13,8 @@ V4-8F 当前 HOLD；不以旧 Tk/v3 指引作为 V4 开发默认。
 | `prototype/aurora-v4/desktop/src/` | TypeScript 设置、聊天、Memory 与 QQ UI |
 | `prototype/aurora-v4/desktop/src-tauri/src/` | Rust 生命周期、IPC Gateway、Supervisor、Audio、Avatar |
 | `prototype/aurora-v4/sidecar/production_sidecar/` | Python 生产适配、执行、持久化、Context、Post-Turn、QQ |
-| `modules/` | 复用的 AI、Memory、Persona、Knowledge/RAG、Settings 与协议/归档实现 |
+| `modules/` | 复用的 AI、Memory、Persona、Knowledge/RAG 与 Settings |
+| `connectors/qq/` | 复用的 OneBot 客户端、事件适配、受控传输/契约与独立群档案存储、检索和隐私操作；Production Sidecar 负责会话与授权编排 |
 | `prototype/aurora-v4/contracts/` | IPC v1 schema、示例和契约测试 |
 | `tests/`、Sidecar `tests/`、Desktop 测试 | 隔离回归；真实数据不是 fixture |
 | `docs/`、V4 `docs/` | 当前指引与阶段证据边界；历史文档需按日期阅读 |
@@ -127,7 +128,7 @@ Windows 开发工具若以 MSIX 安装，子进程可能继承其 AppData 虚拟
 测试设置、Memory、群聊记录、导出和数据库使用隔离目录，真实私人数据不能作为 fixture。
 凭据通过本机环境传递，不写入测试正文或普通日志；QQ 外部内容不能授予文件/命令/系统操作权限。
 
-开始前记录 HEAD、branch、远端和 tracked/untracked；保护 12 项历史 untracked、WIP Glass、私人 Memory 和独立 QQSuggestionBot。
+开始前记录 HEAD、branch、远端和 tracked/untracked；保护已按原路径纳入 Git 的 12 项历史工具（曾为 untracked）、WIP Glass、私人 Memory 和独立 QQSuggestionBot。
 提交前逐项审查 diff 和暂存列表、执行 `git diff --cached --check`，只暂存范围内文件。
 不要使用不加筛选的 `git add .` / `git add -A`，不提交数据库、个人配置、聊天、二维码、模型或运行产物。
 删除文件/数据需明确同意；commit/push、main 快进和阶段推进各自需要当前任务授权。

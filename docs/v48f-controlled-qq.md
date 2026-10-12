@@ -45,8 +45,14 @@ Connection recovery source/tests are committed separately as
 `2e69d8c677a25270f879358bea3276cf7ed333e6`; documentation/index consolidation
 is recorded in the following documentation commit. Read Git for that commit's
 full SHA and live local/origin equality, rather than treating the starting SHA as current.
-The 12 historical untracked entries and two cleanup candidates remain untouched,
-pending disposition approval; no stage promotion, main update or WIP integration occurs.
+That consolidation initially left 12 historical untracked entries and two cleanup
+candidates pending disposition. The later authorized closeout tracked all 12 tools
+at their original paths, deleted only Desktop `target/debug/incremental`, and
+explicitly retained `build/voice-codec-mamba/pkgs/cache`; see
+[Workspace closeout](README.md#workspace-closeout--历史工具归档与清理结果).
+No stage promotion, main update or WIP integration occurred. Historical commit,
+push and cleanup permissions do not authorize a new session; each such operation
+requires explicit authorization in the current task.
 
 Closeout regression: Rust 80 passed / 2 existing ignored; Frontend 47 passed;
 TypeScript and recovery harness syntax passed; Python/IPC 67 passed.
@@ -429,6 +435,7 @@ benchmark or live QQ archive acceptance is claimed.
 
 Step evidence is retained locally in the ignored
 `tests/output/v48f/qq-group-archive-step1-report.md`. Isolated simulator/Release
-results do not close REAL QQ ACCEPTANCE NOT VERIFIED. The later authorized safe
-Git checkpoint may commit/push reviewed source, tests and this sanitized document
-with HOLD unchanged; it cannot declare Final PASS or enter Step 2 / V4-8G.
+results do not close REAL QQ ACCEPTANCE NOT VERIFIED. The subsequent safe Git
+checkpoint was authorized for that historical task only, with HOLD unchanged.
+It grants no new-session commit/push permission and cannot declare Final PASS or
+authorize Step 2 / V4-8G.

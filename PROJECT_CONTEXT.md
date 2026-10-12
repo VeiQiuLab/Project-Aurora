@@ -1,6 +1,6 @@
 # Project Aurora — 当前项目说明与协作指令
 
-更新日期：2026-10-11。事实以当前源码、Git、正式报告为准；这份说明用于替换 ChatGPT 项目指令，不是运行日志。
+更新日期：2026-10-12。事实以当前源码、Git、正式报告为准；这份说明用于替换 ChatGPT 项目指令，不是运行日志。
 
 ## 项目与架构
 
@@ -25,7 +25,9 @@ Remote Voice 仅 Compatibility / Legacy，不引入 espeak、旧 GPL Sherpa 或 
 正式分支 `refactor/aurora-v4`。2026-10-11 收尾基线为 `013d1e0b6fb1b3314114957711e417750efc98fc`；
 连接恢复源码/测试提交为 `2e69d8c677a25270f879358bea3276cf7ed333e6`，随后单独提交文档与索引。
 最新 HEAD、远端一致性和工作树以 Git/收尾结果为准，文档自身的提交 SHA 不写成旧基线。
-历史 12 项 untracked 及缓存待批准清单保留，不代表整个工作区 completely clean。
+原 12 项历史 untracked 工具已按原路径纳入 Git；获批准的 Desktop `target/debug/incremental` 已删除，
+`build/voice-codec-mamba/pkgs/cache` 明确保留。详情见 `docs/README.md` 的 Workspace closeout；
+Git Clean 只描述 Git 可见改动，不表示忽略的运行资产、数据或本机输出不存在。
 当前阶段状态唯一维护入口：`docs/v48f-controlled-qq.md`。
 
 **V4-8F STATUS: HOLD**。已有 QQ WIP checkpoint 已推送，不是 Final PASS。
@@ -58,7 +60,7 @@ Manual 预览确认；Automatic 限显式授权来源，其他群/陌生私聊�
 
 ## 工作与 Git 规则
 
-保护历史 12 项 untracked、私人 Memory、QQ Archive/凭据/配置、QQSuggestionBot、main、归档 tags 和 WIP Glass。
+保护已归档的 12 项历史工具、私人 Memory、QQ Archive/凭据/配置、QQSuggestionBot、main、归档 tags 和 WIP Glass。
 禁止未经授权删除/覆盖数据、reset/clean/force push、重写历史，或修改/merge/cherry-pick 独立 `wip/v4-5b1-edge-optics-experiment`。
 旧 First-run/QQ 分支已 annotated tag 归档；main 仍为历史基线，验收与再次授权后才考虑 fast-forward only。
 仅暂存审查过的源码/测试/脱敏文档，不提交日志、数据库、私人内容、凭据、模型或运行缓存。
@@ -69,4 +71,5 @@ Manual 预览确认；Automatic 限显式授权来源，其他群/陌生私聊�
 当前优先 V4-8F 真实验收，再按授权推进历史理解和克制参与。
 收尾更新现有 README/架构/阶段文档与精简项目说明，固定历史结论不改写。
 只有实际具备能力和授权才修改 ChatGPT 项目设置并验证保存，否则提供文本供手动粘贴。
-本次收尾授权将连接修复和文档分开提交/普通推送；不删除、移动历史文件或清理缓存，不更新 main 或进入新阶段。
+2026-10-11 连接修复收尾曾获分开提交/普通推送授权；后续工具归档与单项清理另有当时的授权和记录。
+这些均为历史任务记录，不向新会话授予提交、推送、删除或阶段推进权限；任何此类操作以当前任务明确授权为准。

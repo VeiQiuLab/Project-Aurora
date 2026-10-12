@@ -25,7 +25,7 @@
 
 ## 保护与发布
 
-保护 WIP Glass、12 项历史 untracked、真实私人 Memory、QQ 档案/凭据及独立 QQSuggestionBot。
+保护 WIP Glass、已按原路径纳入 Git 的 12 项历史工具（曾为 untracked）、真实私人 Memory、QQ 档案/凭据及独立 QQSuggestionBot。
 未经授权不得 merge/cherry-pick/删除/覆盖 WIP，不 reset/clean/force push 或重写历史，不自动清除数据。
 涉及删除文件、记忆或关键数据前取得明确同意。
 保留已有工作区成果，只暂存已审查的源码、测试和有长期价值的脱敏文档。
